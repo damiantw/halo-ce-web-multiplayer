@@ -2050,6 +2050,8 @@ static GLenum address_mode(DWORD mode)
 	}
 }
 
+static void sampler_parameters(GLuint sampler, const DWORD *state, DWORD min_filter, DWORD mip_filter);
+
 static void configure_sampler(int stage, BOOL mipmapped)
 {
 	/* the texture stage state each sampler was last configured from */
@@ -2059,8 +2061,6 @@ static void configure_sampler(int stage, BOOL mipmapped)
 	DWORD *state = D3D__TextureState[stage];
 	DWORD min_filter = state[D3DTSS_MINFILTER];
 	DWORD mip_filter = mipmapped ? state[D3DTSS_MIPFILTER] : D3DTEXF_NONE;
-	GLenum minification;
-	float border[4];
 	DWORD inputs[10];
 
 	inputs[0] = min_filter;
@@ -2077,6 +2077,13 @@ static void configure_sampler(int stage, BOOL mipmapped)
 		return;
 	memcpy(configured[stage], inputs, sizeof(inputs));
 	configured_valid[stage] = TRUE;
+	sampler_parameters(sampler, state, min_filter, mip_filter);
+}
+
+static void sampler_parameters(GLuint sampler, const DWORD *state, DWORD min_filter, DWORD mip_filter)
+{
+	GLenum minification;
+	float border[4];
 
 	if (min_filter == D3DTEXF_POINT)
 		minification = mip_filter == D3DTEXF_NONE ? GL_NEAREST :
@@ -2110,6 +2117,50 @@ static void configure_sampler(int stage, BOOL mipmapped)
 	glSamplerParameterfv(sampler, GL_TEXTURE_BORDER_COLOR, border);
 #endif
 }
+
+
+#ifdef HALO_WEB
+/* WebGL: a sampler object per distinct sampler state, bound to the stage,
+instead of re-specifying the stage's one sampler (5 to 8 calls) whenever
+its state changes; the game switches between a handful of states many times
+a frame. */
+#define WEB_SAMPLER_CACHE 128
+
+static GLuint web_sampler(int stage, BOOL mipmapped)
+{
+	static struct { DWORD inputs[10]; GLuint sampler; } cache[WEB_SAMPLER_CACHE];
+	static int count;
+	DWORD *state = D3D__TextureState[stage];
+	DWORD min_filter = state[D3DTSS_MINFILTER];
+	DWORD mip_filter = mipmapped ? state[D3DTSS_MIPFILTER] : D3DTEXF_NONE;
+	DWORD inputs[10];
+	int i;
+
+	inputs[0] = min_filter;
+	inputs[1] = mip_filter;
+	inputs[2] = state[D3DTSS_MAGFILTER];
+	inputs[3] = state[D3DTSS_ADDRESSU];
+	inputs[4] = state[D3DTSS_ADDRESSV];
+	inputs[5] = state[D3DTSS_ADDRESSW];
+	inputs[6] = state[D3DTSS_MIPMAPLODBIAS];
+	inputs[7] = state[D3DTSS_MAXMIPLEVEL];
+	inputs[8] = state[D3DTSS_MAXANISOTROPY];
+	inputs[9] = state[D3DTSS_BORDERCOLOR];
+	for (i = 0; i < count; i++)
+		if (!memcmp(cache[i].inputs, inputs, sizeof(inputs)))
+			return cache[i].sampler;
+	if (count == WEB_SAMPLER_CACHE)
+	{
+		/* more states than expected: fall back to the stage's sampler */
+		configure_sampler(stage, mipmapped);
+		return device.samplers[stage];
+	}
+	memcpy(cache[count].inputs, inputs, sizeof(inputs));
+	glGenSamplers(1, &cache[count].sampler);
+	sampler_parameters(cache[count].sampler, state, min_filter, mip_filter);
+	return cache[count++].sampler;
+}
+#endif
 
 
 /* ---------- render targets sampled with their mip chain
@@ -2268,8 +2319,12 @@ static void bind_textures(struct nv2a_pixel_shader_key *key, float texture_scale
 				}
 			}
 			state_texture(stage, gl_target, gl_texture);
+#ifdef HALO_WEB
+			state_sampler(stage, web_sampler(stage, description.levels > 1));
+#else
 			state_sampler(stage, device.samplers[stage]);
 			configure_sampler(stage, description.levels > 1);
+#endif
 			key->sampler_type[stage] = gl_target == GL_TEXTURE_CUBE_MAP ? _xgpu_sampler_cube :
 				gl_target == GL_TEXTURE_3D ? _xgpu_sampler_3d : _xgpu_sampler_2d;
 		}
@@ -3135,14 +3190,26 @@ static void index_extent(const WORD *indices, unsigned long count, unsigned long
 is full. A draw reserves room for all of its streams at once: orphaning
 between two of them would leave the attributes already pointed at the
 buffer reading its new, empty storage. */
+#ifdef HALO_WEB
+/* the web build keeps the upper half of each stream buffer for the vertex
+streams of draws (web_setup_streams); the rest of the uploads go below */
+#define STREAM_UPLOAD_LIMIT (STREAM_BUFFER_SIZE / 2)
+static void web_streams_reset(void);
+#else
+#define STREAM_UPLOAD_LIMIT STREAM_BUFFER_SIZE
+#endif
+
 static void stream_reserve(unsigned long size)
 {
-	if (device.stream_offset + size > STREAM_BUFFER_SIZE)
+	if (device.stream_offset + size > STREAM_UPLOAD_LIMIT)
 	{
 		/* orphan the buffer and start again */
 		state_array_buffer(device.stream_buffer);
 		glBufferData(GL_ARRAY_BUFFER, STREAM_BUFFER_SIZE, NULL, GL_STREAM_DRAW);
 		device.stream_offset = 0;
+#ifdef HALO_WEB
+		web_streams_reset();
+#endif
 	}
 }
 
@@ -3276,7 +3343,136 @@ static BOOL stream_has_colors(const struct vertex_shader_object *declaration, un
 }
 #endif
 
-static void setup_streams(unsigned long first, unsigned long count)
+#ifdef HALO_WEB
+/* Each WebGL call is a message to the browser's GPU process, and the draws
+streamed their vertices at a new offset each, which set every attribute's
+pointer again for every draw (790 vertexAttribPointer and 365
+vertexAttribIPointer calls a frame for 149 draws in Blood Gulch). Instead
+each of the first WEB_STREAMS streams goes up into a region of its own in
+the upper half of the stream buffer, at a whole number of vertices from the
+region's start: the same first vertex for every stream of the draw. The
+attribute pointers then stay where they are (the region's start plus the
+element's offset) from one draw to the next, and the draw starts at that
+first vertex instead: glDrawArrays' first, or added to the indices, which
+the web build copies anyway (it has no base vertex draws).
+(After fucktrevor/halo-ce-universal 75ab8fdf, CC0, which does this for the
+immediate mode.) */
+#define WEB_STREAMS 4
+#define WEB_STREAM_REGION (STREAM_BUFFER_SIZE / 2 / WEB_STREAMS)
+
+static unsigned long web_stream_cursors[WEB_STREAMS];
+
+static void web_streams_reset(void)
+{
+	memset(web_stream_cursors, 0, sizeof(web_stream_cursors));
+}
+
+/* uploads the draw's streams as above and points the attributes at them,
+giving the first vertex to draw from; FALSE when this draw cannot (a stream
+past WEB_STREAMS, a stride of 0, too many vertices), for setup_streams */
+static BOOL web_setup_streams(unsigned long first, unsigned long count, unsigned long *first_vertex)
+{
+	struct vertex_shader_object *declaration = device.vertex_shader;
+	BOOL used[WEB_STREAMS] = { FALSE };
+	BOOL enabled[XGPU_VERTEX_ATTRIBUTE_COUNT] = { FALSE };
+	unsigned long index, stream, vertex = 0;
+	int attempt;
+
+	for (index = 0; index < declaration->element_count; index++)
+	{
+		const struct vertex_element *element = &declaration->elements[index];
+
+		stream = element->stream;
+		if (!device.streams[stream].data || element->type == D3DVSDT_NONE)
+			continue;
+		if (stream >= WEB_STREAMS || !device.streams[stream].stride ||
+			device.streams[stream].stride * count > WEB_STREAM_REGION || count > 0x10000)
+		{
+			return FALSE;
+		}
+		used[stream] = TRUE;
+	}
+	for (attempt = 0; attempt < 2; attempt++)
+	{
+		BOOL fits = TRUE;
+
+		vertex = 0;
+		for (stream = 0; stream < WEB_STREAMS; stream++)
+		{
+			unsigned long stride = device.streams[stream].stride;
+
+			if (used[stream] && (web_stream_cursors[stream] + stride - 1) / stride > vertex)
+				vertex = (web_stream_cursors[stream] + stride - 1) / stride;
+		}
+		/* (16-bit indices reach the last vertex) */
+		if (vertex + count > 0x10000)
+			fits = FALSE;
+		for (stream = 0; stream < WEB_STREAMS && fits; stream++)
+		{
+			if (used[stream] && (vertex + count) * device.streams[stream].stride > WEB_STREAM_REGION)
+				fits = FALSE;
+		}
+		if (fits)
+			break;
+		if (attempt)
+			return FALSE;
+		/* full: new storage for the buffer, the uploads below start again */
+		state_array_buffer(device.stream_buffer);
+		glBufferData(GL_ARRAY_BUFFER, STREAM_BUFFER_SIZE, NULL, GL_STREAM_DRAW);
+		device.stream_offset = 0;
+		web_streams_reset();
+	}
+	state_array_buffer(device.stream_buffer);
+	for (stream = 0; stream < WEB_STREAMS; stream++)
+	{
+		unsigned long stride = device.streams[stream].stride;
+		const unsigned char *base;
+
+		if (!used[stream])
+			continue;
+		base = PLATFORM_PHYSICAL_TO_VIRTUAL(device.streams[stream].data);
+		host_gl_buffer_write(GL_ARRAY_BUFFER, (unsigned int)(STREAM_UPLOAD_LIMIT + stream * WEB_STREAM_REGION + vertex * stride),
+			(unsigned int)(count * stride), base + first * stride);
+		web_stream_cursors[stream] = (vertex + count) * stride;
+		stats.streamed_bytes += count * stride;
+	}
+	for (index = 0; index < declaration->element_count; index++)
+	{
+		const struct vertex_element *element = &declaration->elements[index];
+		unsigned long region;
+		GLint size;
+		GLenum type;
+		GLboolean normalized;
+
+		stream = element->stream;
+		if (!device.streams[stream].data || element->type == D3DVSDT_NONE)
+			continue;
+		region = STREAM_UPLOAD_LIMIT + stream * WEB_STREAM_REGION;
+		if (element->type == D3DVSDT_NORMPACKED3)
+		{
+			state_attribute_pointer(element->reg, device.stream_buffer, 1, GL_UNSIGNED_INT, GL_FALSE, TRUE,
+				(GLsizei)device.streams[stream].stride, region + element->offset);
+		}
+		else
+		{
+			attribute_format(element, &size, &type, &normalized);
+			state_attribute_pointer(element->reg, device.stream_buffer, size, type, normalized, FALSE,
+				(GLsizei)device.streams[stream].stride, region + element->offset);
+		}
+		enabled[element->reg] = TRUE;
+	}
+	for (index = 0; index < XGPU_VERTEX_ATTRIBUTE_COUNT; index++)
+	{
+		if (!enabled[index])
+			state_attribute_value(index, declaration->packed_mask & (1UL << index) ? NULL : device.attributes[index]);
+	}
+	*first_vertex = vertex;
+	return TRUE;
+}
+#endif
+
+/* returns the first vertex the draw starts at (0 but in the web build) */
+static unsigned long setup_streams(unsigned long first, unsigned long count)
 {
 	struct vertex_shader_object *declaration = device.vertex_shader;
 	GLuint stream_buffers[16];
@@ -3285,6 +3481,14 @@ static void setup_streams(unsigned long first, unsigned long count)
 	BOOL enabled[XGPU_VERTEX_ATTRIBUTE_COUNT] = { FALSE };
 	unsigned long index, total = 0;
 
+#ifdef HALO_WEB
+	{
+		unsigned long first_vertex;
+
+		if (web_setup_streams(first, count, &first_vertex))
+			return first_vertex;
+	}
+#endif
 	/* the mirror first; then one reservation for everything streamed */
 	for (index = 0; index < declaration->element_count; index++)
 	{
@@ -3350,6 +3554,7 @@ static void setup_streams(unsigned long first, unsigned long count)
 		if (!enabled[index])
 			state_attribute_value(index, declaration->packed_mask & (1UL << index) ? NULL : device.attributes[index]);
 	}
+	return 0;
 }
 
 static GLenum primitive_mode(D3DPRIMITIVETYPE type)
@@ -3369,6 +3574,20 @@ static GLenum primitive_mode(D3DPRIMITIVETYPE type)
 }
 
 /* quads become two triangles each */
+static WORD *quad_indices(const WORD *indices, unsigned long count, unsigned long *out_count);
+
+/* adds the first vertex (setup_streams) to indices made for the draw */
+static void indices_rebase(WORD *indices, unsigned long count, unsigned long first_vertex)
+{
+	unsigned long index;
+
+	if (first_vertex)
+	{
+		for (index = 0; index < count; index++)
+			indices[index] = (WORD)(indices[index] + first_vertex);
+	}
+}
+
 static WORD *quad_indices(const WORD *indices, unsigned long count, unsigned long *out_count)
 {
 	unsigned long quads = count / 4;
@@ -3409,29 +3628,32 @@ void WINAPI D3DDevice_SetIndices(D3DIndexBuffer *index_data, UINT base_vertex_in
 
 void WINAPI D3DDevice_DrawVertices(D3DPRIMITIVETYPE primitive_type, UINT start_vertex, UINT vertex_count)
 {
+	unsigned long first_vertex;
+
 	if (!vertex_count || !prepare_draw(FALSE))
 		return;
 	trace_draw("draw", primitive_type, vertex_count, NULL);
-	setup_streams(start_vertex, vertex_count);
+	first_vertex = setup_streams(start_vertex, vertex_count);
 	if (primitive_type == D3DPT_QUADLIST)
 	{
 		unsigned long count;
 		WORD *indices = quad_indices(NULL, vertex_count, &count);
 
+		indices_rebase(indices, count, first_vertex);
 		glDrawElements(GL_TRIANGLES, (GLsizei)count, GL_UNSIGNED_SHORT,
 			(const void *)index_upload(indices, count * sizeof(WORD)));
 		free(indices);
 	}
 	else
 	{
-		glDrawArrays(primitive_mode(primitive_type), 0, (GLsizei)vertex_count);
+		glDrawArrays(primitive_mode(primitive_type), (GLint)first_vertex, (GLsizei)vertex_count);
 	}
 	gl_check_errors("draw");
 }
 
 void WINAPI D3DDevice_DrawIndexedVertices(D3DPRIMITIVETYPE primitive_type, UINT vertex_count, CONST WORD *index_data)
 {
-	unsigned long minimum, maximum, index, count, generation = 0, index_offset = 0;
+	unsigned long minimum, maximum, index, count, generation = 0, index_offset = 0, first_vertex;
 	WORD *indices = NULL;
 	const WORD *source = index_data;
 	GLuint index_buffer = 0;
@@ -3448,7 +3670,7 @@ void WINAPI D3DDevice_DrawIndexedVertices(D3DPRIMITIVETYPE primitive_type, UINT 
 	index_extent(index_data, vertex_count, generation, mirrored, &minimum, &maximum);
 	trace_draw("indexed", primitive_type, vertex_count, NULL);
 	/* (the streams from the base vertex on: index i is vertex base + i) */
-	setup_streams(device.base_vertex_index + minimum, maximum - minimum + 1);
+	first_vertex = setup_streams(device.base_vertex_index + minimum, maximum - minimum + 1);
 	if (mirrored)
 	{
 		/* the attributes start at vertex minimum */
@@ -3471,7 +3693,7 @@ void WINAPI D3DDevice_DrawIndexedVertices(D3DPRIMITIVETYPE primitive_type, UINT 
 		WORD *rebased = malloc(count * sizeof(WORD) + 2);
 
 		for (index = 0; index < count; index++)
-			rebased[index] = (WORD)(source[index] - minimum);
+			rebased[index] = (WORD)(source[index] - minimum + first_vertex);
 		glDrawElements(primitive_mode(primitive_type), (GLsizei)count, GL_UNSIGNED_SHORT,
 			(const void *)index_upload(rebased, count * sizeof(WORD)));
 		free(rebased);
@@ -3481,7 +3703,7 @@ void WINAPI D3DDevice_DrawIndexedVertices(D3DPRIMITIVETYPE primitive_type, UINT 
 #endif
 	(void)index;
 	glDrawElementsBaseVertex(primitive_mode(primitive_type), (GLsizei)count, GL_UNSIGNED_SHORT,
-		(const void *)index_upload(source, count * sizeof(WORD)), -(GLint)minimum);
+		(const void *)index_upload(source, count * sizeof(WORD)), (GLint)first_vertex - (GLint)minimum);
 	free(indices);
 }
 
@@ -3519,32 +3741,132 @@ void WINAPI D3DDevice_End(void)
 		return;
 	trace_draw("immediate", type, count, device.immediate_vertices);
 #ifdef HALO_WEB
-	/* WebGL allows strides up to 255 bytes, less than a vertex of all the
-	attributes (256): upload each attribute's values together instead */
+	/* WebGL allows strides of at most 255 bytes, less than a whole immediate
+	vertex (256), and each WebGL call costs a message to the browser's GPU
+	process: the menus set all 16 attributes' pointers for every draw.
+	Attributes whose value is the same for every vertex become constant
+	attributes; the others go up interleaved, at an offset that is a whole
+	number of vertices, so the attribute pointers stay the same from one draw
+	to the next and the draw starts at a first vertex instead. (From
+	fucktrevor/halo-ce-universal 75ab8fdf, CC0.) */
 	{
-		static float *planar;
-		static unsigned long planar_capacity;
-		unsigned long vertex;
+		static float *packed;
+		static unsigned long packed_capacity;
+		const unsigned long floats = XGPU_VERTEX_ATTRIBUTE_COUNT * 4;
+		const float *vertices = device.immediate_vertices;
+		unsigned char slots[XGPU_VERTEX_ATTRIBUTE_COUNT];
+		unsigned long varying = 1, vertex, web_stride, size, first;
 
-		if (planar_capacity < count)
+		(void)stride;
+		(void)offset;
+		/* the position is always an array: an attribute array must be
+		enabled for WebGL to count the vertices */
+		slots[0] = 0;
+		for (index = 1; index < XGPU_VERTEX_ATTRIBUTE_COUNT; index++)
 		{
-			planar_capacity = count;
-			planar = realloc(planar, count * stride);
-		}
-		for (index = 0; index < XGPU_VERTEX_ATTRIBUTE_COUNT; index++)
-		{
-			for (vertex = 0; vertex < count; vertex++)
+			slots[index] = 0xff;
+			for (vertex = 1; vertex < count; vertex++)
 			{
-				memcpy(planar + (index * count + vertex) * 4,
-					device.immediate_vertices + (vertex * XGPU_VERTEX_ATTRIBUTE_COUNT + index) * 4, 4 * sizeof(float));
+				if (memcmp(vertices + vertex * floats + index * 4, vertices + index * 4, 4 * sizeof(float)))
+				{
+					slots[index] = (unsigned char)varying++;
+					break;
+				}
 			}
 		}
-		offset = stream_upload(planar, count * stride);
+		if (varying == XGPU_VERTEX_ATTRIBUTE_COUNT)
+		{
+			/* 256 bytes a vertex: the last attribute that varies goes up on
+			its own */
+			varying--;
+		}
+		web_stride = varying * 4 * sizeof(float);
+		size = count * web_stride;
+		if (packed_capacity < count * varying * 4)
+		{
+			free(packed);
+			packed_capacity = count * varying * 4 + 1024;
+			packed = malloc(packed_capacity * sizeof(float));
+			if (!packed)
+			{
+				packed_capacity = 0;
+				return;
+			}
+		}
 		for (index = 0; index < XGPU_VERTEX_ATTRIBUTE_COUNT; index++)
 		{
-			state_attribute_pointer(index, device.stream_buffer, 4, GL_FLOAT, GL_FALSE, FALSE, (GLsizei)(4 * sizeof(float)),
-				offset + index * count * 4 * sizeof(float));
+			if (slots[index] >= varying)
+				continue;
+			for (vertex = 0; vertex < count; vertex++)
+			{
+				memcpy(packed + (vertex * varying + slots[index]) * 4, vertices + vertex * floats + index * 4,
+					4 * sizeof(float));
+			}
 		}
+		/* start at a whole number of vertices into the buffer, with room for
+		the 16th varying attribute too, so that the buffer is not orphaned
+		between the two uploads */
+		stream_reserve(size + web_stride + count * 4 * sizeof(float) + 32);
+		first = (device.stream_offset + web_stride - 1) / web_stride;
+		device.stream_offset = first * web_stride;
+		if (stream_upload(packed, size) != first * web_stride)
+			return;
+		for (index = 0; index < XGPU_VERTEX_ATTRIBUTE_COUNT; index++)
+		{
+			if (slots[index] < varying)
+			{
+				state_attribute_pointer(index, device.stream_buffer, 4, GL_FLOAT, GL_FALSE, FALSE,
+					(GLsizei)web_stride, slots[index] * 4 * sizeof(float));
+			}
+			else if (slots[index] != 0xff)
+			{
+				/* the 16th attribute that varies: an array of its own */
+				float *array = malloc(count * 4 * sizeof(float));
+				unsigned long array_offset;
+
+				if (!array)
+					return;
+				for (vertex = 0; vertex < count; vertex++)
+					memcpy(array + vertex * 4, vertices + vertex * floats + index * 4, 4 * sizeof(float));
+				/* its pointer takes the same first vertex */
+				array_offset = stream_upload(array, count * 4 * sizeof(float));
+				free(array);
+				state_attribute_pointer(index, device.stream_buffer, 4, GL_FLOAT, GL_FALSE, FALSE,
+					(GLsizei)(4 * sizeof(float)), array_offset - first * 4 * sizeof(float));
+			}
+			else
+			{
+				state_attribute_value(index, vertices + index * 4);
+			}
+		}
+		if (type == D3DPT_QUADLIST)
+		{
+			unsigned long quads = count / 4, quad;
+			GLuint *indices = malloc(quads * 6 * sizeof(GLuint) + 4);
+
+			if (!indices)
+				return;
+			for (quad = 0; quad < quads; quad++)
+			{
+				GLuint base = (GLuint)(first + quad * 4);
+
+				indices[quad * 6 + 0] = base;
+				indices[quad * 6 + 1] = base + 1;
+				indices[quad * 6 + 2] = base + 2;
+				indices[quad * 6 + 3] = base;
+				indices[quad * 6 + 4] = base + 2;
+				indices[quad * 6 + 5] = base + 3;
+			}
+			glDrawElements(GL_TRIANGLES, (GLsizei)(quads * 6), GL_UNSIGNED_INT,
+				(const void *)index_upload(indices, quads * 6 * sizeof(GLuint)));
+			free(indices);
+		}
+		else
+		{
+			glDrawArrays(primitive_mode(type), (GLint)first, (GLsizei)count);
+		}
+		gl_check_errors("immediate draw");
+		return;
 	}
 #else
 	offset = stream_upload(device.immediate_vertices, count * stride);
@@ -3802,6 +4124,9 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 		device.index_buffer = device.index_buffers[device.buffer_ring];
 		device.stream_offset = 0;
 		device.index_offset = 0;
+#ifdef HALO_WEB
+		web_streams_reset();
+#endif
 #else
 		device.stream_offset = STREAM_BUFFER_SIZE; /* orphan next frame */
 		device.index_offset = INDEX_BUFFER_SIZE;
