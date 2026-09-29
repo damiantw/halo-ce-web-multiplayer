@@ -2904,6 +2904,21 @@ void halt_and_catch_fire(
 	struct rasterizer_frame_begin_parameters frame_parameters;
 	struct rasterizer_window_begin_parameters window_parameters;
 
+#ifdef HALO_LINUX
+	/* a dedicated server has no screen to show the halt on: without this it
+	spins on its invisible error screen forever, at full CPU, with the game
+	gone. It says what halted and quits (for whatever restarts it). */
+	if (halo_dedicated_server())
+	{
+		extern char halo_halt_reason[];
+		char message[640];
+
+		snprintf(message, sizeof(message), "the game halted (%s; debug.txt in the data root has the details)",
+			halo_halt_reason[0] ? halo_halt_reason : "an error");
+		platform_log("dedicated server: fatal: %s; quitting", message);
+		exit(EXIT_FAILURE);
+	}
+#endif
 	if (!global_screenshot_count.halt_recursion_lock)
 	{
 		scenario = global_scenario_try_and_get();
