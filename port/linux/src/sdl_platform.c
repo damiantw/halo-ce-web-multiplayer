@@ -11,6 +11,7 @@ and the debug keyboard that the game's console reads.
 
 #include "platform.h"
 #include "sdl_platform.h"
+#include "dedicated_control.h"
 #include "gl.h"
 #include "port_config.h"
 #include "p2p.h"
@@ -70,6 +71,10 @@ int halo_dedicated_server(void)
 
 #if !defined(HALO_ANDROID) && !defined(_WIN32)
 static volatile sig_atomic_t platform_quit_signal = 0;
+/* SIGHUP and SIGUSR1: the dedicated server's reload and status requests
+(platform_reload_requested, platform_status_requested) */
+static volatile sig_atomic_t platform_reload_signal = 0;
+static volatile sig_atomic_t platform_status_signal = 0;
 /* when the main loop last asked (platform_quit_requested), in monotonic
 seconds; 0 never */
 static volatile long platform_quit_last_poll = 0;
@@ -80,6 +85,33 @@ static long platform_monotonic_seconds(void)
 
 	clock_gettime(CLOCK_MONOTONIC, &now);
 	return (long)now.tv_sec + 1;
+}
+
+/* the control channel's last word when a signal stops the server at once:
+{"event":"shutdown","reason":"signal","signal":<n>,"immediate":true}
+(async-signal-safe: no printf) */
+static void platform_quit_signal_event(int signal_number)
+{
+	static const char start[] = "{\"event\":\"shutdown\",\"reason\":\"signal\",\"signal\":";
+	static const char end[] = ",\"immediate\":true}\n";
+	char line[sizeof(start) + sizeof(end) + 8];
+	char digits[8];
+	unsigned long length = 0;
+	int digit_count = 0;
+	int number = signal_number > 0 && signal_number < 1000 ? signal_number : 0;
+
+	memcpy(line, start, sizeof(start) - 1);
+	length = sizeof(start) - 1;
+	do
+	{
+		digits[digit_count++] = (char)('0' + number % 10);
+		number /= 10;
+	} while (number && digit_count < (int)sizeof(digits));
+	while (digit_count)
+		line[length++] = digits[--digit_count];
+	memcpy(line + length, end, sizeof(end) - 1);
+	length += sizeof(end) - 1;
+	dedicated_control_signal_write(line, length);
 }
 
 /* the first SIGINT or SIGTERM asks the server to shut down between frames,
@@ -94,6 +126,7 @@ static void platform_quit_signal_handler(int signal_number)
 		static const char message[] = "halo-linux: second signal: quitting now\n";
 
 		(void)!write(STDERR_FILENO, message, sizeof(message) - 1);
+		platform_quit_signal_event(signal_number);
 		_exit(128 + signal_number);
 	}
 	if (!last_poll || platform_monotonic_seconds() - last_poll > 2)
@@ -101,9 +134,19 @@ static void platform_quit_signal_handler(int signal_number)
 		static const char message[] = "halo-linux: dedicated server: quit signal outside the main loop: quitting now\n";
 
 		(void)!write(STDERR_FILENO, message, sizeof(message) - 1);
+		platform_quit_signal_event(signal_number);
 		_exit(EXIT_SUCCESS);
 	}
 	platform_quit_signal = signal_number;
+}
+
+/* SIGHUP and SIGUSR1 are only noted: the main loop acts on them */
+static void platform_request_signal_handler(int signal_number)
+{
+	if (signal_number == SIGHUP)
+		platform_reload_signal = 1;
+	else
+		platform_status_signal = 1;
 }
 
 static void platform_install_quit_signals(void)
@@ -115,6 +158,11 @@ static void platform_install_quit_signals(void)
 	sigemptyset(&action.sa_mask);
 	sigaction(SIGINT, &action, NULL);
 	sigaction(SIGTERM, &action, NULL);
+	/* (the default of SIGHUP and SIGUSR1 would stop the server) */
+	action.sa_handler = platform_request_signal_handler;
+	action.sa_flags = SA_RESTART;
+	sigaction(SIGHUP, &action, NULL);
+	sigaction(SIGUSR1, &action, NULL);
 	/* (a peer closing a socket must not kill the server) */
 	signal(SIGPIPE, SIG_IGN);
 }
@@ -130,6 +178,40 @@ int platform_quit_requested(void)
 #endif
 }
 
+/* the signal that asked the server to quit (0 none) */
+int platform_quit_signal_number(void)
+{
+#if !defined(HALO_ANDROID) && !defined(_WIN32)
+	return (int)platform_quit_signal;
+#else
+	return 0;
+#endif
+}
+
+int platform_reload_requested(void)
+{
+#if !defined(HALO_ANDROID) && !defined(_WIN32)
+	if (platform_reload_signal)
+	{
+		platform_reload_signal = 0;
+		return 1;
+	}
+#endif
+	return 0;
+}
+
+int platform_status_requested(void)
+{
+#if !defined(HALO_ANDROID) && !defined(_WIN32)
+	if (platform_status_signal)
+	{
+		platform_status_signal = 0;
+		return 1;
+	}
+#endif
+	return 0;
+}
+
 #ifndef HALO_ANDROID
 /* xbox_files.c's */
 BOOL platform_data_has_maps(void);
@@ -142,6 +224,8 @@ static void platform_dedicated_check_data(void)
 		return;
 	platform_log("dedicated server: no game data (no maps folder in %s); set paths.data in config.toml or "
 		"HALO_DATA_ROOT to the folder that holds Halo's maps folder", platform_data_root());
+	control_fatal("no_game_data", "no maps folder in %s; set paths.data in config.toml or HALO_DATA_ROOT",
+		platform_data_root());
 	exit(EXIT_FAILURE);
 }
 #endif
@@ -170,9 +254,12 @@ BOOL platform_sdl_initialize(void)
 #ifndef _WIN32
 		platform_install_quit_signals();
 #endif
+		/* (the supervisor's pipes, before anything else is written) */
+		dedicated_control_initialize();
 		if (!SDL_Init(SDL_INIT_EVENTS))
 		{
 			platform_log("SDL_Init failed: %s", SDL_GetError());
+			control_fatal("startup_failed", "SDL_Init failed: %s", SDL_GetError());
 			return FALSE;
 		}
 		platform_sdl_started = TRUE;
