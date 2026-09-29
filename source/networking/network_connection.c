@@ -1203,7 +1203,18 @@ struct network_connection *network_connection_new(
 #else
 			reliable_queue_size = 0x8000;
 #endif
+#ifdef HALO_LINUX
+			/* the host's datagrams of several ticks. The idle moves datagrams
+			from the socket into this queue only while a whole one fits, which
+			with the Xbox's 0x640 bytes was one an idle: fewer than the host
+			sends. Any hitch (a slow frame, the join's loading) then left a
+			backlog in the socket that never drained, and every update the
+			client read was seconds old: its own player was put back where the
+			host had had it then (rubber-banding) */
+			unreliable_queue_size = 0x10000;
+#else
 			unreliable_queue_size = 0x640;
+#endif
 		}
 	}
 
