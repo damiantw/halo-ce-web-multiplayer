@@ -43,6 +43,14 @@ void platform_video_swap(void);
 /* frames between the 30 Hz ticks at the display's refresh rate, unless
 display.interpolation is false (port/linux/game/render_interpolation.c) */
 int halo_interpolation_enabled(void);
+/* server.dedicated: the headless dedicated server (port/linux/game/
+dedicated_server.c); always 0 on Android */
+int halo_dedicated_server(void);
+/* a dedicated server was sent SIGINT or SIGTERM (Linux; 0 elsewhere) */
+int platform_quit_requested(void);
+/* starts a dedicated server's SDL and checks its game data (quitting
+without it) */
+int platform_dedicated_initialize(void);
 void platform_mouse_capture(BOOL capture);
 
 /* main thread only; a no-op elsewhere */

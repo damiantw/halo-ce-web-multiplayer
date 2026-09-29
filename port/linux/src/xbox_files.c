@@ -124,6 +124,26 @@ const char *platform_data_root(void)
 	return root;
 }
 
+/* whether the data root found holds a maps folder (the dedicated server,
+sdl_platform.c) */
+BOOL platform_data_has_maps(void)
+{
+	return has_maps(platform_data_root()) ? TRUE : FALSE;
+}
+
+/* whether the maps folder holds <name>.map, in any case (the dedicated
+server's rotation, port/linux/game/dedicated_server.c) */
+BOOL platform_data_has_map(const char *name)
+{
+	char maps[256], file[256], on_disk[256], path[MAX_PATH];
+
+	if (!posix_find_entry_case_insensitive(platform_data_root(), "maps", maps, sizeof(maps)))
+		return FALSE;
+	snprintf(path, sizeof(path), "%s/%s", platform_data_root(), maps);
+	snprintf(file, sizeof(file), "%s.map", name);
+	return posix_find_entry_case_insensitive(path, file, on_disk, sizeof(on_disk)) ? TRUE : FALSE;
+}
+
 /* creates every missing directory along path */
 static void make_directories(const char *path)
 {
