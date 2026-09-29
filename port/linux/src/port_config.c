@@ -20,6 +20,10 @@ it exists, so that the player's edits and comments stay.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if !defined(HALO_ANDROID) && !defined(_WIN32)
+#include <strings.h>
+#include "posix.h"
+#endif
 
 /* ---------- the settings */
 
@@ -290,6 +294,55 @@ static pthread_mutex_t config_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /* ---------- the file */
 
+#if !defined(HALO_ANDROID) && !defined(_WIN32)
+/* an environment variable's boolean text, as _environment_value reads it */
+static int config_environment_true(const char *name)
+{
+	const char *text = getenv(name);
+
+	return text && *text && strcasecmp(text, "0") && strcasecmp(text, "false") && strcasecmp(text, "no") &&
+		strcasecmp(text, "off");
+}
+
+/* config.toml in the save root (xbox_files.c's platform_save_root, from the
+environment only: paths.saves is in the file being looked for), its folders
+made; 0 if there is no save root */
+static int config_save_root_path(char *path, size_t size)
+{
+	const char *saves = getenv("HALO_SAVE_ROOT");
+	const char *data_home = getenv("XDG_DATA_HOME");
+	const char *home = getenv("HOME");
+	size_t index;
+	int length;
+
+	if (saves && *saves)
+		length = snprintf(path, size, "%s", saves);
+	else if (data_home && *data_home)
+		length = snprintf(path, size, "%s/halo-linux", data_home);
+	else if (home && *home)
+		length = snprintf(path, size, "%s/.local/share/halo-linux", home);
+	else
+		return 0;
+	if (length <= 0 || (size_t)length + sizeof("/config.toml") > size)
+		return 0;
+	while (length > 1 && path[length - 1] == '/')
+		path[--length] = 0;
+	for (index = 1; index <= (size_t)length; index++)
+	{
+		if (path[index] == '/' || path[index] == 0)
+		{
+			char separator = path[index];
+
+			path[index] = 0;
+			posix_make_directory(path);
+			path[index] = separator;
+		}
+	}
+	snprintf(path + length, size - (size_t)length, "/config.toml");
+	return 1;
+}
+#endif
+
 static void config_path(char *path, size_t size)
 {
 #ifdef HALO_ANDROID
@@ -300,7 +353,22 @@ static void config_path(char *path, size_t size)
 #else
 	/* the executable's folder, with its separator */
 	const char *base = SDL_GetBasePath();
+	const char *named = getenv("HALO_CONFIG");
 
+	/* a file named for this run */
+	if (named && *named)
+	{
+		snprintf(path, size, "%s", named);
+		return;
+	}
+#ifndef _WIN32
+	/* a dedicated server started with HALO_DEDICATED: the save root's
+	(config_save_root_path), not the executable's folder, which can be
+	read-only, shared by several servers, or not the game's at all (a bundle
+	that starts the game through its own loader, whose folder SDL reports) */
+	if (config_environment_true("HALO_DEDICATED") && config_save_root_path(path, size))
+		return;
+#endif
 	snprintf(path, size, "%sconfig.toml", base ? base : "");
 #endif
 }

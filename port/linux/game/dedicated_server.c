@@ -69,6 +69,7 @@ int platform_quit_signal_number(void);
 int platform_reload_requested(void);
 int platform_status_requested(void);
 int platform_data_has_map(char const *name);
+int platform_data_map_type(char const *name);
 /* network_server_manager.c's */
 short network_game_server_dedicated_player_count(struct network_game_server *server);
 boolean network_game_server_dedicated_in_pregame(struct network_game_server *server);
@@ -284,6 +285,7 @@ static boolean dedicated_parse_entry(
 	char const *colon = strchr(text, ':');
 	char const *base;
 	size_t length = colon ? (size_t)(colon - text) : strlen(text);
+	int map_type;
 
 	if (!length)
 	{
@@ -310,6 +312,16 @@ static boolean dedicated_parse_entry(
 	if (!platform_data_has_map(base))
 	{
 		snprintf(reason, sizeof(reason), "no maps/%s.map", base);
+		dedicated_reject(text, reason);
+		return FALSE;
+	}
+	/* (a campaign level or the main menu cannot be hosted: the players'
+	machines leave, and the lobby waits forever) */
+	map_type = platform_data_map_type(base);
+	if (map_type == 0 || map_type == 2)
+	{
+		snprintf(reason, sizeof(reason), "maps/%s.map is %s, not a multiplayer map", base,
+			map_type == 0 ? "a campaign level" : "the main menu");
 		dedicated_reject(text, reason);
 		return FALSE;
 	}
@@ -496,6 +508,42 @@ static void dedicated_upcoming(
 		dedicated_peek_next(entry, &position);
 }
 
+/* the names the built-in game types show (at most 11 characters: a
+variant's name holds 12 with its terminator) */
+static char const *dedicated_variant_display_name(
+	char const *gametype)
+{
+	static struct
+	{
+		char const *gametype;
+		char const *name;
+	} const names[] =
+	{
+		{ "slayer", "Slayer" },
+		{ "team_slayer", "Team Slayer" },
+		{ "ctf", "CTF" },
+		{ "ironctf", "Iron CTF" },
+		{ "king", "King" },
+		{ "team_king", "Team King" },
+		{ "oddball", "Oddball" },
+		{ "team_oddball", "TeamOddball" },
+		{ "race", "Race" },
+		{ "team_race", "Team Race" },
+		{ "rally", "Rally" },
+		{ "elimination", "Elimination" },
+		{ "stalker", "Stalker" },
+		{ "accumulation", "Accumulate" },
+	};
+	short index;
+
+	for (index = 0; index < NUMBEROF(names); index++)
+	{
+		if (!strcmp(names[index].gametype, gametype))
+			return names[index].name;
+	}
+	return gametype;
+}
+
 static void dedicated_entry_variant(
 	struct dedicated_rotation_entry const *entry,
 	struct game_variant *variant)
@@ -504,6 +552,18 @@ static void dedicated_entry_variant(
 
 	csmemset(&built, 0, sizeof(built));
 	*variant = *game_engine_get_variant_by_name(&built, entry->variant_name);
+	/* the built-in variants have no name (the host's pregame screen names
+	its choices from its own list), so the players' lobby and scores showed
+	an empty game type: give the variant the game type's name */
+	if (!variant->human_readable_game_description[0])
+	{
+		char const *name = dedicated_variant_display_name(entry->variant_name);
+		short index;
+
+		for (index = 0; name[index] && index < NUMBEROF(variant->human_readable_game_description) - 1; index++)
+			variant->human_readable_game_description[index] = (wchar_t)(unsigned char)name[index];
+		variant->human_readable_game_description[index] = 0;
+	}
 }
 
 /* the game the next reset to the lobby sets up
