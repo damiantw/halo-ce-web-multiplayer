@@ -174,7 +174,12 @@ static const struct config_setting config_settings[] =
 		"lobby (0-600); 0 starts the game straight away." },
 	{ "server.minimum_players", _config_integer, "1", "HALO_SERVER_MINIMUM_PLAYERS", _environment_value,
 		_platform_desktop,
-		"Players the dedicated server waits for before counting down (1-127)." },
+		"Players the dedicated server waits for before counting down (1-127;\n"
+		"at most server.max_players)." },
+	{ "server.max_players", _config_integer, "16", "HALO_SERVER_MAX_PLAYERS", _environment_value,
+		_platform_desktop,
+		"Players the dedicated server's games take at most (1-16, as system link\n"
+		"on the Xbox); a machine that would go over is refused as the game is full." },
 	{ "server.postgame_seconds", _config_integer, "15", "HALO_SERVER_POSTGAME", _environment_value, _platform_desktop,
 		"Seconds the dedicated server shows the scores after a game before going\n"
 		"back to the lobby with the rotation's next game." },

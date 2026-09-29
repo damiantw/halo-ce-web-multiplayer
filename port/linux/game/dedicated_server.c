@@ -57,13 +57,15 @@ short network_game_server_dedicated_player_count(struct network_game_server *ser
 boolean network_game_server_dedicated_in_pregame(struct network_game_server *server);
 boolean network_game_server_dedicated_in_game(struct network_game_server *server);
 void network_game_server_dedicated_lobby_update(struct network_game_server *server, long minimum_players,
-	long countdown_milliseconds);
+	long maximum_players, long countdown_milliseconds);
 
 enum
 {
 	MAXIMUM_ROTATION_ENTRIES = 64,
 	DEDICATED_MAP_PATH_LENGTH = 128,
 	DEDICATED_VARIANT_NAME_LENGTH = 32,
+	/* server.max_players: system link's players on the Xbox */
+	DEDICATED_MAXIMUM_PLAYERS = 16,
 };
 
 enum
@@ -91,6 +93,7 @@ static struct
 	/* the entry the server's lobby has (NONE none yet) */
 	short applied_index;
 	long minimum_players;
+	long maximum_players;
 	long countdown_milliseconds;
 	real postgame_seconds;
 	real empty_seconds;
@@ -217,7 +220,14 @@ static void dedicated_read_settings(
 		dedicated.rotation_count = 1;
 	}
 
+	dedicated.maximum_players = PIN(config_integer("server.max_players"), 1, DEDICATED_MAXIMUM_PLAYERS);
 	dedicated.minimum_players = PIN(config_integer("server.minimum_players"), 1, 127);
+	if (dedicated.minimum_players > dedicated.maximum_players)
+	{
+		platform_log("dedicated server: server.minimum_players %ld is more than server.max_players %ld; using %ld",
+			dedicated.minimum_players, dedicated.maximum_players, dedicated.maximum_players);
+		dedicated.minimum_players = dedicated.maximum_players;
+	}
 	dedicated.countdown_milliseconds = PIN(config_integer("server.countdown"), 0, 600) * 1000;
 	/* (the 999 the original countdowns end on, so the last second shows) */
 	if (dedicated.countdown_milliseconds)
@@ -226,8 +236,9 @@ static void dedicated_read_settings(
 	dedicated.empty_seconds = dedicated_seconds_setting("server.empty_seconds", 0, 86400);
 	dedicated.rehost_seconds = dedicated_seconds_setting("server.rehost_seconds", 1, 3600);
 
-	platform_log("dedicated server: \"%s\", at least %ld players, %ld second countdown, %d game rotation:",
-		config_string("server.name"), dedicated.minimum_players, config_integer("server.countdown"),
+	platform_log("dedicated server: \"%s\", %ld to %ld players, %ld second countdown, %d game rotation:",
+		config_string("server.name"), dedicated.minimum_players, dedicated.maximum_players,
+		config_integer("server.countdown"),
 		dedicated.rotation_count);
 	for (index = 0; index < dedicated.rotation_count; index++)
 	{
@@ -447,7 +458,7 @@ void dedicated_server_update(
 			would have every machine precache the map again) */
 			if (dedicated.applied_index != dedicated.rotation_index)
 				dedicated_apply_to_lobby(server, dedicated.rotation_index);
-			network_game_server_dedicated_lobby_update(server, dedicated.minimum_players,
+			network_game_server_dedicated_lobby_update(server, dedicated.minimum_players, dedicated.maximum_players,
 				dedicated.countdown_milliseconds);
 			break;
 		case 1:

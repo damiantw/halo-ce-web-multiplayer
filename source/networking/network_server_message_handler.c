@@ -1803,6 +1803,44 @@ static boolean network_game_server_handle_message_client_join_game_request(
 
 						result = FALSE;
 					}
+#ifdef HALO_LINUX
+					/* a full game (the game's maximum players, which a dedicated
+					server sets: server.max_players) refuses the machine, as the
+					client's list expects, rather than taking it with no room for
+					its players */
+					else if (network_game_server_get_game(server)->player_count >=
+						network_game_server_get_game(server)->maximum_player_count)
+					{
+						struct message_server_machine_rejected rejection;
+						struct network_message *reply;
+
+						rejection.reason = _rejection_code_game_is_full;
+						network_event(
+							"server refused client '%s' @%s because the game is full (%d players)",
+							join_game_request.machine_name,
+							transport_address_to_string(&source_address),
+							network_game_server_get_game(server)->player_count);
+						reply = create_network_game_message(
+							_message_server_machine_rejected,
+							&rejection,
+							sizeof(rejection));
+						if (reply)
+						{
+							word message_size = GET_MESSAGE_SIZE(reply->header);
+							struct network_connection *connection =
+								network_game_server_get_client_connection(server_client_machine);
+
+							network_game_server_write(
+								connection,
+								reply,
+								message_size,
+								NULL,
+								1);
+						}
+
+						result = FALSE;
+					}
+#endif
 					else
 					{
 						if (network_game_server_accept_client_machine_into_game(server, server_client_machine))

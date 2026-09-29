@@ -183,7 +183,7 @@ the setting for one start of the game. It has priority over the file.
 | `discord.application_id` | the application of the project | `HALO_DISCORD_APPLICATION` | The Discord application for invites. Empty: no Discord. |
 | `update.auto` | `true` | `HALO_UPDATE_AUTO` | `true`: at start-up, the game looks for a new version. Refer to "Updates". `false`: the game does not look. |
 | `server.dedicated` | `false` | `HALO_DEDICATED` | `true`: a headless dedicated server for system link. Refer to "Dedicated server". |
-| `server.name`, `server.rotation`, `server.countdown`, `server.minimum_players`, `server.postgame_seconds`, `server.empty_seconds`, `server.rehost_seconds` | refer to "Dedicated server" | `HALO_SERVER_NAME`, `HALO_SERVER_ROTATION`, `HALO_SERVER_COUNTDOWN`, `HALO_SERVER_MINIMUM_PLAYERS`, `HALO_SERVER_POSTGAME`, `HALO_SERVER_EMPTY`, `HALO_SERVER_REHOST` | The settings of the dedicated server. |
+| `server.name`, `server.rotation`, `server.countdown`, `server.minimum_players`, `server.max_players`, `server.postgame_seconds`, `server.empty_seconds`, `server.rehost_seconds` | refer to "Dedicated server" | `HALO_SERVER_NAME`, `HALO_SERVER_ROTATION`, `HALO_SERVER_COUNTDOWN`, `HALO_SERVER_MINIMUM_PLAYERS`, `HALO_SERVER_MAX_PLAYERS`, `HALO_SERVER_POSTGAME`, `HALO_SERVER_EMPTY`, `HALO_SERVER_REHOST` | The settings of the dedicated server. |
 | `debug.update_answer` | `""` | `HALO_UPDATE_ANSWER` | The answer to the update question, for automatic tests: `yes`, `no` or `never`. Empty: the game asks. |
 | `debug.exit_after` | `0.0` | `HALO_EXIT_AFTER` | The game stops after this number of seconds. `0`: never. |
 | `debug.screenshot_directory`, `debug.screenshot_every` | `""`, `0` | `HALO_SCREENSHOT_DIR`, `HALO_SCREENSHOT_EVERY` | The game writes each Nth frame to this folder as a BMP file. |
@@ -347,6 +347,7 @@ The server:
    name `server.name`.
 2. Starts the countdown when `server.minimum_players` players are in the
    lobby. The machine of the server has no player, and is not in the count.
+   The lobby takes `server.max_players` players at most.
 3. Plays the game. If all the players go, the game stops after
    `server.empty_seconds`.
 4. Shows the scores for `server.postgame_seconds`, then opens the lobby
@@ -372,7 +373,8 @@ the server again.
 | `server.name` | `"Halo Dedicated"` | `HALO_SERVER_NAME` | The name of the game in the list of system link games. The list shows 15 characters. Use ASCII characters. |
 | `server.rotation` | `"bloodgulch:slayer"` | `HALO_SERVER_ROTATION` | The games, in sequence: `map[:gametype]`, with commas, semicolons or spaces between them. |
 | `server.countdown` | `30` | `HALO_SERVER_COUNTDOWN` | The seconds of the countdown in the lobby (0 to 600). `0`: the game starts immediately, as the immediate start of the host does. |
-| `server.minimum_players` | `1` | `HALO_SERVER_MINIMUM_PLAYERS` | The players that the countdown waits for (1 to 127). |
+| `server.minimum_players` | `1` | `HALO_SERVER_MINIMUM_PLAYERS` | The players that the countdown waits for (1 to `server.max_players`). |
+| `server.max_players` | `16` | `HALO_SERVER_MAX_PLAYERS` | The maximum players in the game (1 to 16, the system link limit of the Xbox). The list of system link games shows it. When the game is full, the server refuses a machine that tries to join ("game is full"). |
 | `server.postgame_seconds` | `15` | `HALO_SERVER_POSTGAME` | The seconds that the scores show after a game (after the 12 seconds of the end of the game). |
 | `server.empty_seconds` | `10` | `HALO_SERVER_EMPTY` | The seconds that a game without players continues. `0`: the game continues. |
 | `server.rehost_seconds` | `5` | `HALO_SERVER_REHOST` | The seconds before the server hosts again after it lost the game. |

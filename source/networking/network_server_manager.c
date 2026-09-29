@@ -2478,17 +2478,20 @@ boolean network_game_server_dedicated_in_game(
 
 /* every frame in the lobby: the countdown is never left paused (as a
 host's map choice screen leaves it, network_game_reset_to_pregame_ui), the
-game waits for minimum_players, and starts countdown_milliseconds after
-enough players are in (0 at once, as the host's immediate start request
-does) */
+game takes at most maximum_players (network_game_add_player, the join
+request and the advertisement use it; the players already in stay), waits
+for minimum_players, and starts countdown_milliseconds after enough players
+are in (0 at once, as the host's immediate start request does) */
 void network_game_server_dedicated_lobby_update(
 	struct network_game_server *server,
 	long minimum_players,
+	long maximum_players,
 	long countdown_milliseconds)
 {
 	if (!network_game_server_dedicated_in_pregame(server))
 		return;
-	server->game.minimum_players = (char)PIN(minimum_players, 1, 127);
+	server->game.maximum_players = (byte)PIN(maximum_players, 1, MAXIMUM_NETWORK_PLAYER_COUNT);
+	server->game.minimum_players = (char)PIN(minimum_players, 1, server->game.maximum_players);
 	if (server->countdown_state.paused)
 	{
 		server->countdown_state.paused = FALSE;
