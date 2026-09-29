@@ -851,6 +851,11 @@ void multiplayer_type_menu_update_extended_description(
 		index++;
 	}
 
+#ifdef HALO_MULTIPLAYER_ONLY
+	/* (the multiplayer-only build makes no Co-op item, the list's first:
+	ui_widget.c ui_widget_multiplayer_only_hidden) */
+	index++;
+#endif
 	if (index != NONE)
 	{
 		list_widget->parameters.list.extended_description->child->

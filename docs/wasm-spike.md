@@ -25,7 +25,8 @@ Screenshots (from the user's own disc data; not committed):
 source /workspace/emsdk/emsdk_env.sh          # emsdk "latest" = emcc 6.0.10, SDL3 port 3.4.2
 python3 configure.py && ninja web              # -> build/web/halo.{js,wasm} (3.0 MB wasm, 0.3 MB js), ~10 s on 8 cores
 python3 port/web/serve.py --maps /path/to/maps --port 8000   # COOP/COEP/CORP, Range, /maps/index.json
-# open http://127.0.0.1:8000/?preload=ui   (other options: ?preload=ui,bloodgulch  ?env=A=1,B=2  ?init=<console commands>)
+# open http://127.0.0.1:8000/   (only ui.map is fetched first, other maps on demand; options: ?preload=all  ?env=A=1,B=2  ?init=<console commands>)
+# the gateway, the multiplayer-only build and system link from the browser: docs/gateway.md
 ```
 
 ## What compiled

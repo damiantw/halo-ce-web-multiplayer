@@ -2121,9 +2121,30 @@ static void main_won_map_private(
 	return;
 }
 
+#ifdef HALO_MULTIPLAYER_ONLY
+/* port/linux/src/xbox_files.c's: 0 campaign, 1 multiplayer, 2 main menu */
+int platform_data_map_type(char const *name);
+#endif
+
 void main_set_map_name(
 	char const *map_name)
 {
+#ifdef HALO_MULTIPLAYER_ONLY
+	/* the multiplayer-only build (the web client, tools/web_build.py) loads
+	no campaign level, as the dedicated server's rotation plays none: only a
+	multiplayer map starts a local game (a system link game loads its map
+	through network_game_create_game_objects) */
+	{
+		char const *base = strrchr(map_name, '\\');
+
+		base = base ? base + 1 : map_name;
+		if (platform_data_map_type(base) != _scenario_type_multiplayer)
+		{
+			error(_error_silent, "'%s' is not a multiplayer map: this build is multiplayer only", map_name);
+			return;
+		}
+	}
+#endif
 	main_globals.want_to_be_at_main_menu = FALSE;
 	csstrncpy(main_globals.soloplayer_map_name, map_name, NUMBEROF(main_globals.soloplayer_map_name) - 1);
 	main_globals.soloplayer_map_name[NUMBEROF(main_globals.soloplayer_map_name) - 1] = 0;

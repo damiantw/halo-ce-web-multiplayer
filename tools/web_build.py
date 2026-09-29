@@ -133,7 +133,10 @@ def generate_web_build(n: Writer, sln: Any) -> None:
         rspfile="$out.rsp",
         rspfile_content="$in_newline",
     )
-    abi = " ".join(WEB_ABI_FLAGS + (["-DHALO_RELEASE"] if getattr(sln, "port_release", False) else []))
+    # multiplayer only unless configured with --web-campaign: no Campaign in
+    # the main menu and no campaign level loads (docs/gateway.md)
+    abi = " ".join(WEB_ABI_FLAGS + (["-DHALO_RELEASE"] if getattr(sln, "port_release", False) else [])
+                   + ([] if getattr(sln, "web_campaign", False) else ["-DHALO_MULTIPLAYER_ONLY=1"]))
     port_include = PORT_DIR / "include"
     sdk_flags = f"-idirafter {XDK_INCLUDE}"
     excluded = set(config.get("exclude_sources", []))
