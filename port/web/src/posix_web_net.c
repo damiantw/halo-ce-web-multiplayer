@@ -51,6 +51,7 @@ the gateway, which passes them to the servers the token allows.
 extern void webnet_connect(const char *url, const char *token, const char *token_url);
 extern int webnet_send(const void *frame, int length);
 extern int webnet_receive(void *frame, int capacity);
+extern int webnet_generation(void);
 
 /* ---------- Winsock errors */
 
@@ -240,15 +241,56 @@ static void deliver_datagram(uint32_t source_ip, uint16_t source_port, uint16_t 
 	}
 }
 
+/* The WebSocket closed (webnet_generation counts the closes): the
+gateway's streams went with its session, and a new session knows nothing of
+them. Close them here too, so the game sees its connection lost at once
+(and leaves the game) instead of writing into a stream nobody reads. */
+static void streams_lost(void)
+{
+	int index;
+
+	for (index = 0; index < SOCKET_COUNT; index++)
+	{
+		struct web_socket *socket = &sockets[index];
+
+		if (socket->used && socket->stream && socket->local_peer < 0)
+		{
+			socket->peer_closed = 1;
+			if (socket->connecting)
+			{
+				socket->connecting = 0;
+				socket->failed = 1;
+			}
+		}
+	}
+}
+
+/* whether this is the thread the WebSocket lives on (its frames arrive only
+when this thread yields to its event loop) */
+int posix_web_net_owner_thread(void)
+{
+	net_initialize();
+	return gateway_opened && pthread_equal(pthread_self(), owner_thread);
+}
+
 /* takes the gateway's frames that have arrived */
 static void pump(void)
 {
 	static unsigned char frame[FRAME_BYTES];
+	static int generation;
 	int length;
 
 	net_initialize();
 	if (!gateway_opened)
 		return;
+	/* (the JavaScript side is per thread: only the owner's is the real one) */
+	if (!pthread_equal(pthread_self(), owner_thread))
+		return;
+	if (webnet_generation() != generation)
+	{
+		generation = webnet_generation();
+		streams_lost();
+	}
 	while ((length = webnet_receive(frame, sizeof(frame))) > 0)
 	{
 		struct web_socket *socket;

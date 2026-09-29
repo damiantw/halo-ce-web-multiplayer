@@ -122,6 +122,7 @@ when the map loads (cache_files_windows.c). */
 #include <time.h>
 
 BOOL platform_data_has_map(const char *name);
+int posix_web_net_owner_thread(void);
 
 static void web_request_map(const char *name, volatile int *state)
 {
@@ -166,9 +167,19 @@ BOOL web_fetch_map(const char *name, BOOL wait)
 	web_request_map(name, &state);
 	while (!state)
 	{
-		struct timespec pause = { 0, 20 * 1000 * 1000 };
+		/* on the gateway's thread, yield to its event loop (JSPI) while
+		waiting, so the host's messages keep being taken during the
+		download rather than pile up unread */
+		if (posix_web_net_owner_thread())
+		{
+			emscripten_sleep(20);
+		}
+		else
+		{
+			struct timespec pause = { 0, 20 * 1000 * 1000 };
 
-		nanosleep(&pause, NULL);
+			nanosleep(&pause, NULL);
+		}
 		waited_ms += 20;
 	}
 	platform_log("web: maps/%s.map %s after %u ms", name, state > 0 ? "fetched" : "not found", waited_ms);

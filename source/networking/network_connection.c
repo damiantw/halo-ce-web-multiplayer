@@ -234,6 +234,9 @@ enum
 	RELIABLE_MESSAGE_MAXIMUM_SIZE = HALO_PORT_MAXIMUM_NETWORK_MESSAGE_SIZE,
 	/* how long a stream write waits for a peer that is not reading */
 	NETWORK_CONNECTION_WRITE_TIMEOUT = 2000,
+	/* a gap between two idles of a connection longer than this is this
+	machine's own stall (network_connection_idle) */
+	NETWORK_CONNECTION_STALL_THRESHOLD = 1000,
 #else
 	RELIABLE_MESSAGE_MAXIMUM_SIZE = 2048,
 #endif
@@ -277,6 +280,11 @@ struct network_connection
 	unsigned long flags;
 	word well_known_port;
 	word padding36;
+#ifdef HALO_LINUX
+	/* port: when network_connection_idle last ran for it (0 before the
+	first time) */
+	unsigned long last_idle_time;
+#endif
 };
 
 struct network_server_connection
@@ -1195,7 +1203,18 @@ struct network_connection *network_connection_new(
 #else
 			reliable_queue_size = 0x8000;
 #endif
+#ifdef HALO_LINUX
+			/* the host's datagrams of several ticks. The idle moves datagrams
+			from the socket into this queue only while a whole one fits, which
+			with the Xbox's 0x640 bytes was one an idle: fewer than the host
+			sends. Any hitch (a slow frame, the join's loading) then left a
+			backlog in the socket that never drained, and every update the
+			client read was seconds old: its own player was put back where the
+			host had had it then (rubber-banding) */
+			unreliable_queue_size = 0x10000;
+#else
 			unreliable_queue_size = 0x640;
+#endif
 		}
 	}
 
@@ -1630,6 +1649,21 @@ boolean network_connection_idle(
 		connection);
 
 	SET_FLAG(connection->flags, _connection_going_stale_bit, FALSE);
+#ifdef HALO_LINUX
+	/* A machine that stalled (a map loading, or a frame taking seconds; in
+	the browser the gateway's messages are only taken in between frames,
+	port/web/src/posix_web_net.c) did not listen meanwhile, so what its peer
+	sent is still waiting: the stall is not the peer's silence. Without
+	this, a browser client that took more than 15 s to load a game in
+	progress timed out of it as soon as it was done ("the game host went
+	down") with the host's keep-alives waiting unread. */
+	if (connection->last_idle_time &&
+		current_time - connection->last_idle_time > NETWORK_CONNECTION_STALL_THRESHOLD)
+	{
+		connection->last_keep_alive_time += current_time - connection->last_idle_time;
+	}
+	connection->last_idle_time = current_time;
+#endif
 	if (timeout)
 	{
 		if (current_time > connection->last_keep_alive_time + MILLISECONDS_PER_SECOND * 5)

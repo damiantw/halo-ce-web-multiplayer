@@ -4,7 +4,10 @@
 // thread that uses it (the game's), so its messages are taken when that
 // thread returns to its event loop, which it does at every frame.
 addToLibrary({
-	$WEBNET: { socket: null, inbox: [], outbox: [], open: false },
+	// generation: how many times the WebSocket has closed. The gateway's
+	// streams die with it (a new session has none), and posix_web_net.c
+	// closes its streams when it sees the count change.
+	$WEBNET: { socket: null, inbox: [], outbox: [], open: false, generation: 0 },
 
 	webnet_connect__deps: ["$WEBNET", "$UTF8ToString"],
 	webnet_connect: (url, token, tokenUrl) => {
@@ -36,11 +39,28 @@ addToLibrary({
 				WEBNET.outbox = [];
 				err(`[webnet] connected to ${url}`);
 			};
+			// Frames are taken between the game's frames. Datagrams (type 1)
+			// may be dropped when too many are waiting, as the network would;
+			// stream frames never are: a hole in a stream puts the game out
+			// of step with the host. Should even those pile up, the session
+			// is closed (the game sees its streams closed) rather than
+			// silently corrupted.
 			socket.onmessage = (event) => {
-				if (WEBNET.inbox.length < 4096) WEBNET.inbox.push(new Uint8Array(event.data));
+				const frame = new Uint8Array(event.data);
+				if (frame[0] === 1 && WEBNET.inbox.length >= 4096) return;
+				if (WEBNET.inbox.length >= 65536) {
+					err(`[webnet] ${WEBNET.inbox.length} frames waiting; closing the session`);
+					socket.close(4000, "client backlog");
+					return;
+				}
+				WEBNET.inbox.push(frame);
 			};
 			socket.onclose = (event) => {
 				WEBNET.open = false;
+				WEBNET.generation++;
+				// what was queued for the dead session's streams means nothing
+				// to the next one
+				WEBNET.outbox = WEBNET.outbox.filter((frame) => frame[0] === 1);
 				// (1008: the gateway's policy refusal, a token for other servers)
 				if (++attempts > 5 || event.code === 1008) {
 					err(`[webnet] disconnected from ${url} (${event.code}); giving up`);
@@ -67,6 +87,9 @@ addToLibrary({
 		else return 0;
 		return 1;
 	},
+
+	webnet_generation__deps: ["$WEBNET"],
+	webnet_generation: () => WEBNET.generation,
 
 	webnet_receive__deps: ["$WEBNET"],
 	webnet_receive: (frame, capacity) => {

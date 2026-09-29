@@ -93,7 +93,6 @@ WEB_LDFLAGS = [
     "-sENVIRONMENT=web,worker",
     "-sWASMFS=0",
     "-sGL_ENABLE_GET_PROC_ADDRESS=1",
-    "-sASSERTIONS=1",
     "--profiling-funcs",
     "-lwebsocket.js",
     "--js-library", "port/web/src/web_library.js",
@@ -210,7 +209,12 @@ def generate_web_build(n: Writer, sln: Any) -> None:
         rule="web_link",
         inputs=objects,
         implicit=[WEB_DIR / "src" / "web_library.js"],
-        variables={"ldflags": " ".join(WEB_LDFLAGS)},
+        # Emscripten's runtime checks (heap, stack cookie, argument checks
+        # in the JavaScript glue) in development builds only: a
+        # configure.py --release build has none, as it has no game
+        # assertions
+        variables={"ldflags": " ".join(WEB_LDFLAGS + [
+            "-sASSERTIONS=0" if getattr(sln, "port_release", False) else "-sASSERTIONS=1"])},
         implicit_outputs=[build_dir / "halo.wasm"],
     )
     n.build(outputs="web", rule="phony", inputs=output)

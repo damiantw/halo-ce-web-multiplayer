@@ -281,6 +281,44 @@ func TestAddresses(t *testing.T) {
 	}
 }
 
+func TestSameUserReplacesSession(t *testing.T) {
+	f := newFixture(t, nil)
+	want := netip.AddrFrom4([4]byte{127, f.block, 3, 5})
+	old, a := f.join(claims{Sub: "u1", Adr: want.String()})
+	if a != want {
+		t.Fatalf("address %v, want %v", a, want)
+	}
+	// another user's token for the address is still refused
+	if _, resp, err := f.dial(f.token(claims{Sub: "u2", Adr: want.String()})); err == nil || resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("other user: %v", err)
+	}
+	// the same user's newer session (a reload, a second tab) takes it over;
+	// the old one reads the 1008 close (its page then gives up)
+	closed := make(chan websocket.StatusCode, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		for {
+			if _, _, err := old.Read(ctx); err != nil {
+				closed <- websocket.CloseStatus(err)
+				return
+			}
+		}
+	}()
+	_, b := f.join(claims{Sub: "u1", Adr: want.String()})
+	if b != want {
+		t.Fatalf("replacement address %v, want %v", b, want)
+	}
+	select {
+	case code := <-closed:
+		if code != websocket.StatusPolicyViolation {
+			t.Fatalf("old session closed with %v, want 1008", code)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("old session not closed")
+	}
+}
+
 func TestDiscoveryAndUDP(t *testing.T) {
 	f := newFixture(t, nil)
 	server := listenUDP(t, f.server, 5150)
