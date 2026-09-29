@@ -659,6 +659,7 @@ void network_test_update(boolean main_menu_loaded, real seconds);
 /* the headless dedicated server (port/linux/game/dedicated_server.c,
 port/linux/src/sdl_platform.c) */
 void dedicated_server_update(boolean main_menu_loaded, real seconds);
+void dedicated_server_fatal(char const *code, char const *message);
 int halo_dedicated_server(void);
 void platform_log(char const *format, ...);
 #endif
@@ -2916,6 +2917,7 @@ void halt_and_catch_fire(
 		snprintf(message, sizeof(message), "the game halted (%s; debug.txt in the data root has the details)",
 			halo_halt_reason[0] ? halo_halt_reason : "an error");
 		platform_log("dedicated server: fatal: %s; quitting", message);
+		dedicated_server_fatal("halt", message);
 		exit(EXIT_FAILURE);
 	}
 #endif
@@ -3038,6 +3040,8 @@ void main_loop_of_death(
 	{
 		platform_log("dedicated server: fatal: the game data could not be read (a damaged or missing map; "
 			"debug.txt in the data root has the details); quitting");
+		dedicated_server_fatal("map_load_failed", "the game data could not be read (a damaged or missing map; "
+			"debug.txt in the data root has the details)");
 		exit(EXIT_FAILURE);
 	}
 #endif

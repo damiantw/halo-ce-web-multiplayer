@@ -48,6 +48,11 @@ struct posix_file_information
 /* stat()/fstat(); return 0 on success or -1 with errno set */
 int posix_stat(const char *path, struct posix_file_information *information);
 int posix_fstat(int descriptor, struct posix_file_information *information);
+/* 1 when the descriptor is a pipe or a socket (the dedicated server's
+control channel, dedicated_control.c) */
+int posix_descriptor_is_stream(int descriptor);
+/* 1 when the two descriptors are the same file */
+int posix_descriptors_same_file(int first, int second);
 
 /* set access and modification times; a zero seconds value leaves it alone */
 int posix_set_file_times(const char *path,

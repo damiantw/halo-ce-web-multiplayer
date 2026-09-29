@@ -59,6 +59,21 @@ int posix_fstat(int descriptor, struct posix_file_information *information)
 	return 0;
 }
 
+int posix_descriptor_is_stream(int descriptor)
+{
+	struct stat st;
+
+	return fstat(descriptor, &st) == 0 && (S_ISFIFO(st.st_mode) || S_ISSOCK(st.st_mode));
+}
+
+int posix_descriptors_same_file(int first, int second)
+{
+	struct stat first_st, second_st;
+
+	return fstat(first, &first_st) == 0 && fstat(second, &second_st) == 0 && first_st.st_dev == second_st.st_dev &&
+		first_st.st_ino == second_st.st_ino;
+}
+
 int posix_set_file_times(const char *path,
 	posix_ulong access_seconds, posix_ulong access_nanoseconds,
 	posix_ulong modification_seconds, posix_ulong modification_nanoseconds)

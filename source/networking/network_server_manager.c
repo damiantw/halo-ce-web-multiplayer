@@ -2506,6 +2506,105 @@ void network_game_server_dedicated_lobby_update(
 	}
 }
 
+/* the dedicated server's control channel (port/linux/game/dedicated_server.c,
+port/linux/README.md "Dedicated server control") */
+
+/* the lobby's countdown: TRUE, and the milliseconds left, while it runs */
+boolean network_game_server_dedicated_countdown(
+	struct network_game_server *server,
+	long *milliseconds_remaining)
+{
+	if (!network_game_server_dedicated_in_pregame(server) ||
+		!server->countdown_state.active ||
+		server->countdown_state.paused)
+	{
+		return FALSE;
+	}
+	*milliseconds_remaining = countdown_timer_get_time_remaining(&server->countdown_state.timer);
+	return TRUE;
+}
+
+/* the player in a slot of the server's list (FALSE for an empty slot): the
+name's 12 characters, the machine, its controller and the lobby's team */
+boolean network_game_server_dedicated_player(
+	struct network_game_server *server,
+	long slot,
+	wchar_t *name,
+	long *machine_index,
+	long *controller_index,
+	long *team_index)
+{
+	struct network_player *player;
+
+	if (!server || slot < 0 || slot >= MAXIMUM_NETWORK_PLAYER_COUNT)
+		return FALSE;
+	player = &server->game.players[slot];
+	if (!network_player_is_valid(player))
+		return FALSE;
+	csmemcpy(name, player->name, sizeof(player->name));
+	*machine_index = player->machine_index;
+	*controller_index = player->controller_index;
+	*team_index = player->team_index;
+	return TRUE;
+}
+
+/* a machine in the server's game (FALSE if there is none of that index):
+its name's 32 characters and, while it has a connection, its IPv4 address
+and port (else 0) */
+boolean network_game_server_dedicated_machine(
+	struct network_game_server *server,
+	long machine_index,
+	wchar_t *name,
+	unsigned long *address,
+	word *port)
+{
+	long index;
+
+	if (!server || machine_index < 0 || machine_index >= MAXIMUM_NETWORK_MACHINE_COUNT ||
+		server->game.machines[machine_index].machine_index != machine_index)
+	{
+		return FALSE;
+	}
+	csmemcpy(name, server->game.machines[machine_index].name, sizeof(server->game.machines[machine_index].name));
+	*address = 0;
+	*port = 0;
+	for (index = 0; index < MAXIMUM_NETWORK_MACHINE_COUNT; index++)
+	{
+		if (server->client_machines[index].machine_index == machine_index &&
+			server->client_machines[index].connection)
+		{
+			struct transport_address reliable_address;
+
+			csmemset(&reliable_address, 0, sizeof(reliable_address));
+			network_connection_get_address(server->client_machines[index].connection, &reliable_address, NULL);
+			if (reliable_address.address_length == IPV4_ADDRESS_LENGTH)
+			{
+				*address = reliable_address.address.ipv4_address;
+				*port = reliable_address.port;
+			}
+			break;
+		}
+	}
+	return TRUE;
+}
+
+/* a kick: the machine is removed as one whose connection was lost is
+(network_game_server_handle_client_machines), its connection closed and
+its players out of the game; never the server's own machine */
+boolean network_game_server_dedicated_remove_machine(
+	struct network_game_server *server,
+	long machine_index)
+{
+	if (!server || machine_index < 0 || machine_index >= MAXIMUM_NETWORK_MACHINE_COUNT ||
+		server->game.machines[machine_index].machine_index != machine_index ||
+		machine_index == network_game_client_get_local_machine_index())
+	{
+		return FALSE;
+	}
+	network_event("dedicated server: removing machine %ld (kicked)", machine_index);
+	return network_game_server_remove_machine_from_game(server, &server->game.machines[machine_index]);
+}
+
 #endif
 void network_game_server_change_map_name(
 	struct network_game_server *server,

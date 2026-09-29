@@ -48,6 +48,12 @@ dedicated_server.c); always 0 on Android */
 int halo_dedicated_server(void);
 /* a dedicated server was sent SIGINT or SIGTERM (Linux; 0 elsewhere) */
 int platform_quit_requested(void);
+/* the signal it was sent (0 none) */
+int platform_quit_signal_number(void);
+/* a dedicated server was sent SIGHUP (reload) or SIGUSR1 (status) since the
+last question (Linux; 0 elsewhere) */
+int platform_reload_requested(void);
+int platform_status_requested(void);
 /* starts a dedicated server's SDL and checks its game data (quitting
 without it) */
 int platform_dedicated_initialize(void);
