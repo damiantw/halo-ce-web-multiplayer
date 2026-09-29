@@ -360,6 +360,16 @@ void update_server_start(
 		update_server_globals.initialized);
 	data_make_valid(update_server_globals.queues);
 	data_delete_all(update_server_globals.queues);
+#ifdef HALO_LINUX
+	/* a new game: its players' input starts over. A dedicated server hosts
+	one game after another, and the last tick each player slot had in the
+	game before (its game time, which starts again at 0) turned away the
+	input of the player in that slot now until this game's time passed it:
+	the host saw none of their buttons, so they could not pick up a weapon
+	or get into a vehicle for the first minutes of the game */
+	csmemset(update_server_pending_control_flags, 0, sizeof(update_server_pending_control_flags));
+	csmemset(update_server_distributed_inputs, 0, sizeof(update_server_distributed_inputs));
+#endif
 	data_iterator_new(&iterator, player_data);
 	while (data_iterator_next(&iterator))
 	{
@@ -541,6 +551,12 @@ void update_client_start(
 		update_client_globals.initialized);
 	data_make_valid(update_client_globals.queues);
 	data_delete_all(update_client_globals.queues);
+#ifdef HALO_LINUX
+	/* (as the host's, update_server_start: the host's update numbers and
+	this machine's game time start again with the game) */
+	csmemset(update_client_relayed_actions, 0, sizeof(update_client_relayed_actions));
+	csmemset(update_client_local_inputs, 0, sizeof(update_client_local_inputs));
+#endif
 	data_iterator_new(&iterator, player_data);
 	while (data_iterator_next(&iterator))
 	{
