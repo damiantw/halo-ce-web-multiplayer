@@ -170,6 +170,8 @@ the setting for one start of the game. It has priority over the file.
 | `network.stun_servers` | Google and Cloudflare | `HALO_NET_STUN` | The public STUN servers (`host:port`, with commas between them) that give the internet address of a machine. |
 | `discord.application_id` | the application of the project | `HALO_DISCORD_APPLICATION` | The Discord application for invites. Empty: no Discord. |
 | `update.auto` | `true` | `HALO_UPDATE_AUTO` | `true`: at start-up, the game looks for a new version. Refer to "Updates". `false`: the game does not look. |
+| `server.dedicated` | `false` | `HALO_DEDICATED` | `true`: a headless dedicated server for system link. Refer to "Dedicated server". |
+| `server.name`, `server.rotation`, `server.countdown`, `server.minimum_players`, `server.postgame_seconds`, `server.empty_seconds`, `server.rehost_seconds` | refer to "Dedicated server" | `HALO_SERVER_NAME`, `HALO_SERVER_ROTATION`, `HALO_SERVER_COUNTDOWN`, `HALO_SERVER_MINIMUM_PLAYERS`, `HALO_SERVER_POSTGAME`, `HALO_SERVER_EMPTY`, `HALO_SERVER_REHOST` | The settings of the dedicated server. |
 | `debug.update_answer` | `""` | `HALO_UPDATE_ANSWER` | The answer to the update question, for automatic tests: `yes`, `no` or `never`. Empty: the game asks. |
 | `debug.exit_after` | `0.0` | `HALO_EXIT_AFTER` | The game stops after this number of seconds. `0`: never. |
 | `debug.screenshot_directory`, `debug.screenshot_every` | `""`, `0` | `HALO_SCREENSHOT_DIR`, `HALO_SCREENSHOT_EVERY` | The game writes each Nth frame to this folder as a BMP file. |
@@ -309,6 +311,98 @@ they do not calculate the game.
 Each machine uses its own loopback address, from 127.0.0.2. The option
 `--start` starts the game when all the machines are in the lobby. If the
 host has no `network.address`, do not give `--host`.
+
+## Dedicated server
+
+The Linux build can be a dedicated server for system link: it hosts games
+for other machines, without a window, sound or a player of its own. Set
+`server.dedicated = true` in `config.toml`, or start the game with
+`HALO_DEDICATED=1`. The computer does not need a display, a GPU or an audio
+device, but it needs the game data (the `maps` folder, with `ui.map` and
+the maps of the rotation).
+
+```sh
+HALO_DEDICATED=1 HALO_DATA_ROOT=/srv/halo \
+HALO_SERVER_NAME="Blood Gulch 24/7" \
+HALO_SERVER_ROTATION="bloodgulch:slayer,sidewinder:ctf,hangemhigh:king" \
+build/linux/halo
+```
+
+The server:
+
+1. Waits for the main menu to load, then hosts a game with the first entry
+   of the rotation. The machines on the local network see the game with the
+   name `server.name`.
+2. Starts the countdown when `server.minimum_players` players are in the
+   lobby. The machine of the server has no player, and is not in the count.
+3. Plays the game. If all the players go, the game stops after
+   `server.empty_seconds`.
+4. Shows the scores for `server.postgame_seconds`, then opens the lobby
+   again with the next entry of the rotation. After the last entry, the
+   rotation starts again.
+5. If the game stops because of a network failure, hosts a new game after
+   `server.rehost_seconds`.
+
+SIGINT (Ctrl+C) or SIGTERM tells the players in the lobby that the server
+stops, and stops the server with exit code 0. A second signal stops the
+server immediately. If the server is not in its main loop (for example, it
+loads a map), a signal stops it immediately.
+
+If the server has no game data, it writes the folders that it examined to
+the log and stops with exit code 1. If a map does not load, the server
+stops with exit code 1 (`debug.txt` in the data root has the details). Use
+a service manager (for example systemd with `Restart=on-failure`) to start
+the server again.
+
+| Setting | Default | Environment variable | Function |
+| --- | --- | --- | --- |
+| `server.dedicated` | `false` | `HALO_DEDICATED` | `true`: the dedicated server. |
+| `server.name` | `"Halo Dedicated"` | `HALO_SERVER_NAME` | The name of the game in the list of system link games. The list shows 15 characters. Use ASCII characters. |
+| `server.rotation` | `"bloodgulch:slayer"` | `HALO_SERVER_ROTATION` | The games, in sequence: `map[:gametype]`, with commas, semicolons or spaces between them. |
+| `server.countdown` | `30` | `HALO_SERVER_COUNTDOWN` | The seconds of the countdown in the lobby (0 to 600). `0`: the game starts immediately, as the immediate start of the host does. |
+| `server.minimum_players` | `1` | `HALO_SERVER_MINIMUM_PLAYERS` | The players that the countdown waits for (1 to 127). |
+| `server.postgame_seconds` | `15` | `HALO_SERVER_POSTGAME` | The seconds that the scores show after a game (after the 12 seconds of the end of the game). |
+| `server.empty_seconds` | `10` | `HALO_SERVER_EMPTY` | The seconds that a game without players continues. `0`: the game continues. |
+| `server.rehost_seconds` | `5` | `HALO_SERVER_REHOST` | The seconds before the server hosts again after it lost the game. |
+
+A map in the rotation is the name of a multiplayer map (`bloodgulch`,
+`sidewinder`, ...; the file `maps/<name>.map`) or the full path of a
+scenario with backslashes (`levels\test\bloodgulch\bloodgulch`). A gametype
+is one of the built-in game variants: `slayer`, `team_slayer`, `ctf`,
+`ironctf`, `king`, `team_king`, `oddball`, `team_oddball`, `race`,
+`team_race`, `rally`, `elimination`, `stalker` or `accumulation`. Without a
+gametype, the entry is `slayer`. At start-up, the server writes the rotation
+to the log. It removes an entry with an unknown gametype or with no map
+file. If no entry remains, the rotation is `bloodgulch:slayer`. Team
+games start only when each team has a player.
+
+The dedicated server always uses these settings, and ignores the file and
+the environment for them:
+
+| Setting | Value | Why |
+| --- | --- | --- |
+| `debug.null_renderer`, `debug.hidden_window` | `true` | No window and no graphics. |
+| `display.interpolation`, `display.vsync`, `display.fullscreen` | `false` | The server makes 30 frames each second, with a sleep between them. |
+| `audio.enabled` | `false` | No audio device. The sounds continue without output and are not mixed. |
+| `network.online`, `network.allow_upnp`, `network.join_from_clipboard` | `false` | System link only: no internet play, invites or UPnP. |
+| `discord.application_id` | `""` | No Discord. |
+| `update.auto` | `false` | No updates. |
+| `debug.network_test`, `debug.test_input` | `""` | No automatic tests. |
+
+The dedicated server also:
+
+- Starts only the events of SDL (no video, audio or gamepad subsystems), so
+  it operates without `DISPLAY`, Wayland or PulseAudio.
+- Does not open the telnet console of the game.
+- Draws nothing: the main loop does not render or present frames.
+
+The other settings, for example `network.address`, `network.broadcast` and
+`network.netcode`, apply as usual. To run more than one server on one
+computer, give each server a different `network.address` (refer to "Play on
+one computer").
+
+The code is in `game/dedicated_server.c`. The changes to the game are in
+`#ifdef HALO_LINUX` (refer to "Game source changes").
 
 ## Internet play
 
@@ -479,6 +573,7 @@ Other changes are in `#ifdef HALO_LINUX`. All the native ports define
 | `cseries/errors.c` | `debug.txt` stays open between lines. |
 | `networking/`, `game/`, `interface/`, `bungie_net/network/` and the pools of objects, effects and sounds | The system link limits and the memory for them. |
 | `game/`, `objects/`, `units/`, `networking/` | The distributed netcode. Refer to `NETCODE.md`. |
+| `main/main.c`, `shell/shell_xbox.c`, `game/game_engine.c`, `interface/ui_widget.c`, `networking/network_server_manager.c`, `networking/network_client_manager.c`, `networking/network_game_manager.c`, `networking/telnet_console.c` | The dedicated server: no rendering, a 30 Hz sleep, no host player in the checks, the automatic countdown, the automatic return to the lobby, the server name, no telnet console. Refer to "Dedicated server". |
 
 The x86 inline assembly of the game has C replacements in
 `#ifdef HALO_LINUX`. Thus the compiler can optimize that code for each
