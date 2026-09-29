@@ -1983,11 +1983,29 @@ static boolean network_game_server_machine_has_waiting_players(
 
 /* the settings (with the machine's players) and the start, to the machine
 alone, the start with the host's game time */
+/* the players each machine joining the game in progress was sent with the
+game's settings, by its client machine slot: it hears none of the game's
+messages until it has loaded, so the players added to the game or gone from
+it meanwhile are told it then (network_game_server_late_joiner_loaded) */
+static struct network_player late_joiner_players[MAXIMUM_NETWORK_MACHINE_COUNT][MAXIMUM_NETWORK_PLAYER_COUNT];
+
+static boolean late_joiner_same_player(
+	struct network_player *a,
+	struct network_player *b)
+{
+	return network_player_is_valid(a) && network_player_is_valid(b) &&
+		a->machine_index == b->machine_index && a->controller_index == b->controller_index;
+}
+
 static void network_game_server_start_late_joiner(
 	struct network_game_server *server,
 	struct network_game_server_client_machine *machine)
 {
 	struct message_server_begin_game begin_game = { 0 };
+	long slot = machine - server->client_machines;
+
+	if (slot >= 0 && slot < MAXIMUM_NETWORK_MACHINE_COUNT)
+		csmemcpy(late_joiner_players[slot], server->game.players, sizeof(late_joiner_players[slot]));
 	struct network_message *message;
 
 	/* (the message carries 16 bits: the client has the rest from its first
@@ -2039,9 +2057,51 @@ void network_game_server_late_joiner_loaded(
 	struct network_game_server *server,
 	struct network_game_server_client_machine *machine)
 {
-	(void)server;
+	long slot = machine - server->client_machines;
+
 	SET_FLAG(machine->flags, _network_client_machine_level_loaded_bit, TRUE);
 	network_event("machine #%d has loaded the game in progress", machine->machine_index);
+	/* the players added or gone while it loaded: without them, a player
+	who joined meanwhile is not in its game, and that player's leaving
+	(a removal it cannot find) ended its game, "network connection lost" */
+	if (slot >= 0 && slot < MAXIMUM_NETWORK_MACHINE_COUNT)
+	{
+		long player_index;
+
+		for (player_index = 0; player_index < MAXIMUM_NETWORK_PLAYER_COUNT; player_index++)
+		{
+			struct network_player *then = &late_joiner_players[slot][player_index];
+			struct network_player *now = &server->game.players[player_index];
+			struct network_message *message;
+
+			if (late_joiner_same_player(then, now))
+				continue;
+			if (network_player_is_valid(then))
+			{
+				struct message_server_remove_player_ingame remove_player;
+
+				remove_player.player = *then;
+				remove_player.reason = game_time_get() + NETWORK_GAME_PLAYER_QUIT_DELAY;
+				message = create_network_game_message(_message_server_remove_player_ingame, &remove_player,
+					sizeof(remove_player));
+				if (!message || !network_game_server_send_message_to_client_machine(server, machine, message))
+					network_event("failed to tell machine #%d of a player gone while it loaded", machine->machine_index);
+			}
+			if (network_player_is_valid(now))
+			{
+				struct network_player player = *now;
+
+				message = create_network_game_message(_message_server_add_player_ingame, &player, sizeof(player));
+				if (!message || !network_game_server_send_message_to_client_machine(server, machine, message))
+					network_event("failed to tell machine #%d of a player added while it loaded", machine->machine_index);
+				else
+					network_event("told machine #%d of player %d, added while it loaded", machine->machine_index,
+						player_index);
+			}
+		}
+		/* (no machine's players) */
+		csmemset(late_joiner_players[slot], 0xFF, sizeof(late_joiner_players[slot]));
+	}
 }
 
 #endif
