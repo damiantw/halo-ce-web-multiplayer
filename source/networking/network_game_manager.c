@@ -275,6 +275,12 @@ void xbox_set_machine_name(
 	return;
 }
 
+#ifdef HALO_LINUX
+/* port/linux/src/sdl_platform.c's and port_config.c's */
+int halo_dedicated_server(void);
+const char *config_string(const char *name);
+
+#endif
 void network_game_generate_local_machine_name(
 	wchar_t *machine_name)
 {
@@ -282,6 +288,20 @@ void network_game_generate_local_machine_name(
 	HANDLE find_handle;
 
 #ifdef HALO_LINUX
+	/* port: a dedicated server is named server.name, which the system link
+	list shows its game by (port/linux/game/dedicated_server.c) */
+	if (halo_dedicated_server())
+	{
+		char const *name = config_string("server.name");
+		short index;
+
+		if (!name[0])
+			name = "Halo Dedicated";
+		for (index = 0; index < 31 && name[index]; index++)
+			machine_name[index] = (wchar_t)(unsigned char)name[index];
+		machine_name[index] = 0;
+		return;
+	}
 	/* port: a machine that brings one player to the game (the one who
 	joined multiplayer on it) is named after that player's profile, not the
 	system's random nickname: the system link list shows a host's game by it */

@@ -1921,6 +1921,11 @@ boolean network_game_client_game_has_started(
 	return client->state == _network_game_client_state_ingame;
 }
 
+#ifdef HALO_LINUX
+/* port/linux/src/sdl_platform.c's */
+int halo_dedicated_server(void);
+
+#endif
 boolean network_game_client_remove_player(
 	struct network_game_client *client,
 	struct network_player *player,
@@ -1978,7 +1983,14 @@ boolean network_game_client_remove_player(
 				}
 			}
 
+#ifdef HALO_LINUX
+			/* a dedicated server never has a player of its own: another
+			machine's player leaving must not end the game it hosts
+			(port/linux/game/dedicated_server.c) */
+			if (network_player_index == MAXIMUM_NUMBER_OF_PLAYERS && !halo_dedicated_server())
+#else
 			if (network_player_index == MAXIMUM_NUMBER_OF_PLAYERS)
+#endif
 			{
 				network_game_client_all_local_players_have_quit();
 				network_event("no local players remain in the game, exiting the game now");

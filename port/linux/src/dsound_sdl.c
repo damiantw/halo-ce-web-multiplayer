@@ -450,18 +450,71 @@ static void SDLCALL audio_callback(void *userdata, SDL_AudioStream *stream, int 
 	}
 }
 
-/* without a device, drain voices in real time */
+/* a dedicated server's voices play out in real time without being mixed:
+nobody hears them (mix_voice's packet stepping, without the samples) */
+static void drain_voice(struct sdl_stream *stream, unsigned long frames)
+{
+	double step;
+
+	if (stream->paused || !stream->packet_count || !stream->sample_rate)
+		return;
+	step = (double)(stream->frequency ? stream->frequency : stream->sample_rate) / OUTPUT_RATE;
+	stream->cursor += step * (double)frames;
+	for (;;)
+	{
+		struct voice_packet *packet = NULL;
+		unsigned long position;
+
+		for (position = 0; position < stream->packet_count; position++)
+		{
+			struct voice_packet *candidate = &stream->packets[(stream->packet_head + position) % MAXIMUM_STREAM_PACKETS];
+
+			if (!candidate->finished)
+			{
+				packet = candidate;
+				break;
+			}
+		}
+		if (!packet)
+		{
+			stream->cursor = 0.0;
+			break;
+		}
+		if (stream->cursor < (double)packet->frames)
+			break;
+		stream->cursor -= (double)packet->frames;
+		packet->finished = TRUE;
+	}
+}
+
+static void drain(unsigned long frames)
+{
+	struct sdl_stream *stream;
+
+	pthread_mutex_lock(&mixer_lock);
+	for (stream = streams; stream; stream = stream->next)
+		drain_voice(stream, frames);
+	pthread_mutex_unlock(&mixer_lock);
+}
+
+/* without a device, drain voices in real time (a dedicated server's 20
+times a second, unmixed) */
 static void *silent_clock_thread(void *parameter)
 {
 	float buffer[480 * OUTPUT_CHANNELS];
 	struct timespec next;
+	BOOL dedicated = halo_dedicated_server() != 0;
+	long interval = dedicated ? 50000000L : 10000000L;
 
 	(void)parameter;
 	clock_gettime(CLOCK_MONOTONIC, &next);
 	for (;;)
 	{
-		mix(buffer, 480);
-		next.tv_nsec += 10000000L;
+		if (dedicated)
+			drain(OUTPUT_RATE / 20);
+		else
+			mix(buffer, 480);
+		next.tv_nsec += interval;
 		if (next.tv_nsec >= 1000000000L)
 		{
 			next.tv_nsec -= 1000000000L;

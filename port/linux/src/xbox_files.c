@@ -124,6 +124,55 @@ const char *platform_data_root(void)
 	return root;
 }
 
+/* whether the data root found holds a maps folder (the dedicated server,
+sdl_platform.c) */
+BOOL platform_data_has_maps(void)
+{
+	return has_maps(platform_data_root()) ? TRUE : FALSE;
+}
+
+/* whether the maps folder holds <name>.map, in any case (the dedicated
+server's rotation, port/linux/game/dedicated_server.c) */
+BOOL platform_data_has_map(const char *name)
+{
+	char maps[256], file[256], on_disk[256], path[MAX_PATH];
+
+	if (!posix_find_entry_case_insensitive(platform_data_root(), "maps", maps, sizeof(maps)))
+		return FALSE;
+	snprintf(path, sizeof(path), "%s/%s", platform_data_root(), maps);
+	snprintf(file, sizeof(file), "%s.map", name);
+	return posix_find_entry_case_insensitive(path, file, on_disk, sizeof(on_disk)) ? TRUE : FALSE;
+}
+
+/* the kind of map maps/<name>.map is, from its cache file header (the
+scenario type at 0x60: 0 campaign, 1 multiplayer, 2 the main menu); -1 if
+it cannot be read or is not an Xbox cache file (the dedicated server's
+rotation, port/linux/game/dedicated_server.c) */
+int platform_data_map_type(const char *name)
+{
+	char maps[256], file[256], on_disk[256], path[MAX_PATH];
+	unsigned char header[0x64];
+	FILE *stream;
+	size_t got;
+
+	if (!posix_find_entry_case_insensitive(platform_data_root(), "maps", maps, sizeof(maps)))
+		return -1;
+	snprintf(path, sizeof(path), "%s/%s", platform_data_root(), maps);
+	snprintf(file, sizeof(file), "%s.map", name);
+	if (!posix_find_entry_case_insensitive(path, file, on_disk, sizeof(on_disk)))
+		return -1;
+	snprintf(path, sizeof(path), "%s/%s/%s", platform_data_root(), maps, on_disk);
+	stream = fopen(path, "rb");
+	if (!stream)
+		return -1;
+	got = fread(header, 1, sizeof(header), stream);
+	fclose(stream);
+	/* 'head' (little-endian "daeh"), cache version 5 (the Xbox's) */
+	if (got != sizeof(header) || memcmp(header, "daeh", 4) || header[4] != 5 || header[5] || header[6] || header[7])
+		return -1;
+	return header[0x60] | (header[0x61] << 8);
+}
+
 /* creates every missing directory along path */
 static void make_directories(const char *path)
 {

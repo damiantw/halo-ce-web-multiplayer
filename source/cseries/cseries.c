@@ -356,6 +356,9 @@ char *csprintf(
 #ifdef HALO_RELEASE
 __thread boolean display_assert_skipped = FALSE;
 #endif
+#ifdef HALO_LINUX
+char halo_halt_reason[512] = "";
+#endif
 
 void display_assert(
 	char *information,
@@ -375,6 +378,14 @@ void display_assert(
 	}
 	
 	error(_error_silent, "EXCEPTION %s in %s,#%d: %s", fatal ? "halt" : "warn", file, line, information ? information : "<no reason given>");
+#ifdef HALO_LINUX
+	/* (what halted, for a dedicated server's log: main.c's halt_and_catch_fire) */
+	if (fatal)
+	{
+		snprintf(halo_halt_reason, sizeof(halo_halt_reason), "%s,#%ld: %s", file, line,
+			information ? information : "<no reason given>");
+	}
+#endif
 #endif
 }
 

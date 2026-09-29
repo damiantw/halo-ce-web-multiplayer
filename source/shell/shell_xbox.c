@@ -50,12 +50,25 @@ char faked_xbox_command_line[8] = { 0 };
 
 /* ---------- public code */
 
+#ifdef HALO_LINUX
+/* port/linux/src/sdl_platform.c's: the headless dedicated server */
+int halo_dedicated_server(void);
+int platform_dedicated_initialize(void);
+
+#endif
 boolean shell_platform_initialize(
 	void)
 {
 	LAUNCH_DATA launch_data;
 	DWORD launch_data_type;
 
+#ifdef HALO_LINUX
+	/* a dedicated server starts headless, and finds its game data (or says
+	where it looked, and quits) before anything is loaded */
+	if (halo_dedicated_server() && !platform_dedicated_initialize())
+		return FALSE;
+
+#endif
 	if (!XGetLaunchInfo(&launch_data_type, &launch_data) &&
 		launch_data_type == LDT_TITLE &&
 		!csstrcmp((const char *)launch_data.Data, "XDEMOS"))

@@ -20,6 +20,10 @@ it exists, so that the player's edits and comments stay.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if !defined(HALO_ANDROID) && !defined(_WIN32)
+#include <strings.h>
+#include "posix.h"
+#endif
 
 /* ---------- the settings */
 
@@ -148,6 +152,44 @@ static const struct config_setting config_settings[] =
 		"Look for a new version when the game starts, and offer to update to it;\n"
 		"false never looks (the game's \"Do not ask again\" writes false here)." },
 
+	{ "server.dedicated", _config_boolean, "false", "HALO_DEDICATED", _environment_value, _platform_desktop,
+		"Run as a headless dedicated system link / LAN server (port/linux/game/\n"
+		"dedicated_server.c): no window, sound or local player; hosts the rotation\n"
+		"below forever. It forces debug.null_renderer, audio.enabled = false,\n"
+		"display.interpolation = false, network.online = false, update.auto =\n"
+		"false and no Discord or telnet console." },
+	{ "server.name", _config_string, "\"Halo Dedicated\"", "HALO_SERVER_NAME", _environment_value, _platform_desktop,
+		"The dedicated server's name in the game browser (the first 15 characters\n"
+		"show in the list)." },
+	{ "server.rotation", _config_string, "\"bloodgulch:slayer\"", "HALO_SERVER_ROTATION", _environment_value,
+		_platform_desktop,
+		"The dedicated server's games, in order and then again: <map>[:<gametype>]\n"
+		"separated by commas, semicolons or spaces. A map is a multiplayer map's\n"
+		"name (bloodgulch, levels\\test\\bloodgulch\\bloodgulch for a full path); a\n"
+		"gametype one of slayer, team_slayer, ctf, ironctf, king, team_king,\n"
+		"oddball, team_oddball, race, team_race, rally, elimination, stalker,\n"
+		"accumulation (slayer when left out)." },
+	{ "server.countdown", _config_integer, "30", "HALO_SERVER_COUNTDOWN", _environment_value, _platform_desktop,
+		"Seconds of countdown once enough players are in the dedicated server's\n"
+		"lobby (0-600); 0 starts the game straight away." },
+	{ "server.minimum_players", _config_integer, "1", "HALO_SERVER_MINIMUM_PLAYERS", _environment_value,
+		_platform_desktop,
+		"Players the dedicated server waits for before counting down (1-127;\n"
+		"at most server.max_players)." },
+	{ "server.max_players", _config_integer, "16", "HALO_SERVER_MAX_PLAYERS", _environment_value,
+		_platform_desktop,
+		"Players the dedicated server's games take at most (1-16, as system link\n"
+		"on the Xbox); a machine that would go over is refused as the game is full." },
+	{ "server.postgame_seconds", _config_integer, "15", "HALO_SERVER_POSTGAME", _environment_value, _platform_desktop,
+		"Seconds the dedicated server shows the scores after a game before going\n"
+		"back to the lobby with the rotation's next game." },
+	{ "server.empty_seconds", _config_integer, "10", "HALO_SERVER_EMPTY", _environment_value, _platform_desktop,
+		"Seconds a dedicated server's game runs with nobody in it before it ends\n"
+		"and goes back to the lobby; 0 never." },
+	{ "server.rehost_seconds", _config_integer, "5", "HALO_SERVER_REHOST", _environment_value, _platform_desktop,
+		"Seconds after the dedicated server's game is lost (a network failure,\n"
+		"an abort) that it hosts again." },
+
 	{ "debug.network_test", _config_string, "\"\"", "HALO_NETWORK_TEST", _environment_value, _platform_all,
 		"Automated system link sessions for testing (port/linux/game/network_test.c):\n"
 		"\"host:<map>\" hosts a game on that map, \"join\" joins the first game found;\n"
@@ -237,6 +279,55 @@ static pthread_mutex_t config_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /* ---------- the file */
 
+#if !defined(HALO_ANDROID) && !defined(_WIN32)
+/* an environment variable's boolean text, as _environment_value reads it */
+static int config_environment_true(const char *name)
+{
+	const char *text = getenv(name);
+
+	return text && *text && strcasecmp(text, "0") && strcasecmp(text, "false") && strcasecmp(text, "no") &&
+		strcasecmp(text, "off");
+}
+
+/* config.toml in the save root (xbox_files.c's platform_save_root, from the
+environment only: paths.saves is in the file being looked for), its folders
+made; 0 if there is no save root */
+static int config_save_root_path(char *path, size_t size)
+{
+	const char *saves = getenv("HALO_SAVE_ROOT");
+	const char *data_home = getenv("XDG_DATA_HOME");
+	const char *home = getenv("HOME");
+	size_t index;
+	int length;
+
+	if (saves && *saves)
+		length = snprintf(path, size, "%s", saves);
+	else if (data_home && *data_home)
+		length = snprintf(path, size, "%s/halo-linux", data_home);
+	else if (home && *home)
+		length = snprintf(path, size, "%s/.local/share/halo-linux", home);
+	else
+		return 0;
+	if (length <= 0 || (size_t)length + sizeof("/config.toml") > size)
+		return 0;
+	while (length > 1 && path[length - 1] == '/')
+		path[--length] = 0;
+	for (index = 1; index <= (size_t)length; index++)
+	{
+		if (path[index] == '/' || path[index] == 0)
+		{
+			char separator = path[index];
+
+			path[index] = 0;
+			posix_make_directory(path);
+			path[index] = separator;
+		}
+	}
+	snprintf(path + length, size - (size_t)length, "/config.toml");
+	return 1;
+}
+#endif
+
 static void config_path(char *path, size_t size)
 {
 #ifdef HALO_ANDROID
@@ -247,7 +338,22 @@ static void config_path(char *path, size_t size)
 #else
 	/* the executable's folder, with its separator */
 	const char *base = SDL_GetBasePath();
+	const char *named = getenv("HALO_CONFIG");
 
+	/* a file named for this run */
+	if (named && *named)
+	{
+		snprintf(path, size, "%s", named);
+		return;
+	}
+#ifndef _WIN32
+	/* a dedicated server started with HALO_DEDICATED: the save root's
+	(config_save_root_path), not the executable's folder, which can be
+	read-only, shared by several servers, or not the game's at all (a bundle
+	that starts the game through its own loader, whose folder SDL reports) */
+	if (config_environment_true("HALO_DEDICATED") && config_save_root_path(path, size))
+		return;
+#endif
 	snprintf(path, size, "%sconfig.toml", base ? base : "");
 #endif
 }
@@ -631,6 +737,40 @@ static void config_report_unknown_keys(toml_datum_t table)
 	}
 }
 
+/* sets a setting as though written in the file, whatever the file or the
+environment say */
+static void config_force(const char *name, const char *text)
+{
+	long index = config_setting_index(name);
+
+	if (index >= 0)
+		config_set_from_text(&config_values[index], config_settings[index].type, text);
+}
+
+/* the headless dedicated server (server.dedicated, port/linux/game/
+dedicated_server.c): no window, sound, internet play, invites or updates */
+static void config_force_dedicated(void)
+{
+	long index = config_setting_index("server.dedicated");
+
+	if (index < 0 || !config_values[index].boolean)
+		return;
+	config_force("debug.null_renderer", "true");
+	config_force("debug.hidden_window", "true");
+	config_force("display.fullscreen", "false");
+	config_force("display.interpolation", "false");
+	config_force("display.vsync", "false");
+	config_force("audio.enabled", "false");
+	config_force("network.online", "false");
+	config_force("network.join_from_clipboard", "false");
+	config_force("network.allow_upnp", "false");
+	config_force("discord.application_id", "");
+	config_force("update.auto", "false");
+	config_force("debug.network_test", "");
+	config_force("debug.test_input", "");
+	platform_log("settings: server.dedicated: headless, no sound, system link only, no updates");
+}
+
 static void config_load(void)
 {
 	char path[1024];
@@ -712,6 +852,7 @@ static void config_load(void)
 			break;
 		}
 	}
+	config_force_dedicated();
 }
 
 static const struct config_value *config_value(const char *name, enum config_type type)

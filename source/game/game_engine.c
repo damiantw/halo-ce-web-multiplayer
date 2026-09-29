@@ -4218,6 +4218,12 @@ void game_engine_player_killed(
 	return;
 }
 
+#ifdef HALO_LINUX
+/* port/linux/src/sdl_platform.c's and port/linux/game/dedicated_server.c's */
+int halo_dedicated_server(void);
+boolean dedicated_server_postgame_update(real seconds);
+
+#endif
 void game_engine_update_non_deterministic(
 	real delta_seconds)
 {
@@ -4238,6 +4244,20 @@ void game_engine_update_non_deterministic(
 			if (game_engine_globals.postgame_progress > 1.0f)
 				game_engine_globals.postgame_progress = 1.0f;
 
+#ifdef HALO_LINUX
+			/* a dedicated server has nobody to press a button: the lobby opens
+			again with the rotation's next game after a while
+			(port/linux/game/dedicated_server.c) */
+			if (halo_dedicated_server())
+			{
+				if (dedicated_server_postgame_update(delta_seconds) && global_network_game_server_get())
+				{
+					network_game_server_reset_to_pregame(
+						global_network_game_server_get());
+				}
+				break;
+			}
+#endif
 			if (test_any_gamepad_button(0) || test_any_gamepad_button(12))
 			{
 				if (global_network_game_server_get())

@@ -20,6 +20,11 @@ and the debug keyboard that the game's console reads.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if !defined(HALO_ANDROID) && !defined(_WIN32)
+#include <signal.h>
+#include <time.h>
+#include <unistd.h>
+#endif
 
 static SDL_Window *platform_window;
 static SDL_GLContext platform_gl_context;
@@ -48,10 +53,134 @@ void updater_start(void);
 void updater_poll(SDL_Window *window);
 #endif
 
+/* ---------- the headless dedicated server (port/linux/game/dedicated_server.c) */
+
+int halo_dedicated_server(void)
+{
+	static int dedicated = -1;
+
+#ifdef HALO_ANDROID
+	dedicated = 0;
+#else
+	if (dedicated < 0)
+		dedicated = config_boolean("server.dedicated") != 0;
+#endif
+	return dedicated;
+}
+
+#if !defined(HALO_ANDROID) && !defined(_WIN32)
+static volatile sig_atomic_t platform_quit_signal = 0;
+/* when the main loop last asked (platform_quit_requested), in monotonic
+seconds; 0 never */
+static volatile long platform_quit_last_poll = 0;
+
+static long platform_monotonic_seconds(void)
+{
+	struct timespec now;
+
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	return (long)now.tv_sec + 1;
+}
+
+/* the first SIGINT or SIGTERM asks the server to shut down between frames,
+telling the players; if the main loop has not asked for a couple of seconds
+(a map loading, starting up, stuck) or on a second signal, it does not wait */
+static void platform_quit_signal_handler(int signal_number)
+{
+	long last_poll = platform_quit_last_poll;
+
+	if (platform_quit_signal)
+	{
+		static const char message[] = "halo-linux: second signal: quitting now\n";
+
+		(void)!write(STDERR_FILENO, message, sizeof(message) - 1);
+		_exit(128 + signal_number);
+	}
+	if (!last_poll || platform_monotonic_seconds() - last_poll > 2)
+	{
+		static const char message[] = "halo-linux: dedicated server: quit signal outside the main loop: quitting now\n";
+
+		(void)!write(STDERR_FILENO, message, sizeof(message) - 1);
+		_exit(EXIT_SUCCESS);
+	}
+	platform_quit_signal = signal_number;
+}
+
+static void platform_install_quit_signals(void)
+{
+	struct sigaction action;
+
+	memset(&action, 0, sizeof(action));
+	action.sa_handler = platform_quit_signal_handler;
+	sigemptyset(&action.sa_mask);
+	sigaction(SIGINT, &action, NULL);
+	sigaction(SIGTERM, &action, NULL);
+	/* (a peer closing a socket must not kill the server) */
+	signal(SIGPIPE, SIG_IGN);
+}
+#endif
+
+int platform_quit_requested(void)
+{
+#if !defined(HALO_ANDROID) && !defined(_WIN32)
+	platform_quit_last_poll = platform_monotonic_seconds();
+	return platform_quit_signal != 0;
+#else
+	return 0;
+#endif
+}
+
+#ifndef HALO_ANDROID
+/* xbox_files.c's */
+BOOL platform_data_has_maps(void);
+
+/* the data a dedicated server cannot run without, reported once: there is
+nobody to offer to extract it to (platform_offer_game_data) */
+static void platform_dedicated_check_data(void)
+{
+	if (platform_data_has_maps())
+		return;
+	platform_log("dedicated server: no game data (no maps folder in %s); set paths.data in config.toml or "
+		"HALO_DATA_ROOT to the folder that holds Halo's maps folder", platform_data_root());
+	exit(EXIT_FAILURE);
+}
+#endif
+
+/* the dedicated server's start (shell_xbox.c's shell_platform_initialize),
+before the game's first map or device */
+int platform_dedicated_initialize(void)
+{
+	return platform_sdl_initialize() ? 1 : 0;
+}
+
 BOOL platform_sdl_initialize(void)
 {
 	if (platform_sdl_started)
 		return TRUE;
+#ifndef HALO_ANDROID
+	if (halo_dedicated_server())
+	{
+		/* no window, sound, controllers or updater: only SDL's event queue and
+		timers, with no display or audio device needed; the quit signals are
+		the server's own (platform_quit_requested) */
+		SDL_SetHint(SDL_HINT_APP_NAME, "Halo dedicated server");
+		SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
+		SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "dummy");
+		SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "dummy");
+#ifndef _WIN32
+		platform_install_quit_signals();
+#endif
+		if (!SDL_Init(SDL_INIT_EVENTS))
+		{
+			platform_log("SDL_Init failed: %s", SDL_GetError());
+			return FALSE;
+		}
+		platform_sdl_started = TRUE;
+		platform_log("dedicated server: headless (no window, sound or local player)");
+		platform_dedicated_check_data();
+		return TRUE;
+	}
+#endif
 	/* a copy of the game started to open an invite link hands it to the
 	one already running, and goes */
 	if (p2p_hand_off_invite())
@@ -252,6 +381,7 @@ BOOL platform_offer_game_data(const char *destination)
 
 	/* not for runs nobody is watching */
 	if (config_boolean("debug.hidden_window") || config_real("debug.exit_after") > 0.0 ||
+		config_boolean("debug.null_renderer") || halo_dedicated_server() ||
 		!SDL_Init(SDL_INIT_VIDEO))
 	{
 		return FALSE;
