@@ -47,6 +47,21 @@ boolean attract_mode_should_start(
 	boolean should_start = FALSE;
 	real progress;
 
+#ifdef HALO_WEB
+	/* port: no attract movies in the browser (bink_playback_start); the
+	main menu stays, music and all */
+	if (TRUE)
+	{
+		(void)progress;
+		if (cache_files_precache_in_progress() &&
+			cache_files_precache_map_status(&progress)==1)
+		{
+			cache_files_precache_map_end();
+		}
+		return FALSE;
+	}
+#endif
+
 	if (cache_files_precache_in_progress() &&
 		cache_files_precache_map_status(&progress)==1)
 	{
@@ -115,6 +130,14 @@ const char *attract_mode_get_localized_movie_path(
 	};
 
 	match_assert("c:\\halo\\SOURCE\\interface\\attract_mode.c", 163, movie>=0 && movie<NUMBER_OF_BINK_MOVIES);
+#ifdef HALO_WEB
+	/* port: no movies in the browser (bink_playback_start) */
+	(void)attempted_languages;
+	(void)language;
+	(void)language_suffixes;
+	bss_00453ae8[0] = '\0';
+	return bss_00453ae8;
+#endif
 
 	switch (XGetLanguage())
 	{

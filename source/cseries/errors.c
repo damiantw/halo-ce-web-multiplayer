@@ -66,6 +66,30 @@ symbols in this file:
 #include <stdarg.h>
 #include <time.h>
 
+#ifdef HALO_WEB
+/* port: in the browser the errors that would be drawn over the screen (the
+Xbox's debug terminal: "starting precaching of map 'ui'", the missing
+movies, ...) go to the browser's console instead (platform_log), with the
+rest still in debug.txt. The terminal stays for the console's own output. */
+void platform_log(char const *format, ...);
+
+static void error_to_console(
+	char const *string)
+{
+	char line[1024];
+	long length;
+
+	csstrncpy(line, string, sizeof(line) - 1);
+	line[sizeof(line) - 1] = 0;
+	length = csstrlen(line);
+	while (length > 0 && (line[length - 1] == '\r' || line[length - 1] == '\n'))
+	{
+		line[--length] = 0;
+	}
+	platform_log("%s", line);
+}
+#endif
+
 /* ---------- constants */
 
 /* ---------- macros */
@@ -286,9 +310,13 @@ void error(
 		bss_0031df2c.last_error_time = time;
 		if (bss_0031df2c.error_count == 10)
 		{
+#ifdef HALO_WEB
+			error_to_console("too many errors, only printing to debug.txt");
+#else
 			terminal_printf(
 				global_real_argb_white,
 				"too many errors, only printing to debug.txt");
+#endif
 		}
 		bss_0031df2c.error_count++;
 		if (bss_0031df2c.error_count >= 10)
@@ -316,7 +344,11 @@ void error(
 
 			if (priority != _error_log)
 			{
+#ifdef HALO_WEB
+				error_to_console(string);
+#else
 				terminal_printf(global_real_argb_white, "%s", string);
+#endif
 			}
 			write_to_error_file(string, TRUE);
 
