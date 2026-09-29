@@ -4599,6 +4599,16 @@ boolean game_engine_should_end_game(
 {
 	boolean should_end_game = FALSE;
 
+#ifdef HALO_LINUX
+	/* (a dedicated server of the distributed netcode keeps the game on when
+	the others quit and one player or team is left: players join games in
+	progress, and the server ends a game without players itself,
+	server.empty_seconds. The players who quit stay in the player table, so
+	the retail rule would end the game of the one who is left. With the
+	netcode "lockstep" each machine decides as on the Xbox.) */
+	if (network_game_distributed() && halo_dedicated_server())
+		return FALSE;
+#endif
 	if (game_engine && !multiple_teams_alive())
 		should_end_game = TRUE;
 
