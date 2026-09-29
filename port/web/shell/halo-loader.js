@@ -22,9 +22,6 @@
 // Diagnostics, given with env= (the site's /play passes env= through):
 //   HALO_WEB_DPR=<n>   the device pixel ratio the game sees (1: a drawing
 //                      buffer of the canvas's CSS size on a Retina screen)
-//   HALO_WEB_PACE=raf  each frame waits for the browser's next animation
-//                      frame (sdl_platform.c, platform_video_swap), instead of
-//                      going back to the event loop and on at once
 (() => {
 	const params = new URLSearchParams(location.search);
 	const envParam = (name) => {
