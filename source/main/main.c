@@ -2917,6 +2917,7 @@ void halt_and_catch_fire(
 		snprintf(message, sizeof(message), "the game halted (%s; debug.txt in the data root has the details)",
 			halo_halt_reason[0] ? halo_halt_reason : "an error");
 		platform_log("dedicated server: fatal: %s; quitting", message);
+		dedicated_server_fatal("halt", message);
 		exit(EXIT_FAILURE);
 	}
 #endif

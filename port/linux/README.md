@@ -547,6 +547,7 @@ Error codes of the server (with `id: null`):
 | `no_game_data` | yes | No `maps` folder. Exit code 1. |
 | `map_load_failed` | yes | A map did not load (`debug.txt` has the details). Exit code 1. |
 | `startup_failed` | yes | SDL did not start. |
+| `halt` | yes | The game halted (a failed assertion or a fatal error; `message` has the file, the line and the condition, and `debug.txt` has the details). Exit code 1. |
 | `no_playable_rotation` | no | No usable entry in `server.rotation`: the server plays `bloodgulch:slayer`. |
 | `rotation_entry_rejected` | no | The server removed an entry from the rotation (unknown gametype, or no map file). |
 | `game_lost` | no | The game stopped because of a network failure or an abort. The server hosts again after `server.rehost_seconds`. |
