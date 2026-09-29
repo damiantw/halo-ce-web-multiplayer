@@ -172,6 +172,7 @@ the setting for one start of the game. It has priority over the file.
 | `update.auto` | `true` | `HALO_UPDATE_AUTO` | `true`: at start-up, the game looks for a new version. Refer to "Updates". `false`: the game does not look. |
 | `server.dedicated` | `false` | `HALO_DEDICATED` | `true`: a headless dedicated server for system link. Refer to "Dedicated server". |
 | `server.name`, `server.rotation`, `server.countdown`, `server.minimum_players`, `server.postgame_seconds`, `server.empty_seconds`, `server.rehost_seconds` | refer to "Dedicated server" | `HALO_SERVER_NAME`, `HALO_SERVER_ROTATION`, `HALO_SERVER_COUNTDOWN`, `HALO_SERVER_MINIMUM_PLAYERS`, `HALO_SERVER_POSTGAME`, `HALO_SERVER_EMPTY`, `HALO_SERVER_REHOST` | The settings of the dedicated server. |
+| `server.status_interval`, `server.control`, `server.control_output_fd`, `server.control_input_fd`, `server.control_exit_on_eof` | refer to "Dedicated server control" | `HALO_SERVER_STATUS_INTERVAL`, `HALO_SERVER_CONTROL`, `HALO_SERVER_CONTROL_OUTPUT_FD`, `HALO_SERVER_CONTROL_INPUT_FD`, `HALO_SERVER_CONTROL_EXIT_ON_EOF` | The control channel of the dedicated server. |
 | `debug.update_answer` | `""` | `HALO_UPDATE_ANSWER` | The answer to the update question, for automatic tests: `yes`, `no` or `never`. Empty: the game asks. |
 | `debug.exit_after` | `0.0` | `HALO_EXIT_AFTER` | The game stops after this number of seconds. `0`: never. |
 | `debug.screenshot_directory`, `debug.screenshot_every` | `""`, `0` | `HALO_SCREENSHOT_DIR`, `HALO_SCREENSHOT_EVERY` | The game writes each Nth frame to this folder as a BMP file. |
@@ -346,7 +347,9 @@ The server:
 SIGINT (Ctrl+C) or SIGTERM tells the players in the lobby that the server
 stops, and stops the server with exit code 0. A second signal stops the
 server immediately. If the server is not in its main loop (for example, it
-loads a map), a signal stops it immediately.
+loads a map), a signal stops it immediately. SIGHUP reads the rotation and
+the timings again, and SIGUSR1 writes a status event (refer to "Dedicated
+server control").
 
 If the server has no game data, it writes the folders that it examined to
 the log and stops with exit code 1. If a map does not load, the server
@@ -364,6 +367,7 @@ the server again.
 | `server.postgame_seconds` | `15` | `HALO_SERVER_POSTGAME` | The seconds that the scores show after a game (after the 12 seconds of the end of the game). |
 | `server.empty_seconds` | `10` | `HALO_SERVER_EMPTY` | The seconds that a game without players continues. `0`: the game continues. |
 | `server.rehost_seconds` | `5` | `HALO_SERVER_REHOST` | The seconds before the server hosts again after it lost the game. |
+| `server.status_interval`, `server.control`, `server.control_output_fd`, `server.control_input_fd`, `server.control_exit_on_eof` | refer to "Dedicated server control" | | The control channel for a supervising process: JSON events on stdout, commands on stdin. |
 
 A map in the rotation is the name of a multiplayer map (`bloodgulch`,
 `sidewinder`, ...; the file `maps/<name>.map`) or the full path of a
@@ -401,8 +405,218 @@ The other settings, for example `network.address`, `network.broadcast` and
 computer, give each server a different `network.address` (refer to "Play on
 one computer").
 
-The code is in `game/dedicated_server.c`. The changes to the game are in
+The code is in `game/dedicated_server.c` (the control
+channel: `src/dedicated_control.c`). The changes to the game are in
 `#ifdef HALO_LINUX` (refer to "Game source changes").
+
+### Dedicated server control
+
+A process that starts the server (for example a PHP supervisor that uses
+Symfony Process) can read the status of the server and send it commands
+through the pipes of the server. No network port is opened (the telnet
+console stays off), so only the process that holds the pipes can control
+the server.
+
+- **Events** go to stdout, one JSON object on each line (JSON Lines). The
+  human log (`halo-linux: ...` lines) goes to stderr. When the events use
+  stdout, the server keeps stdout for the events only: other output that
+  the game writes to stdout goes to stderr. Thus each stdout line is an
+  event.
+- **Commands** come from stdin, one on each line: a JSON object, or a line
+  of text.
+- `server.control_output_fd` and `server.control_input_fd` select other
+  descriptors (for example 3 and 4, as `proc_open` can give). Then stdout
+  is not changed. `-1` disables one direction.
+  `server.control = false` disables the channel.
+
+The server never waits for the supervisor. It reads stdin between frames
+on the main thread, and only when `poll()` reports data, so an idle or
+closed stdin costs nothing. If the events are a pipe or a socket, the
+server writes them without blocking. If the supervisor does not read,
+events wait in a queue of 1 MiB. After that, the server drops events, and
+a `dropped` event gives the count when the queue has room again. If the
+supervisor closes its end, the events stop and the server continues. When
+stdin ends, the server writes `input_closed` and continues. With
+`server.control_exit_on_eof = true`, it stops as for SIGTERM.
+
+| Setting | Default | Environment variable | Function |
+| --- | --- | --- | --- |
+| `server.control` | `true` | `HALO_SERVER_CONTROL` | `false`: no control channel. |
+| `server.control_output_fd` | `1` | `HALO_SERVER_CONTROL_OUTPUT_FD` | The descriptor for events. `1` is stdout. `-1`: no events. |
+| `server.control_input_fd` | `0` | `HALO_SERVER_CONTROL_INPUT_FD` | The descriptor for commands. `0` is stdin. `-1`: no commands. |
+| `server.control_exit_on_eof` | `false` | `HALO_SERVER_CONTROL_EXIT_ON_EOF` | `true`: stop the server (as SIGTERM does) when the command input ends. |
+| `server.status_interval` | `2` | `HALO_SERVER_STATUS_INTERVAL` | The seconds between `status` events (0 to 3600). `0`: `status` only when requested. |
+
+#### Signals
+
+| Signal | Effect |
+| --- | --- |
+| SIGINT, SIGTERM | Stop the server (refer to "Dedicated server"). Event: `shutdown`. A second signal, or a signal while the server loads a map, stops the server immediately. The server then writes `{"event":"shutdown","reason":"signal","signal":15,"immediate":true}` from the signal handler, without `seq` or `time`, and possibly after an empty line. |
+| SIGHUP | Reads the settings again (as the `reload` command does, without an `id`). Event: `reloaded`. |
+| SIGUSR1 | Writes a `status` event. |
+
+#### Events
+
+Each event is one JSON object on one line. Each event has these fields:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `event` | string | The event name (as follows). |
+| `seq` | integer | Starts at 0 and increases by 1 for each event. A gap means dropped events. |
+| `time` | number | Unix time in seconds, with milliseconds. |
+
+A reply to a command also has `id` (the id of the command, the same JSON
+type, or `null`) and `command` (the name of the command, or `null`).
+Ignore empty lines and fields that you do not know: new fields and new
+events are not a change of the protocol version. Other changes increase
+`protocol`.
+
+Common objects:
+
+- **entry**: `{"map": "bloodgulch", "map_path": "levels\\test\\bloodgulch\\bloodgulch", "gametype": "slayer"}`.
+  `gametype` is the name from the rotation.
+- **variant fields** (in `lobby`, `game_started`, status `lobby`/`game`,
+  `game_ended`): `variant` (the name that the game shows, for example
+  `"Slayer"`), `engine` (`ctf`, `slayer`, `oddball`, `king`, `race`,
+  `terminator`, `stub`, or `none`), `teams` (boolean), `score_limit` (integer).
+- **player**:
+
+  | Field | Type | Meaning |
+  | --- | --- | --- |
+  | `player` | integer or null | The player slot of the server (0 to 15). Use it with `kick`. `null` for a player who left during the game (in game player lists). |
+  | `name` | string | The player name. |
+  | `machine` | integer | The machine index. All players of one machine (split screen) have the same value. |
+  | `controller` | integer | The local player of the machine (0 to 3). |
+  | `team`, `team_name` | integer, string, or null | `0`/`"red"`, `1`/`"blue"`. `null` in games without teams. |
+  | `connected` | boolean | `false`: the player left this game (the statistics remain). |
+  | `machine_name` | string or null | The name of the machine (in the lobby list). |
+  | `address`, `port` | string, integer, or null | The IPv4 address and UDP port of the machine. `null` for the machine of the server. |
+  | `ping_ms` | integer or null | The round trip in milliseconds. Only with `network.netcode = "distributed"`. The original netcode does not measure it, so it is `null`. |
+  | `kills`, `deaths`, `assists`, `suicides`, `team_kills`, `score` | integer | In a game only (not in the lobby). `score` is the score of the gametype (kills, flag captures, seconds with the ball or on the hill, laps). |
+  | `score_text` | string | The score as the scoreboard shows it (for example `"1:05"` for time scores). In a game only. |
+  | `won` | boolean or null | In `game_ended` only. `null`: a tie. |
+
+- **team_scores**: `[{"team": 0, "name": "red", "score": 3}, ...]` (teams
+  that have players), or `null` (no team game, or not in a game).
+
+| Event | When | Fields |
+| --- | --- | --- |
+| `starting` | First, when the process starts. | `protocol` (1), `pid`, `name`, `commands` (boolean: the server reads commands). |
+| `server_started` | Once, when the first lobby opens. | `name`, `protocol`, `distributed` (boolean: the distributed netcode), `rotation` (array of entries), `settings` `{countdown, minimum_players, postgame_seconds, empty_seconds, rehost_seconds, status_interval, exit_on_eof}`. |
+| `lobby` | The lobby opens, the player count changes, the countdown starts or stops, or the lobby map changes. | `reason` (`opened`, `players`, `countdown_started`, `countdown_stopped`, `map_changed`), entry fields, variant fields, `player_count`, `minimum_players`, `countdown` (the seconds that remain, or `null`), `players` (array). |
+| `game_started` | The map loaded and the game can score. | Entry fields, variant fields, `players` (array). |
+| `player_joined` | A player joins (lobby or game). | `player`, `name`, `machine`, `controller`, `team`, `team_name`, `machine_name`, `address`, `port`, `in_game` (boolean). |
+| `player_left` | A player leaves or is kicked. | The same fields as `player_joined`, without `in_game`, and `reason` (`left` or `kicked`). |
+| `score` | During a game, when a statistic or a score changes. At most once each second. | Entry fields, `time_elapsed` (seconds), `team_scores`, `players`. |
+| `status` | Each `server.status_interval` seconds, on SIGUSR1, and as the reply to `status` (then with `id`/`command`). | `state` (`starting`, `hosting`, `lobby`, `game`, `postgame`, `waiting`), `name`, `uptime` (seconds), `games_hosted`, `rotation`, `rotation_index` (the current game position in the rotation, or `null` if a command set the game), `next` (entry), `lobby` (object or `null`), `game` (object or `null`). |
+| `game_ended` | The game ends (before the scores show). | `reason` (`game_over`, `empty`, `end_game`, `next_map`, `change_map`), entry fields, variant fields, `time_elapsed`, `time_remaining` (always `null`), `team_scores`, `players` (with `won`), `next` (entry). |
+| `postgame` | The scores show. | Entry fields (the game that ended), `postgame_seconds`, `next` (entry). |
+| `reloaded` | After SIGHUP. | `rotation_changed`, `rotation`, `rejected` `[{entry, reason}]`, `settings`. |
+| `input_closed` | The command input ended. | `exiting` (boolean). |
+| `shutdown` | The server stops. | `reason` (`signal`, `command`, `input_closed`), `signal` (integer or `null`), `immediate` (boolean), `games_hosted`. |
+| `dropped` | Events were dropped because the supervisor did not read. | `count`. |
+| `ack` | A command succeeded. | `id`, `command`, and fields for each command (refer to "Commands"). |
+| `error` | A command failed, or the server has a problem. | `id`, `command` (`null` if not a reply), `code`, `message`, `fatal`. If `fatal` is `true`, the server stops with exit code 1. |
+
+The status `lobby` object has entry fields, variant fields,
+`player_count`, `minimum_players`, `countdown`, and `players` (array). The status `game` object has
+`ended` (boolean), entry fields, variant fields, `time_elapsed` (or `null`
+while the map loads), `time_remaining` (`null`), `team_scores`, and
+`players` (array).
+
+The Xbox gametypes have no time limit: a game ends at its score limit, so
+`time_remaining` is always `null`.
+
+Error codes of the server (with `id: null`):
+
+| Code | Fatal | Meaning |
+| --- | --- | --- |
+| `no_game_data` | yes | No `maps` folder. Exit code 1. |
+| `map_load_failed` | yes | A map did not load (`debug.txt` has the details). Exit code 1. |
+| `startup_failed` | yes | SDL did not start. |
+| `no_playable_rotation` | no | No usable entry in `server.rotation`: the server plays `bloodgulch:slayer`. |
+| `rotation_entry_rejected` | no | The server removed an entry from the rotation (unknown gametype, or no map file). |
+| `game_lost` | no | The game stopped because of a network failure or an abort. The server hosts again after `server.rehost_seconds`. |
+| `cannot_host` | no | The server could not host. It tries again. |
+| `line_too_long` | no | A command line was longer than 64 KiB and was ignored. |
+| `event_too_large` | no | An event was too large and was not written. |
+
+#### Commands
+
+A command is one line: a JSON object, or text.
+
+```
+{"cmd":"kick","id":17,"player":3}
+kick 3
+```
+
+JSON: `cmd` (or `command`) is the name. `id` (optional, string or
+number) is copied to the reply. The other keys are arguments. Their values
+are strings, numbers, booleans, `null`, or arrays of those (the server
+joins array values with commas). Nested objects are an error. Text: the
+first word is the name. `key=value` words are arguments. The other words
+are the text of the command, for example `change_map bloodgulch:ctf now`.
+The server ignores empty lines and lines that start with `#`. It reads up
+to 32 commands each frame (30 frames each second) and runs them in
+sequence.
+
+Each command gets one reply: `ack` or `error`, with the `id` of the
+command. Some commands then cause other events (for example `status`, or
+`player_left`). A text command has no id, so its replies have `"id":
+null`.
+
+| Command | Arguments | Result |
+| --- | --- | --- |
+| `status` | none | `ack`, then a `status` event with the same `id`. |
+| `next_map` | `skip_postgame` (boolean, optional) | Ends the current game and plays the next game (the next rotation entry, or the game that `change_map` set). `ack` `{effect, next}`. `effect`: `ending_game` (a game was in progress; `game_ended` follows with reason `next_map`), `skipping_postgame` (the scores show: the lobby opens now), `already_advancing`, or `lobby` (the lobby changes to the next game now). |
+| `end_game` | none | Ends the current game as the score limit does. The scores show, then the rotation continues. `ack` `{effect: "ending_game"}`. `error` `not_in_game` if no game is in progress. |
+| `change_map` | `map`, `gametype` (optional, default `slayer`), `now` (boolean); or text `map[:gametype] [now]` | Sets the next game. In the lobby: the lobby changes now (`effect: "lobby"`). In a game: the game is next (`next_game`); with `now`, the current game ends and the scores do not show (`ending_game`). Before the server hosts: `next_lobby`. The rotation continues after that game (at the position where it stopped). `ack` `{effect, next}`. `error` `invalid_map` (unknown gametype, or no map file). |
+| `set_rotation` | `rotation` (string `"a:b,c"` or array `["a:b","c"]`), or the text | Replaces the rotation (in memory only, not in `config.toml`). The next game is the first entry of the new rotation (a `change_map` that is waiting goes first). In the lobby, the lobby changes now. `ack` `{effect, rotation, rejected}`. `error` `invalid_rotation` (no usable entry; the reply has `rejected`), with no change. |
+| `kick` | `player` (slot), `machine`, or `name`; or text `kick <player>` | Removes the machine of the player from the game, as a lost connection does. All players of that machine go. It is not a ban: the machine can join again. `ack` `{machine, machine_name, players}`, then a `player_left` event (reason `kicked`) for each player. Errors: `not_hosting`, `no_such_player`, `ambiguous_name`, `no_such_machine`, `cannot_kick_host`, `kick_failed`. |
+| `reload` | none | Reads `server.rotation`, `server.countdown`, `server.minimum_players`, `server.postgame_seconds`, `server.empty_seconds`, `server.rehost_seconds`, `server.status_interval`, and `server.control_exit_on_eof` again from `config.toml` and from the environment of the process. The environment has priority, and the environment of a running process does not change. If the rotation text changed, the rotation starts again as for `set_rotation`. `ack` `{rotation_changed, rotation, rejected, settings}`. `error` `reload_failed` (errors in `config.toml`; no change). If the new rotation has no usable entry, the server writes `error` `invalid_rotation` and then the `ack` with `rotation_changed: false`. |
+| `quit` | none | `ack`, then the server stops as for SIGTERM (`shutdown` with reason `command`, exit code 0). |
+| `help` | none | `ack` `{protocol, commands}`. |
+| `say`, `broadcast` | any | `error` `not_supported`. System link has no chat, and the host has no message that shows text on the machines of the players. |
+
+Errors for all commands: `bad_json` (the line is not a JSON object, a
+value is a nested object, or the line has other text after the object),
+`bad_request` (no `cmd`, a bad argument, more than 16 arguments, or
+arguments longer than 16 KiB), and `unknown_command`.
+
+Example session (`>` is stdin, `<` is stdout):
+
+```
+< {"event":"starting","seq":0,"time":1790662000.101,"protocol":1,"pid":4242,"name":"Halo Dedicated","commands":true}
+< {"event":"server_started","seq":1,"time":1790662004.512,"name":"Halo Dedicated","protocol":1,"distributed":false,"rotation":[{"map":"bloodgulch","map_path":"levels\\test\\bloodgulch\\bloodgulch","gametype":"slayer"},{"map":"sidewinder","map_path":"levels\\test\\sidewinder\\sidewinder","gametype":"ctf"}],"settings":{"countdown":30,"minimum_players":1,"postgame_seconds":15,"empty_seconds":10,"rehost_seconds":5,"status_interval":2,"exit_on_eof":false}}
+< {"event":"lobby","seq":2,"time":1790662004.513,"reason":"opened","map":"bloodgulch","map_path":"levels\\test\\bloodgulch\\bloodgulch","gametype":"slayer","variant":"Slayer","engine":"slayer","teams":false,"score_limit":25,"player_count":0,"minimum_players":1,"countdown":null,"players":[]}
+< {"event":"player_joined","seq":3,"time":1790662010.020,"player":0,"name":"Chief","machine":1,"controller":0,"team":null,"team_name":null,"machine_name":"Xbox","address":"192.168.1.20","port":2302,"in_game":false}
+> {"cmd":"change_map","id":"a1","map":"sidewinder","gametype":"ctf"}
+< {"event":"ack","seq":5,"time":1790662011.300,"id":"a1","command":"change_map","effect":"lobby","next":{"map":"sidewinder","map_path":"levels\\test\\sidewinder\\sidewinder","gametype":"ctf"}}
+< {"event":"lobby","seq":6,"time":1790662011.301,"reason":"map_changed","map":"sidewinder",...}
+> {"cmd":"kick","id":2,"player":0}
+< {"event":"ack","seq":9,"time":1790662020.000,"id":2,"command":"kick","machine":1,"machine_name":"Xbox","players":1}
+< {"event":"player_left","seq":10,"time":1790662020.000,"player":0,"name":"Chief","machine":1,"controller":0,"team":0,"team_name":"red","machine_name":"Xbox","address":"192.168.1.20","port":2302,"reason":"kicked"}
+> status
+< {"event":"ack","seq":11,"time":1790662021.000,"id":null,"command":"status"}
+< {"event":"status","seq":12,"time":1790662021.000,"id":null,"command":"status","state":"lobby",...}
+```
+
+A game `status` (abbreviated):
+
+```json
+{"event":"status","seq":40,"time":1790662100.0,"state":"game","name":"Halo Dedicated","uptime":100.2,"games_hosted":1,
+ "rotation":[...],"rotation_index":0,"next":{"map":"sidewinder","map_path":"levels\\test\\sidewinder\\sidewinder","gametype":"ctf"},
+ "lobby":null,
+ "game":{"ended":false,"map":"bloodgulch","map_path":"levels\\test\\bloodgulch\\bloodgulch","gametype":"team_slayer",
+   "variant":"Team Slayer","engine":"slayer","teams":true,"score_limit":50,"time_elapsed":83.4,"time_remaining":null,
+   "team_scores":[{"team":0,"name":"red","score":7},{"team":1,"name":"blue","score":5}],
+   "players":[{"player":0,"name":"Chief","machine":1,"controller":0,"team":0,"team_name":"red","connected":true,
+     "machine_name":"Xbox","address":"192.168.1.20","port":2302,"ping_ms":null,"kills":7,"deaths":2,"assists":1,
+     "suicides":0,"team_kills":0,"score":7,"score_text":"7"}]}}
+```
+
+`tools/dedicated_control_test.py` tests the channel without game data
+(`python3 tools/dedicated_control_test.py --binary build/linux/halo`).
 
 ## Internet play
 
@@ -573,7 +787,7 @@ Other changes are in `#ifdef HALO_LINUX`. All the native ports define
 | `cseries/errors.c` | `debug.txt` stays open between lines. |
 | `networking/`, `game/`, `interface/`, `bungie_net/network/` and the pools of objects, effects and sounds | The system link limits and the memory for them. |
 | `game/`, `objects/`, `units/`, `networking/` | The distributed netcode. Refer to `NETCODE.md`. |
-| `main/main.c`, `shell/shell_xbox.c`, `game/game_engine.c`, `interface/ui_widget.c`, `networking/network_server_manager.c`, `networking/network_client_manager.c`, `networking/network_game_manager.c`, `networking/telnet_console.c` | The dedicated server: no rendering, a 30 Hz sleep, no host player in the checks, the automatic countdown, the automatic return to the lobby, the server name, no telnet console. Refer to "Dedicated server". |
+| `main/main.c`, `shell/shell_xbox.c`, `game/game_engine.c`, `interface/ui_widget.c`, `networking/network_server_manager.c`, `networking/network_client_manager.c`, `networking/network_game_manager.c`, `networking/telnet_console.c` | The dedicated server: no rendering, a 30 Hz sleep, no host player in the checks, the automatic countdown, the automatic return to the lobby, the server name, no telnet console, the fatal error event of a map that does not load, and the lobby, player and machine information and the kick for the control channel. Refer to "Dedicated server" and "Dedicated server control". |
 
 The x86 inline assembly of the game has C replacements in
 `#ifdef HALO_LINUX`. Thus the compiler can optimize that code for each
