@@ -2172,7 +2172,15 @@ static boolean network_game_server_handle_message_client_settings_request(
 	word *message,
 	short message_size)
 {
+#ifdef HALO_LINUX
+	/* (or a machine joining the game in progress, before it loads: its name,
+	which the game otherwise never learns) */
+	if (network_game_server_get_state(server, NULL) == _network_game_server_state_pregame ||
+		(network_game_server_accepts_late_joins(server) &&
+			!network_game_server_client_machine_is_loaded(server, client_machine)))
+#else
 	if (network_game_server_get_state(server, NULL) == _network_game_server_state_pregame)
+#endif
 	{
 		struct network_machine machine_settings;
 		short packet_type = _message_client_settings_request;
@@ -2196,6 +2204,13 @@ static boolean network_game_server_handle_message_client_settings_request(
 						machine_settings.name,
 						(char *)machine_settings.name,
 						sizeof(machine_settings.name)));
+#ifdef HALO_LINUX
+				/* (a game in progress has no pregame data to send) */
+				if (network_game_server_get_state(server, NULL) != _network_game_server_state_pregame)
+				{
+				}
+				else
+#endif
 				if (!network_game_server_send_game_data_pregame(server))
 				{
 					network_event(

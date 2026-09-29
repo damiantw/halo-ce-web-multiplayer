@@ -115,6 +115,9 @@ allocation and the client limit, discovery fan-out and hub broadcasts over real 
    `Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Embedder-Policy: require-corp` (and CORP on the
    maps), and passes the settings in the query string or by writing them into the page:
    `?env=HALO_WEB_GATEWAY=wss://<host>/gateway,HALO_WEB_TOKEN=<token>,HALO_WEB_ADDRESS=<address>,HALO_WEB_TOKEN_URL=/play/token`.
+   Add `HALO_WEB_PLAYER_NAME=<name>` (URL-encoded UTF-8, up to 11 characters, no commas: they separate the
+   settings) to name the player and its
+   machine; without it the profile's name or a random one is used.
    `/maps/index.json` lists `[{name, size}]`, and `/maps/<name>.map` serves the files with Range support. For the
    multiplayer-only build it needs only `ui.map` and the multiplayer maps.
 5. **nginx**:
@@ -186,10 +189,6 @@ Remaining gaps:
   items 1 and 5). WebGL's refusal to mix constant colour and constant alpha blend factors (the plasma weapons'
   meters) is worked around in `apply_raster_state`.
 - Two clients in one tab set are memory heavy (~0.8 GB each in headless Chrome with SwiftShader).
-- A join-in-progress player's name and machine name show empty in the server's events (reproduced: a second
-  web client joining 30 s into the game gets slot 0 and "" for both; a lobby join gets its random name). The
-  late-join path (`network_server_message_handler.c`, `network_game_server_queue_player_for_addition`, then
-  `network_game_server_add_player_to_game`) is where to look; not fixed yet.
 - The canvas-goes-black-on-click report did not reproduce in headless Chrome (no pointer lock there); it needs a
   real browser to look at.
 - WebRTC data channels (lower latency than TCP WebSocket) are the next step (wasm-spike.md, "WebRTC later").

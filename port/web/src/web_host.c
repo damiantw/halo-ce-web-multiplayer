@@ -214,3 +214,50 @@ void web_watchdog_start(void)
 	pthread_create(&thread, NULL, web_watchdog_thread, NULL);
 	pthread_detach(thread);
 }
+
+/* ---------- the player's name
+
+HALO_WEB_PLAYER_NAME (the page passes it with the other settings: the name
+the player chose on the site) names the player in network games instead of
+the profile's name or a random one (player_ui.c,
+player_ui_get_active_player_profile). UTF-8, cut to capacity - 1
+characters; characters outside the Basic Multilingual Plane become '?'.
+The game's wchar_t is 16 bits, so the name is given as such. */
+int web_player_name(unsigned short *name, int capacity)
+{
+	const unsigned char *text = (const unsigned char *)getenv("HALO_WEB_PLAYER_NAME");
+	int count = 0;
+
+	if (!text || !*text || capacity < 2)
+		return 0;
+	while (*text && count < capacity - 1)
+	{
+		unsigned long code = *text++;
+		int extra = code >= 0xf0 ? 3 : code >= 0xe0 ? 2 : code >= 0xc0 ? 1 : 0;
+
+		if (code >= 0x80 && code < 0xc0)
+			continue; /* (a stray continuation byte) */
+		code &= extra == 3 ? 0x07 : extra == 2 ? 0x0f : extra == 1 ? 0x1f : 0x7f;
+		for (; extra && (*text & 0xc0) == 0x80; extra--)
+			code = (code << 6) | (*text++ & 0x3f);
+		if (extra)
+			continue; /* (cut short) */
+		if (code < 0x20 || code == 0x7f)
+			continue;
+		name[count++] = (unsigned short)(code > 0xffff || (code >= 0xd800 && code < 0xe000) ? '?' : code);
+	}
+	/* (no leading or trailing spaces: a name of spaces is no name) */
+	while (count && name[count - 1] == ' ')
+		count--;
+	{
+		int start = 0, index;
+
+		while (start < count && name[start] == ' ')
+			start++;
+		for (index = start; index < count; index++)
+			name[index - start] = name[index];
+		count -= start;
+	}
+	name[count] = 0;
+	return count;
+}

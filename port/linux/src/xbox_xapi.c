@@ -291,6 +291,19 @@ BOOL WINAPI XSetNicknameW(LPCWSTR nickname, BOOL preserve_case)
 HANDLE WINAPI XFindFirstNicknameW(BOOL this_title_only, LPWSTR nickname, UINT size)
 {
 	(void)this_title_only;
+#ifdef HALO_WEB
+	/* the machine is named after the player the page names
+	(HALO_WEB_PLAYER_NAME, port/web/src/web_host.c), not a random name */
+	if (!last_nickname[0])
+	{
+		extern int web_player_name(unsigned short *name, int capacity);
+		unsigned short name[MAX_NICKNAME];
+		int index, count = web_player_name(name, MAX_NICKNAME);
+
+		for (index = 0; index <= count && count > 0; index++)
+			last_nickname[index] = (wchar_t)name[index];
+	}
+#endif
 	if (!last_nickname[0] || !size)
 	{
 		SetLastError(ERROR_NO_MORE_FILES);

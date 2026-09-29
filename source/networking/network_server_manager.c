@@ -1750,6 +1750,39 @@ boolean network_game_server_add_player_to_game(
 
 		if (!player_name_is_unique(server, player->name))
 			get_unique_random_name(server, player);
+#ifdef HALO_LINUX
+		/* port: the random names are a tag of the main menu's map, which a
+		game in progress has not loaded (a dedicated server's, where a
+		machine joins it): the player is named after its machine, else
+		"Player" and its slot's number */
+		if (!player->name[0] || !player_name_is_unique(server, player->name))
+		{
+			wchar_t const *machine_name = L"";
+			long index;
+
+			for (index = 0; index < MAXIMUM_NETWORK_MACHINE_COUNT; index++)
+			{
+				if (server->game.machines[index].machine_index == player->machine_index)
+				{
+					machine_name = server->game.machines[index].name;
+					break;
+				}
+			}
+			ustrncpy(player->name, machine_name, NETWORK_PLAYER_NAME_LENGTH - 1);
+			player->name[NETWORK_PLAYER_NAME_LENGTH - 1] = 0;
+			for (index = 1; index < 1000 && (!player->name[0] || !player_name_is_unique(server, player->name)); index++)
+			{
+				wchar_t const prefix[] = L"Player ";
+				short length = (short)(sizeof(prefix) / sizeof(prefix[0]) - 1);
+				long divisor;
+
+				csmemcpy(player->name, prefix, length * sizeof(wchar_t));
+				for (divisor = index >= 100 ? 100 : index >= 10 ? 10 : 1; divisor; divisor /= 10)
+					player->name[length++] = (wchar_t)(L'0' + index / divisor % 10);
+				player->name[length] = 0;
+			}
+		}
+#endif
 
 		if (player->primary_color_index == NONE)
 			get_unique_random_color(server, player);
