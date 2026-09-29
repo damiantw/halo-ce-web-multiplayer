@@ -139,6 +139,18 @@ The settings are in `config.toml` next to the executable
 with the default values and a comment for each setting. To get the default
 values again, delete the file.
 
+Two exceptions:
+
+- The environment variable `HALO_CONFIG` gives the path of the file for one
+  start of the game.
+- A dedicated server started with `HALO_DEDICATED` in the environment uses
+  `config.toml` in the save root (`HALO_SAVE_ROOT`, else
+  `$XDG_DATA_HOME/halo-linux` or `~/.local/share/halo-linux`), not the file
+  next to the executable. Thus each server with its own save root has its
+  own file, and the folder of the executable can be read-only (for example,
+  a bundle that starts the game through its own loader). `paths.saves` in
+  that file does not move the file.
+
 The game reads the file one time, at start-up. If a key is not correct, or
 a value has the wrong type, the game writes the line to the log and uses the
 default value.
