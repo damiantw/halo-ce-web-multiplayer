@@ -678,6 +678,19 @@ real distributed_machine_round_trip_ticks(
 	return distributed_round_trips[machine_index].average + 2.0f * distributed_round_trips[machine_index].deviation;
 }
 
+boolean distributed_machine_round_trip_measured(
+	long machine_index,
+	real *ticks)
+{
+	if (machine_index < 0 || machine_index >= HALO_PORT_MAXIMUM_NETWORK_MACHINES ||
+		!distributed_round_trips[machine_index].valid)
+	{
+		return FALSE;
+	}
+	*ticks = distributed_round_trips[machine_index].average;
+	return TRUE;
+}
+
 /* ---------- units */
 
 static void distributed_state_from_player(
