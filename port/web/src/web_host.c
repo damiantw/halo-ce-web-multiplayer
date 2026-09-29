@@ -107,3 +107,43 @@ void _ReadWriteBarrier(void)
 {
 	__sync_synchronize();
 }
+
+/* ---------- a stall watchdog (HALO_WEB_WATCHDOG=1: logs when frames stop) */
+
+#include <pthread.h>
+#include <unistd.h>
+
+volatile unsigned web_trace_frames;
+
+static void *web_watchdog_thread(void *unused)
+{
+	unsigned last = 0, still = 0;
+
+	(void)unused;
+	for (;;)
+	{
+		sleep(1);
+		if (web_trace_frames == last)
+		{
+			if (still++ < 5)
+				platform_log("web: watchdog: no frame for %us (pause the game worker in DevTools to see where)", still);
+		}
+		else
+		{
+			still = 0;
+			last = web_trace_frames;
+		}
+	}
+	return NULL;
+}
+
+void web_watchdog_start(void)
+{
+	static int started;
+	pthread_t thread;
+
+	if (started++ || !getenv("HALO_WEB_WATCHDOG"))
+		return;
+	pthread_create(&thread, NULL, web_watchdog_thread, NULL);
+	pthread_detach(thread);
+}

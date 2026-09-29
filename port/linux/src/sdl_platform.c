@@ -569,6 +569,11 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 	SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 	SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
 	SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 0);
+#ifdef HALO_WEB
+	/* an opaque canvas: the page must not show through where the game
+	leaves alpha below one (upstream PR #12's opaque-canvas.js) */
+	SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 0);
+#endif
 	if (config_boolean("debug.gl_debug"))
 		SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_DEBUG_FLAG);
 #if !defined(HALO_ANDROID) && !defined(_WIN32)
@@ -633,6 +638,31 @@ void platform_video_drawable_size(int *width, int *height)
 void platform_video_swap(void)
 {
 	SDL_GL_SwapWindow(platform_window);
+#ifdef HALO_WEB
+	{
+		extern volatile unsigned web_trace_frames;
+		void web_watchdog_start(void);
+
+		web_trace_frames++;
+		web_watchdog_start();
+	}
+	/* frames a second in the log, as the browser has no overlay for it */
+	{
+		static Uint64 last;
+		static unsigned long frames;
+		Uint64 now = SDL_GetTicks();
+
+		frames++;
+		if (!last)
+			last = now;
+		if (now - last >= 5000)
+		{
+			platform_log("web: %.1f frames a second", frames * 1000.0 / (double)(now - last));
+			frames = 0;
+			last = now;
+		}
+	}
+#endif
 }
 
 void platform_mouse_capture(BOOL capture)

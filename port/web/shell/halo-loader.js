@@ -37,6 +37,12 @@
 			FS.mkdirTree("/data/maps");
 			FS.mkdirTree("/home/web_user");
 			Module.ENV.HOME = "/home/web_user";
+			/* the web build's defaults: no internet play (p2p hosting and
+			brokers need raw sockets; system link goes through the gateway),
+			no updater, no clipboard invites */
+			Module.ENV.HALO_NET_ONLINE = "0";
+			Module.ENV.HALO_UPDATE_AUTO = "0";
+			Module.ENV.HALO_NET_JOIN_FROM_CLIPBOARD = "0";
 			for (const pair of (params.get("env") || "").split(",").filter(Boolean)) {
 				const [name, ...value] = pair.split("=");
 				Module.ENV[name] = value.join("=");

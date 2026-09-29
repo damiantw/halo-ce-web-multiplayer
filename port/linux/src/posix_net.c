@@ -72,6 +72,10 @@ with the host ABI.
 
 static __thread int last_error;
 
+#ifndef HALO_WEB
+/* the web build has its own sockets, over the gateway's WebSocket
+(port/web/src/posix_web_net.c) */
+
 static int fail(void)
 {
 	switch (errno)
@@ -409,6 +413,8 @@ posix_ulong posix_local_ipv4_address(void)
 	freeifaddrs(addresses);
 	return result;
 }
+
+#endif /* HALO_WEB */
 
 void posix_random_bytes(void *buffer, posix_ulong size)
 {

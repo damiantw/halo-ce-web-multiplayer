@@ -1449,6 +1449,26 @@ HRESULT WINAPI D3DDevice_GetVisibilityTestResult(DWORD index, UINT *result, ULON
 	}
 #endif
 	glGetQueryObjectuiv(device.queries[index], GL_QUERY_RESULT_AVAILABLE, &available);
+#ifdef HALO_WEB
+	/* WebGL makes a query's result available only after the frame goes back
+	to the browser's event loop, so the game's wait for it (rasterizer_xbox_
+	widgets.c, _transparent_geometry.c) would spin forever: answer with the
+	slot's last result (visible until one arrives) */
+	{
+		static UINT last_samples[VISIBILITY_TEST_SLOTS];
+		static BOOL last_known[VISIBILITY_TEST_SLOTS];
+
+		if (available)
+		{
+			glGetQueryObjectuiv(device.queries[index], GL_QUERY_RESULT, &samples);
+			last_samples[index] = samples ? VISIBILITY_ALL_SAMPLES : 0;
+			last_known[index] = TRUE;
+		}
+		if (result)
+			*result = last_known[index] ? last_samples[index] : VISIBILITY_ALL_SAMPLES;
+		return S_OK;
+	}
+#endif
 	if (!available)
 		return D3DERR_TESTINCOMPLETE;
 	glGetQueryObjectuiv(device.queries[index], GL_QUERY_RESULT, &samples);
@@ -3396,12 +3416,42 @@ void WINAPI D3DDevice_End(void)
 	if (!count || !prepare_draw(TRUE))
 		return;
 	trace_draw("immediate", type, count, device.immediate_vertices);
+#ifdef HALO_WEB
+	/* WebGL allows strides up to 255 bytes, less than a vertex of all the
+	attributes (256): upload each attribute's values together instead */
+	{
+		static float *planar;
+		static unsigned long planar_capacity;
+		unsigned long vertex;
+
+		if (planar_capacity < count)
+		{
+			planar_capacity = count;
+			planar = realloc(planar, count * stride);
+		}
+		for (index = 0; index < XGPU_VERTEX_ATTRIBUTE_COUNT; index++)
+		{
+			for (vertex = 0; vertex < count; vertex++)
+			{
+				memcpy(planar + (index * count + vertex) * 4,
+					device.immediate_vertices + (vertex * XGPU_VERTEX_ATTRIBUTE_COUNT + index) * 4, 4 * sizeof(float));
+			}
+		}
+		offset = stream_upload(planar, count * stride);
+		for (index = 0; index < XGPU_VERTEX_ATTRIBUTE_COUNT; index++)
+		{
+			state_attribute_pointer(index, device.stream_buffer, 4, GL_FLOAT, GL_FALSE, FALSE, (GLsizei)(4 * sizeof(float)),
+				offset + index * count * 4 * sizeof(float));
+		}
+	}
+#else
 	offset = stream_upload(device.immediate_vertices, count * stride);
 	for (index = 0; index < XGPU_VERTEX_ATTRIBUTE_COUNT; index++)
 	{
 		state_attribute_pointer(index, device.stream_buffer, 4, GL_FLOAT, GL_FALSE, FALSE, (GLsizei)stride,
 			offset + index * 4 * sizeof(float));
 	}
+#endif
 	if (type == D3DPT_QUADLIST)
 	{
 		unsigned long index_count;
