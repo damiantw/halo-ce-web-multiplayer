@@ -21,5 +21,8 @@ const char *config_string(const char *name);
 /* sets a boolean setting, and writes it into config.toml (only its line
 changes); 1 on success */
 int config_write_boolean(const char *name, int value);
+/* the settings named, read again from config.toml and the environment (the
+dedicated server's reload); 1 on success */
+int config_reload(const char *const *names, int count);
 
 #endif

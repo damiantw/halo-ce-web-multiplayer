@@ -180,6 +180,26 @@ static const struct config_setting config_settings[] =
 	{ "server.rehost_seconds", _config_integer, "5", "HALO_SERVER_REHOST", _environment_value, _platform_desktop,
 		"Seconds after the dedicated server's game is lost (a network failure,\n"
 		"an abort) that it hosts again." },
+	{ "server.status_interval", _config_integer, "2", "HALO_SERVER_STATUS_INTERVAL", _environment_value,
+		_platform_desktop,
+		"Seconds between the dedicated server's status events on its control\n"
+		"channel (1-3600); 0 writes them only when asked." },
+	{ "server.control", _config_boolean, "true", "HALO_SERVER_CONTROL", _environment_value, _platform_desktop,
+		"The dedicated server's control channel for the process that started it\n"
+		"(port/linux/README.md, \"Dedicated server control\"): JSON events on\n"
+		"server.control_output_fd, commands read from server.control_input_fd;\n"
+		"no network port. false: neither." },
+	{ "server.control_output_fd", _config_integer, "1", "HALO_SERVER_CONTROL_OUTPUT_FD", _environment_value,
+		_platform_desktop,
+		"The descriptor the control events are written to: 1 is stdout (the log\n"
+		"is on stderr), -1 none." },
+	{ "server.control_input_fd", _config_integer, "0", "HALO_SERVER_CONTROL_INPUT_FD", _environment_value,
+		_platform_desktop,
+		"The descriptor control commands are read from: 0 is stdin, -1 none." },
+	{ "server.control_exit_on_eof", _config_boolean, "false", "HALO_SERVER_CONTROL_EXIT_ON_EOF", _environment_value,
+		_platform_desktop,
+		"Shut the dedicated server down (as SIGTERM does) when its command input\n"
+		"ends, when the process that started it has gone." },
 
 	{ "debug.network_test", _config_string, "\"\"", "HALO_NETWORK_TEST", _environment_value, _platform_all,
 		"Automated system link sessions for testing (port/linux/game/network_test.c):\n"
@@ -912,6 +932,90 @@ int config_write_boolean(const char *name, int value)
 	pthread_mutex_unlock(&config_lock);
 	free(out.buffer);
 	free(text);
+	return succeeded;
+}
+
+/* ---------- reading settings again */
+
+/* the settings named, read again from config.toml and the environment (as
+at start-up, the environment winning; the file is not written): the
+dedicated server's SIGHUP and "reload" command (port/linux/game/
+dedicated_server.c). Main thread; a string setting's earlier text is
+freed. 1 when the file was read (or there is none), 0 when it has errors
+(the settings then keep their values) */
+int config_reload(const char *const *names, int count)
+{
+	char path[1024];
+	size_t size = 0;
+	char *text;
+	int index;
+	int succeeded = 1;
+	toml_result_t result;
+
+	/* (the file read first, as the other settings are) */
+	config_boolean("server.dedicated");
+	pthread_mutex_lock(&config_lock);
+	config_path(path, sizeof(path));
+	text = config_read_file(path, &size);
+	memset(&result, 0, sizeof(result));
+	if (text)
+	{
+		result = toml_parse(text, (int)size);
+		if (!result.ok)
+		{
+			platform_log("settings: reload: config.toml: %s; the settings stay as they were", result.errmsg);
+			succeeded = 0;
+		}
+	}
+	for (index = 0; succeeded && index < count; index++)
+	{
+		long setting_index = config_setting_index(names[index]);
+		const struct config_setting *setting;
+		struct config_value *value;
+		const char *environment;
+
+		if (setting_index < 0)
+			continue;
+		setting = &config_settings[setting_index];
+		value = &config_values[setting_index];
+		if (setting->type == _config_string)
+		{
+			size_t length = strlen(setting->default_value);
+
+			free(value->string);
+			value->string = length >= 2 ? config_copy(setting->default_value + 1, length - 2) : strdup("");
+		}
+		else
+		{
+			config_set_from_text(value, setting->type, setting->default_value);
+		}
+		if (text)
+			config_set_from_file(value, setting, result.toptab);
+		environment = getenv(setting->environment);
+		if (environment)
+		{
+			switch (setting->environment_style)
+			{
+			case _environment_value:
+				config_set_from_text(value, setting->type, environment);
+				break;
+			case _environment_set_is_true:
+				value->boolean = 1;
+				break;
+			case _environment_set_is_false:
+				value->boolean = 0;
+				break;
+			}
+		}
+	}
+	if (text)
+	{
+		toml_free(result);
+		free(text);
+	}
+	pthread_mutex_unlock(&config_lock);
+	if (succeeded)
+		platform_log("settings: reloaded %d settings from %s and the environment", count, path);
 	return succeeded;
 }
 
