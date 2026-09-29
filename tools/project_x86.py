@@ -38,6 +38,7 @@ from .semantic_progress import (
 from .linux_build import generate_linux_build, linux_configure_inputs
 from .android_build import generate_android_build, android_configure_inputs
 from .windows_build import generate_windows_build, windows_configure_inputs
+from .web_build import generate_web_build, web_configure_inputs
 from .parked_functions import (
     ParkedFunctionsError,
     require_valid_parked_functions,
@@ -139,6 +140,7 @@ class SolutionConfig:
         self.wrapper: Optional[Path] = None  # If None, download wibo on Linux
         self.linux_cc: Optional[str] = None  # Native Linux build compiler (default clang)
         self.port_release: bool = False  # native ports without assertion checks (configure.py --release)
+        self.web_campaign: bool = False  # the web build with the campaign (configure.py --web-campaign)
         self.android_ndk: Optional[str] = None  # Android NDK (default: found from the environment)
         self.android_guest_cc: Optional[str] = None  # Android guest compiler (default clang)
         
@@ -276,6 +278,7 @@ def generate_native_build_ninja(sln: SolutionConfig) -> None:
     generate_linux_build(n, sln)
     generate_android_build(n, sln)
     generate_windows_build(n, sln)
+    generate_web_build(n, sln)
 
     n.comment("Reconfigure on change")
     n.rule(
@@ -295,6 +298,7 @@ def generate_native_build_ninja(sln: SolutionConfig) -> None:
             *linux_configure_inputs(),
             *android_configure_inputs(),
             *windows_configure_inputs(),
+            *web_configure_inputs(),
         ],
     )
     n.newline()
@@ -643,6 +647,7 @@ def generate_build_ninja(sln: SolutionConfig) -> None:
     # Windows build (not part of the matching graph; generated on Windows)
     ###
     generate_windows_build(n, sln)
+    generate_web_build(n, sln)
 
     ###
     # Regenerate on change
@@ -665,6 +670,7 @@ def generate_build_ninja(sln: SolutionConfig) -> None:
             *linux_configure_inputs(),
             *android_configure_inputs(),
             *windows_configure_inputs(),
+            *web_configure_inputs(),
         ],
     )
     n.newline()

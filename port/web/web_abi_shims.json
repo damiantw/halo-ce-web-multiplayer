@@ -1,0 +1,586 @@
+{
+ "adapters": {
+  "web_abi_debug_free__i32_i32_i32__i32": {
+   "caller": [
+    [
+     "i32",
+     "i32",
+     "i32"
+    ],
+    "i32"
+   ],
+   "definition": [
+    [
+     "i32",
+     "i32",
+     "i32"
+    ],
+    "void"
+   ],
+   "name": "debug_free"
+  },
+  "web_abi_editor_preprocess_rendered_object__i32_i32__i32": {
+   "caller": [
+    [
+     "i32",
+     "i32"
+    ],
+    "i32"
+   ],
+   "definition": [
+    [],
+    "i32"
+   ],
+   "name": "editor_preprocess_rendered_object"
+  },
+  "web_abi_error__i32_i32__i32": {
+   "caller": [
+    [
+     "i32",
+     "i32"
+    ],
+    "i32"
+   ],
+   "definition": [
+    [
+     "i32",
+     "i32",
+     "i32"
+    ],
+    "void"
+   ],
+   "name": "error"
+  },
+  "web_abi_game_engine_override_map_name__i32__i32": {
+   "caller": [
+    [
+     "i32"
+    ],
+    "i32"
+   ],
+   "definition": [
+    [
+     "i32"
+    ],
+    "void"
+   ],
+   "name": "game_engine_override_map_name"
+  },
+  "web_abi_game_show_score_extended__i32_i32_i32__i32": {
+   "caller": [
+    [
+     "i32",
+     "i32",
+     "i32"
+    ],
+    "i32"
+   ],
+   "definition": [
+    [
+     "i32",
+     "i32",
+     "i32"
+    ],
+    "void"
+   ],
+   "name": "game_show_score_extended"
+  },
+  "web_abi_game_show_score_you_ally_enemy__i32_i32_i32_i32_i32__i32": {
+   "caller": [
+    [
+     "i32",
+     "i32",
+     "i32",
+     "i32",
+     "i32"
+    ],
+    "i32"
+   ],
+   "definition": [
+    [
+     "i32",
+     "i32",
+     "i32",
+     "i32",
+     "i32"
+    ],
+    "void"
+   ],
+   "name": "game_show_score_you_ally_enemy"
+  },
+  "web_abi_input_abstraction_update__v__i32": {
+   "caller": [
+    [],
+    "i32"
+   ],
+   "definition": [
+    [],
+    "void"
+   ],
+   "name": "input_abstraction_update"
+  },
+  "web_abi_interface_draw_screen__v__i32": {
+   "caller": [
+    [],
+    "i32"
+   ],
+   "definition": [
+    [],
+    "void"
+   ],
+   "name": "interface_draw_screen"
+  },
+  "web_abi_lseek__i32_i32_i32__i32": {
+   "caller": [
+    [
+     "i32",
+     "i32",
+     "i32"
+    ],
+    "i32"
+   ],
+   "definition": [
+    [
+     "i32",
+     "i64",
+     "i32"
+    ],
+    "i64"
+   ],
+   "name": "lseek"
+  },
+  "web_abi_main_set_multiplayer_map_name__i32__i32": {
+   "caller": [
+    [
+     "i32"
+    ],
+    "i32"
+   ],
+   "definition": [
+    [
+     "i32"
+    ],
+    "void"
+   ],
+   "name": "main_set_multiplayer_map_name"
+  },
+  "web_abi_matrix3x3_rotation_to_quaternion__i32_i32__i32": {
+   "caller": [
+    [
+     "i32",
+     "i32"
+    ],
+    "i32"
+   ],
+   "definition": [
+    [
+     "i32",
+     "i32"
+    ],
+    "void"
+   ],
+   "name": "matrix3x3_rotation_to_quaternion"
+  },
+  "web_abi_network_game_abort__v__i32": {
+   "caller": [
+    [],
+    "i32"
+   ],
+   "definition": [
+    [],
+    "void"
+   ],
+   "name": "network_game_abort"
+  },
+  "web_abi_network_game_generate_join_game_token__i32__i32": {
+   "caller": [
+    [
+     "i32"
+    ],
+    "i32"
+   ],
+   "definition": [
+    [
+     "i32"
+    ],
+    "void"
+   ],
+   "name": "network_game_generate_join_game_token"
+  },
+  "web_abi_network_game_server_change_game_variant__i32_i32__i32": {
+   "caller": [
+    [
+     "i32",
+     "i32"
+    ],
+    "i32"
+   ],
+   "definition": [
+    [
+     "i32",
+     "i32"
+    ],
+    "void"
+   ],
+   "name": "network_game_server_change_game_variant"
+  },
+  "web_abi_network_game_server_change_map_name__i32_i32__i32": {
+   "caller": [
+    [
+     "i32",
+     "i32"
+    ],
+    "i32"
+   ],
+   "definition": [
+    [
+     "i32",
+     "i32"
+    ],
+    "void"
+   ],
+   "name": "network_game_server_change_map_name"
+  },
+  "web_abi_periodic_functions_dispose__v__i32": {
+   "caller": [
+    [],
+    "i32"
+   ],
+   "definition": [
+    [],
+    "void"
+   ],
+   "name": "periodic_functions_dispose"
+  },
+  "web_abi_periodic_functions_initialize__v__i32": {
+   "caller": [
+    [],
+    "i32"
+   ],
+   "definition": [
+    [],
+    "void"
+   ],
+   "name": "periodic_functions_initialize"
+  },
+  "web_abi_player_control_get_facing_direction__i32_i32__void": {
+   "caller": [
+    [
+     "i32",
+     "i32"
+    ],
+    "void"
+   ],
+   "definition": [
+    [
+     "i32",
+     "i32"
+    ],
+    "i32"
+   ],
+   "name": "player_control_get_facing_direction"
+  },
+  "web_abi_props_dispose_from_old_map__v__i32": {
+   "caller": [
+    [],
+    "i32"
+   ],
+   "definition": [
+    [],
+    "void"
+   ],
+   "name": "props_dispose_from_old_map"
+  },
+  "web_abi_qsort_4byte__i32_i32_i32__i32": {
+   "caller": [
+    [
+     "i32",
+     "i32",
+     "i32"
+    ],
+    "i32"
+   ],
+   "definition": [
+    [
+     "i32",
+     "i32",
+     "i32"
+    ],
+    "void"
+   ],
+   "name": "qsort_4byte"
+  },
+  "web_abi_random_math_dispose__v__i32": {
+   "caller": [
+    [],
+    "i32"
+   ],
+   "definition": [
+    [],
+    "void"
+   ],
+   "name": "random_math_dispose"
+  },
+  "web_abi_random_math_initialize__v__i32": {
+   "caller": [
+    [],
+    "i32"
+   ],
+   "definition": [
+    [],
+    "void"
+   ],
+   "name": "random_math_initialize"
+  },
+  "web_abi_rasterizer_draw_dynamic_triangles_static_vertices__i32_i32_i32_i32__i32": {
+   "caller": [
+    [
+     "i32",
+     "i32",
+     "i32",
+     "i32"
+    ],
+    "i32"
+   ],
+   "definition": [
+    [
+     "i32",
+     "i32",
+     "i32",
+     "i32"
+    ],
+    "void"
+   ],
+   "name": "rasterizer_draw_dynamic_triangles_static_vertices"
+  },
+  "web_abi_rasterizer_initialize_for_new_map__v__i32": {
+   "caller": [
+    [],
+    "i32"
+   ],
+   "definition": [
+    [],
+    "void"
+   ],
+   "name": "rasterizer_initialize_for_new_map"
+  },
+  "web_abi_rasterizer_preinitialize__fill_you_up_with_the_devils_cock__v__void": {
+   "caller": [
+    [],
+    "void"
+   ],
+   "definition": [
+    [],
+    "i32"
+   ],
+   "name": "rasterizer_preinitialize__fill_you_up_with_the_devils_cock"
+  },
+  "web_abi_rasterizer_set_texture__i32_i32_i32_i32_i32__void": {
+   "caller": [
+    [
+     "i32",
+     "i32",
+     "i32",
+     "i32",
+     "i32"
+    ],
+    "void"
+   ],
+   "definition": [
+    [
+     "i32",
+     "i32",
+     "i32",
+     "i32",
+     "i32"
+    ],
+    "i32"
+   ],
+   "name": "rasterizer_set_texture"
+  },
+  "web_abi_rasterizer_set_texture_bitmap_data__i32_i32__void": {
+   "caller": [
+    [
+     "i32",
+     "i32"
+    ],
+    "void"
+   ],
+   "definition": [
+    [
+     "i32",
+     "i32"
+    ],
+    "i32"
+   ],
+   "name": "rasterizer_set_texture_bitmap_data"
+  },
+  "web_abi_render_debug_line__i32_i32_i32_i32__i32": {
+   "caller": [
+    [
+     "i32",
+     "i32",
+     "i32",
+     "i32"
+    ],
+    "i32"
+   ],
+   "definition": [
+    [
+     "i32",
+     "i32",
+     "i32",
+     "i32"
+    ],
+    "void"
+   ],
+   "name": "render_debug_line"
+  },
+  "web_abi_saved_game_file_remember_last_used_multiplayer_map__i32__i32": {
+   "caller": [
+    [
+     "i32"
+    ],
+    "i32"
+   ],
+   "definition": [
+    [
+     "i32"
+    ],
+    "void"
+   ],
+   "name": "saved_game_file_remember_last_used_multiplayer_map"
+  },
+  "web_abi_time__i32__i32": {
+   "caller": [
+    [
+     "i32"
+    ],
+    "i32"
+   ],
+   "definition": [
+    [
+     "i32"
+    ],
+    "i64"
+   ],
+   "name": "time"
+  },
+  "web_abi_widget_free__i32__i32": {
+   "caller": [
+    [
+     "i32"
+    ],
+    "i32"
+   ],
+   "definition": [
+    [
+     "i32"
+    ],
+    "void"
+   ],
+   "name": "widget_free"
+  },
+  "web_abi_xbox_demos_launch__v__i32": {
+   "caller": [
+    [],
+    "i32"
+   ],
+   "definition": [
+    [],
+    "void"
+   ],
+   "name": "xbox_demos_launch"
+  }
+ },
+ "units": {
+  "source/ai/actor_firing_position.c": [
+   "qsort_4byte=web_abi_qsort_4byte__i32_i32_i32__i32"
+  ],
+  "source/ai/ai.c": [
+   "props_dispose_from_old_map=web_abi_props_dispose_from_old_map__v__i32"
+  ],
+  "source/bitmaps/libtiff/tif_dir.c": [
+   "lseek=web_abi_lseek__i32_i32_i32__i32"
+  ],
+  "source/bitmaps/libtiff/tif_dirread.c": [
+   "lseek=web_abi_lseek__i32_i32_i32__i32"
+  ],
+  "source/bitmaps/libtiff/tif_dirwrite.c": [
+   "lseek=web_abi_lseek__i32_i32_i32__i32"
+  ],
+  "source/bitmaps/libtiff/tif_read.c": [
+   "debug_free=web_abi_debug_free__i32_i32_i32__i32",
+   "lseek=web_abi_lseek__i32_i32_i32__i32"
+  ],
+  "source/bitmaps/libtiff/tif_write.c": [
+   "lseek=web_abi_lseek__i32_i32_i32__i32"
+  ],
+  "source/bungie_net/common/random_numbers.c": [
+   "time=web_abi_time__i32__i32"
+  ],
+  "source/camera/first_person_camera.c": [
+   "player_control_get_facing_direction=web_abi_player_control_get_facing_direction__i32_i32__void"
+  ],
+  "source/game/game.c": [
+   "rasterizer_initialize_for_new_map=web_abi_rasterizer_initialize_for_new_map__v__i32"
+  ],
+  "source/game/game_engine_race.c": [
+   "game_show_score_you_ally_enemy=web_abi_game_show_score_you_ally_enemy__i32_i32_i32_i32_i32__i32",
+   "game_show_score_extended=web_abi_game_show_score_extended__i32_i32_i32__i32"
+  ],
+  "source/game/game_engine_slayer.c": [
+   "game_show_score_extended=web_abi_game_show_score_extended__i32_i32_i32__i32"
+  ],
+  "source/interface/ui_widget_event_handler_functions.c": [
+   "game_engine_override_map_name=web_abi_game_engine_override_map_name__i32__i32",
+   "network_game_server_change_game_variant=web_abi_network_game_server_change_game_variant__i32_i32__i32",
+   "network_game_generate_join_game_token=web_abi_network_game_generate_join_game_token__i32__i32",
+   "saved_game_file_remember_last_used_multiplayer_map=web_abi_saved_game_file_remember_last_used_multiplayer_map__i32__i32",
+   "widget_free=web_abi_widget_free__i32__i32",
+   "network_game_abort=web_abi_network_game_abort__v__i32",
+   "main_set_multiplayer_map_name=web_abi_main_set_multiplayer_map_name__i32__i32",
+   "network_game_server_change_map_name=web_abi_network_game_server_change_map_name__i32_i32__i32"
+  ],
+  "source/interface/ui_widget_game_data_input_functions.c": [
+   "error=web_abi_error__i32_i32__i32"
+  ],
+  "source/main/main.c": [
+   "input_abstraction_update=web_abi_input_abstraction_update__v__i32",
+   "xbox_demos_launch=web_abi_xbox_demos_launch__v__i32"
+  ],
+  "source/math/real_math.c": [
+   "periodic_functions_dispose=web_abi_periodic_functions_dispose__v__i32",
+   "random_math_initialize=web_abi_random_math_initialize__v__i32",
+   "periodic_functions_initialize=web_abi_periodic_functions_initialize__v__i32",
+   "random_math_dispose=web_abi_random_math_dispose__v__i32"
+  ],
+  "source/rasterizer/xbox/rasterizer_xbox_environment_fog.c": [
+   "rasterizer_draw_dynamic_triangles_static_vertices=web_abi_rasterizer_draw_dynamic_triangles_static_vertices__i32_i32_i32_i32__i32"
+  ],
+  "source/rasterizer/xbox/rasterizer_xbox_motion_sensor.c": [
+   "rasterizer_set_texture_bitmap_data=web_abi_rasterizer_set_texture_bitmap_data__i32_i32__void"
+  ],
+  "source/rasterizer/xbox/rasterizer_xbox_plasma_energy.c": [
+   "rasterizer_set_texture=web_abi_rasterizer_set_texture__i32_i32_i32_i32_i32__void"
+  ],
+  "source/rasterizer/xbox/rasterizer_xbox_text.c": [
+   "rasterizer_set_texture_bitmap_data=web_abi_rasterizer_set_texture_bitmap_data__i32_i32__void"
+  ],
+  "source/render/render.c": [
+   "interface_draw_screen=web_abi_interface_draw_screen__v__i32"
+  ],
+  "source/render/render_objects.c": [
+   "editor_preprocess_rendered_object=web_abi_editor_preprocess_rendered_object__i32_i32__i32"
+  ],
+  "source/shell/shell_xbox.c": [
+   "rasterizer_preinitialize__fill_you_up_with_the_devils_cock=web_abi_rasterizer_preinitialize__fill_you_up_with_the_devils_cock__v__void"
+  ],
+  "source/structures/leaf_map.c": [
+   "render_debug_line=web_abi_render_debug_line__i32_i32_i32_i32__i32"
+  ],
+  "source/units/vehicles.c": [
+   "matrix3x3_rotation_to_quaternion=web_abi_matrix3x3_rotation_to_quaternion__i32_i32__i32"
+  ]
+ }
+}

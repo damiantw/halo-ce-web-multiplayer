@@ -2017,6 +2017,19 @@ static boolean weapon_state_interruptable(
 	return interruptable;
 }
 
+#ifdef HALO_WEB
+void weapon_preprocess_node_orientations(
+	long weapon_index);
+
+/* (the object type table's signature: object_types.c) */
+void weapon_preprocess_node_orientations_web(
+	long weapon_index,
+	struct real_orientation *node_orientations)
+{
+	weapon_preprocess_node_orientations(weapon_index);
+}
+#endif
+
 void weapon_preprocess_node_orientations(
 	long weapon_index)
 {

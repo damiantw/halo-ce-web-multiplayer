@@ -760,6 +760,11 @@ static unsigned long walk_up(
 {
 	unsigned long routine_address = 0;
 
+#ifdef HALO_WEB
+	/* WebAssembly's call stack is not in linear memory: there are no frame
+	records to follow (the browser prints the real stack on a trap) */
+	walk_up_current_frame = 0;
+#endif
 	if (walk_up_current_frame)
 	{
 #ifdef HALO_ANDROID

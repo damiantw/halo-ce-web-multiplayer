@@ -112,6 +112,12 @@ parser.add_argument(
     help="native ports: profile-guided optimisation from this profile instead",
 )
 parser.add_argument(
+    "--web-campaign",
+    action="store_true",
+    help="`ninja web` with the campaign: by default the web build is multiplayer only (HALO_MULTIPLAYER_ONLY: "
+    "no Campaign in the main menu, no campaign level loads, so the page needs only ui.map and the multiplayer maps)",
+)
+parser.add_argument(
     "--android-ndk",
     type=str,
     help="Android NDK for `ninja android` (default: ANDROID_NDK_HOME, or the newest under the Android SDK)",
@@ -181,6 +187,7 @@ sln.ml_path = args.ml
 sln.linux_cc = args.linux_cc
 sln.compiler_launcher = args.compiler_launcher
 sln.port_release = args.release
+sln.web_campaign = args.web_campaign
 sln.port_lto = args.lto
 sln.port_portable = args.portable
 sln.port_pgo = args.pgo

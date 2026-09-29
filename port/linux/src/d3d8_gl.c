@@ -1361,6 +1361,13 @@ void WINAPI D3DDevice_BeginVisibilityTest(void)
 	glBeginQuery(VISIBILITY_QUERY, device.queries[0]);
 }
 
+#ifdef HALO_WEB
+/* the query each slot's test before the latest one used, and whether it
+was ended */
+static GLuint web_previous_queries[VISIBILITY_TEST_SLOTS];
+static BOOL web_previous_pending[VISIBILITY_TEST_SLOTS];
+
+#endif
 HRESULT WINAPI D3DDevice_EndVisibilityTest(DWORD index)
 {
 	GLuint scratch;
@@ -1386,9 +1393,30 @@ HRESULT WINAPI D3DDevice_EndVisibilityTest(DWORD index)
 	or the screen's alike */
 	device.query_area[index] = target_scale[0] * target_scale[1];
 	/* swap the scratch query into the requested slot */
+#ifdef HALO_WEB
+	/* keep an earlier query of the slot too: its result is the one WebGL
+	can have by now (D3DDevice_GetVisibilityTestResult). One not read yet
+	stays until it is (it is the one nearest to having its result); the
+	test before this one is dropped then. */
+	if (!web_previous_queries[index])
+		glGenQueries(1, &web_previous_queries[index]);
+	if (web_previous_pending[index])
+	{
+		scratch = device.queries[index];
+	}
+	else
+	{
+		scratch = web_previous_queries[index];
+		web_previous_queries[index] = device.queries[index];
+		web_previous_pending[index] = device.query_pending[index];
+	}
+	device.queries[index] = device.queries[0];
+	device.queries[0] = scratch;
+#else
 	scratch = device.queries[0];
 	device.queries[0] = device.queries[index];
 	device.queries[index] = scratch;
+#endif
 	device.query_pending[index] = TRUE;
 #ifndef HALO_ANDROID
 	if (device.visibility_results)
@@ -1449,6 +1477,40 @@ HRESULT WINAPI D3DDevice_GetVisibilityTestResult(DWORD index, UINT *result, ULON
 	}
 #endif
 	glGetQueryObjectuiv(device.queries[index], GL_QUERY_RESULT_AVAILABLE, &available);
+#ifdef HALO_WEB
+	/* WebGL makes a query's result available only after the frame goes back
+	to the browser's event loop, so the game's wait for it (rasterizer_xbox_
+	widgets.c, _transparent_geometry.c) would spin forever: answer with the
+	slot's last result (visible until one arrives) */
+	{
+		static UINT last_samples[VISIBILITY_TEST_SLOTS];
+		static BOOL last_known[VISIBILITY_TEST_SLOTS];
+
+		if (available)
+		{
+			glGetQueryObjectuiv(device.queries[index], GL_QUERY_RESULT, &samples);
+			last_samples[index] = samples ? VISIBILITY_ALL_SAMPLES : 0;
+			last_known[index] = TRUE;
+		}
+		else if (web_previous_pending[index])
+		{
+			/* the game reads a test in the frame that made it; the result
+			of the one a frame before is there once the frame went back to
+			the browser (SDL_GL_SwapWindow yields with JSPI) */
+			glGetQueryObjectuiv(web_previous_queries[index], GL_QUERY_RESULT_AVAILABLE, &available);
+			if (available)
+			{
+				glGetQueryObjectuiv(web_previous_queries[index], GL_QUERY_RESULT, &samples);
+				last_samples[index] = samples ? VISIBILITY_ALL_SAMPLES : 0;
+				last_known[index] = TRUE;
+				web_previous_pending[index] = FALSE;
+			}
+		}
+		if (result)
+			*result = last_known[index] ? last_samples[index] : VISIBILITY_ALL_SAMPLES;
+		return S_OK;
+	}
+#endif
 	if (!available)
 		return D3DERR_TESTINCOMPLETE;
 	glGetQueryObjectuiv(device.queries[index], GL_QUERY_RESULT, &samples);
@@ -2229,6 +2291,49 @@ static GLenum blend_equation(DWORD operation)
 	}
 }
 
+#ifdef HALO_WEB
+static BOOL blend_factor_is_constant_color(GLenum factor)
+{
+	return factor == GL_CONSTANT_COLOR || factor == GL_ONE_MINUS_CONSTANT_COLOR;
+}
+
+static BOOL blend_factor_is_constant_alpha(GLenum factor)
+{
+	return factor == GL_CONSTANT_ALPHA || factor == GL_ONE_MINUS_CONSTANT_ALPHA;
+}
+
+/* WebGL refuses a blend function that mixes the constant colour with the
+constant alpha (INVALID_OPERATION, and the draw blends with the previous
+function). The transparent meter shaders (the plasma weapons' heat meters,
+rasterizer_xbox_transparent_geometry.c) blend so: the alpha factor becomes
+the constant it is (the tints use an alpha of 0 or 1), else the colour
+factor of the constant's alpha as a grey, when the colour is grey too. */
+static void web_blend_factors(GLenum *source, GLenum *destination, DWORD blend_color)
+{
+	GLenum *alpha_factor;
+	unsigned long alpha = blend_color >> 24;
+
+	if (blend_factor_is_constant_alpha(*source) && blend_factor_is_constant_color(*destination))
+		alpha_factor = source;
+	else if (blend_factor_is_constant_alpha(*destination) && blend_factor_is_constant_color(*source))
+		alpha_factor = destination;
+	else
+		return;
+	if (alpha == 0xff || alpha == 0)
+	{
+		BOOL one = (alpha == 0xff) == (*alpha_factor == GL_CONSTANT_ALPHA);
+
+		*alpha_factor = one ? GL_ONE : GL_ZERO;
+	}
+	else
+	{
+		/* (right when the constant is a grey of its alpha; the nearest
+		WebGL has otherwise) */
+		*alpha_factor = *alpha_factor == GL_CONSTANT_ALPHA ? GL_CONSTANT_COLOR : GL_ONE_MINUS_CONSTANT_COLOR;
+	}
+}
+
+#endif
 static void apply_raster_state(BOOL has_depth)
 {
 	DWORD *rs = D3D__RenderState;
@@ -2323,11 +2428,16 @@ static void apply_raster_state(BOOL has_depth)
 		GLenum equation = blend_equation(rs[D3DRS_BLENDOP]);
 		float blend_color[4];
 
-		if (gl_state.blend_source != (GLenum)rs[D3DRS_SRCBLEND] ||
-			gl_state.blend_destination != (GLenum)rs[D3DRS_DESTBLEND])
+		GLenum source = (GLenum)rs[D3DRS_SRCBLEND];
+		GLenum destination = (GLenum)rs[D3DRS_DESTBLEND];
+
+#ifdef HALO_WEB
+		web_blend_factors(&source, &destination, rs[D3DRS_BLENDCOLOR]);
+#endif
+		if (gl_state.blend_source != source || gl_state.blend_destination != destination)
 		{
-			gl_state.blend_source = (GLenum)rs[D3DRS_SRCBLEND];
-			gl_state.blend_destination = (GLenum)rs[D3DRS_DESTBLEND];
+			gl_state.blend_source = source;
+			gl_state.blend_destination = destination;
 			glBlendFunc(gl_state.blend_source, gl_state.blend_destination);
 		}
 		if (gl_state.blend_equation != equation)
@@ -2918,6 +3028,13 @@ static BOOL mirror_range(unsigned long address, unsigned long size, GLuint *buff
 	unsigned long segment, first, last, page, oldest = ~0UL, newest = 0;
 	BOOL present = TRUE;
 
+#ifdef HALO_WEB
+	/* Without page protection (port/web/src/web_memory_watch.c) the mirror
+	cannot tell when the game rewrites vertex or index data: pages it
+	uploaded once were drawn stale, which put the first-person weapon's
+	triangles across the whole screen. Every draw streams its data. */
+	return FALSE;
+#endif
 	if (!size || address < PLATFORM_CONTIGUOUS_BASE || start + size > PLATFORM_CONTIGUOUS_SIZE)
 		return FALSE;
 	segment = start / MIRROR_SEGMENT_SIZE;
@@ -3396,12 +3513,42 @@ void WINAPI D3DDevice_End(void)
 	if (!count || !prepare_draw(TRUE))
 		return;
 	trace_draw("immediate", type, count, device.immediate_vertices);
+#ifdef HALO_WEB
+	/* WebGL allows strides up to 255 bytes, less than a vertex of all the
+	attributes (256): upload each attribute's values together instead */
+	{
+		static float *planar;
+		static unsigned long planar_capacity;
+		unsigned long vertex;
+
+		if (planar_capacity < count)
+		{
+			planar_capacity = count;
+			planar = realloc(planar, count * stride);
+		}
+		for (index = 0; index < XGPU_VERTEX_ATTRIBUTE_COUNT; index++)
+		{
+			for (vertex = 0; vertex < count; vertex++)
+			{
+				memcpy(planar + (index * count + vertex) * 4,
+					device.immediate_vertices + (vertex * XGPU_VERTEX_ATTRIBUTE_COUNT + index) * 4, 4 * sizeof(float));
+			}
+		}
+		offset = stream_upload(planar, count * stride);
+		for (index = 0; index < XGPU_VERTEX_ATTRIBUTE_COUNT; index++)
+		{
+			state_attribute_pointer(index, device.stream_buffer, 4, GL_FLOAT, GL_FALSE, FALSE, (GLsizei)(4 * sizeof(float)),
+				offset + index * count * 4 * sizeof(float));
+		}
+	}
+#else
 	offset = stream_upload(device.immediate_vertices, count * stride);
 	for (index = 0; index < XGPU_VERTEX_ATTRIBUTE_COUNT; index++)
 	{
 		state_attribute_pointer(index, device.stream_buffer, 4, GL_FLOAT, GL_FALSE, FALSE, (GLsizei)stride,
 			offset + index * 4 * sizeof(float));
 	}
+#endif
 	if (type == D3DPT_QUADLIST)
 	{
 		unsigned long index_count;

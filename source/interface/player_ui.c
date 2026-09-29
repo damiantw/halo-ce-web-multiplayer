@@ -526,6 +526,18 @@ void player_ui_get_active_player_profile(
 	match_assert("c:\\halo\\SOURCE\\interface\\player_ui.c", 238, (local_player_index>=0) && (local_player_index<MAXIMUM_NUMBER_OF_LOCAL_PLAYERS) && (profile != NULL));
 
 	csmemcpy(profile, &player_ui_globals.local_players[local_player_index].profile, 0x30);
+#ifdef HALO_WEB
+	/* port: in the browser the page names the player (HALO_WEB_PLAYER_NAME,
+	port/web/src/web_host.c): network games take it instead of the
+	profile's name, the machine's name too (network_game_manager.c) */
+	{
+		extern int web_player_name(unsigned short *name, int capacity);
+		unsigned short name[MAXIMUM_PLAYER_PROFILE_NAME_LENGTH];
+
+		if (web_player_name(name, MAXIMUM_PLAYER_PROFILE_NAME_LENGTH) > 0)
+			csmemcpy(((struct player_profile *)profile)->player_name, name, sizeof(name));
+	}
+#endif
 	return;
 }
 

@@ -3406,6 +3406,32 @@ static void event_handler_dispatch(
 	return;
 }
 
+#ifdef HALO_MULTIPLAYER_ONLY
+/* the multiplayer-only build (the web client, tools/web_build.py) makes no
+way into the campaign: the main menu's Campaign item and the multiplayer
+menu's Co-op item are not made, so the main menu offers Multiplayer and
+Settings (main_set_map_name refuses campaign levels too) */
+static boolean ui_widget_multiplayer_only_hidden(
+	long tag_index)
+{
+	static char const *const hidden[] =
+	{
+		"ui\\shell\\main_menu\\main_menu_item_load_camp",
+		"ui\\shell\\main_menu\\multiplayer_type_select\\multiplayer_type_coop_item",
+	};
+	char const *name = tag_get_name(tag_index);
+	long index;
+
+	for (index = 0; name && index < NUMBEROF(hidden); index++)
+	{
+		if (!strcmp(name, hidden[index]))
+			return TRUE;
+	}
+
+	return FALSE;
+}
+#endif
+
 static boolean ui_widget_load_children_recursive(
 	struct widget_instance *widget,
 	struct ui_widget_definition *definition)
@@ -3481,7 +3507,11 @@ static boolean ui_widget_load_children_recursive(
 					reference->custom_controller_index);
 			}
 		}
-		if (reference->widget_tag.index != NONE)
+		if (reference->widget_tag.index != NONE
+#ifdef HALO_MULTIPLAYER_ONLY
+			&& !ui_widget_multiplayer_only_hidden(reference->widget_tag.index)
+#endif
+			)
 		{
 			struct widget_instance *child = ui_widget_load_by_name_or_tag(
 				NULL,
