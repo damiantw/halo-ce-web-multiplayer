@@ -81,8 +81,10 @@ Resolved during the spike (these are the traps anyone repeating this will hit):
    `D3DERR_TESTINCOMPLETE` until `GL_QUERY_RESULT_AVAILABLE`. The game spins on it
    (`rasterizer_xbox_widgets.c:233`, `rasterizer_xbox_transparent_geometry.c:845`). WebGL only makes query results
    available after control returns to the event loop, so the spin never ends. Fix: answer with the slot's last
-   result, and report "visible" until the first result arrives. This is also the reason lens-flare occlusion is
-   one frame late on web.
+   result, and report "visible" until the first result arrives. The game reads each test in the frame that made
+   it, so the result that can be there is an earlier frame's: the slot keeps its earlier query until it is read
+   (`D3DDevice_EndVisibilityTest`). Before that, no result ever arrived and every lens flare and glow was drawn,
+   even behind the first-person weapon. Occlusion is a frame or two late on web.
 2. **No menus/text.** Immediate-mode draws (`D3DDevice_End`, `d3d8_gl.c:3409`) interleave 16 vec4 attributes, a
    256-byte stride. WebGL caps `vertexAttribPointer` strides at 255, so the draws failed with `INVALID_VALUE` and
    `INVALID_OPERATION`. Fix: upload each attribute in its own block (stride 16).
@@ -96,12 +98,15 @@ Resolved during the spike (these are the traps anyone repeating this will hit):
 
 Still open (with the evidence):
 
-5. **Texture cache and CPU writes** (`port/web/src/web_memory_watch.c`). Native builds find textures the CPU
-   rewrote through page protection (`memory_watch.c`, mprotect/SIGSEGV). Wasm has neither. The web watch only sees
-   file reads (`memory_watch_prepare_write`). Textures the CPU builds each frame, such as the small-font glyph
-   cache, stay stale: garbled text in `wasm_input_02.png`, correct with `HALO_TEXTURE_NO_CACHE=1`. Fix options:
-   hash dynamic/small textures on each bind, or call `memory_watch_prepare_write` from the few writers (text/glyph
-   cache, dynamic UI bitmaps). About 1–2 days.
+5. **CPU writes the renderer cached** (`port/web/src/web_memory_watch.c`), fixed. Native builds find guest memory
+   the CPU rewrote through page protection (`memory_watch.c`, mprotect/SIGSEGV); wasm has neither, and the web
+   watch only saw file reads. The vertex mirror (`d3d8_gl.c`, `mirror_range`) uploads vertex data once and
+   reuses it while no write is seen, so in the browser it drew stale vertices: the first-person weapon's
+   triangles across the screen (the "nearly black world"; with `rasterizer_first_person_weapon_far_clip_distance
+   0.001` the world drew fine) and garbled small text (text quads come from the dynamic vertex rings). The world
+   itself (BSP, lightmaps, sky, fog) matched the native client on a fixed camera. Fix: the mirror is off in the
+   browser (draws stream their vertices; no slower in SwiftShader), and every Direct3D lock announces a write to
+   what it covers (`d3d8_resources.c`), so textures the game writes through locks are uploaded again.
 6. The `HALO_TEXTURE_NO_CACHE=1` path shows wrong colours on some DXT textures (the green ring in
    `wasm_profile_text_nocache.png`). It is a debug path, but it points at the upload path for re-created
    compressed textures.

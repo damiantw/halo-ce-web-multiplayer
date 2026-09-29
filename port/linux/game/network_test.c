@@ -46,8 +46,10 @@ Called from the main loop every frame (main.c).
 #include "items/items.h"
 #include "objects/damage.h"
 #include "scenario/scenario.h"
+#include "camera/director.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* the platform layer's (port/linux/src/port_config.c) */
@@ -441,6 +443,29 @@ void network_test_update(
 	boolean main_menu_loaded,
 	real seconds)
 {
+	/* HALO_TEST_CAMERA=1: the camera at d:\\camera.txt's point
+	(debug_camera_save's format) once a second, for comparing the renderers
+	on one view; =save: the player's camera saved there once a second */
+	{
+		static int test_camera = -1;
+		static long camera_time = -1;
+
+		if (test_camera < 0)
+		{
+			char const *setting = getenv("HALO_TEST_CAMERA");
+
+			test_camera = !setting ? 0 : !strcmp(setting, "1") ? 1 : !strcmp(setting, "save") ? 2 : 0;
+		}
+		if (test_camera && game_in_progress() && !main_menu_loaded &&
+			game_time_get() / TICKS_PER_SECOND != camera_time)
+		{
+			camera_time = game_time_get() / TICKS_PER_SECOND;
+			if (test_camera == 1)
+				director_load_camera();
+			else
+				director_save_camera();
+		}
+	}
 	if (!network_test.checked)
 		network_test_read_settings();
 	if (network_test.mode == _network_test_off)

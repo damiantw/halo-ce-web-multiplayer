@@ -5,8 +5,11 @@ port/linux/src/memory_watch.c's interface for the browser. WebAssembly has
 no page protection, so writes cannot fault. The file layer announces the
 writes it makes into guest memory (memory_watch_prepare_write, which is how
 textures stream in from the cache files), and those bump the generation of
-the pages they touch. Writes the game's own code makes to a cached texture
-are not seen; see docs/wasm-spike.md.
+the pages they touch. The game's own writes go through the Direct3D locks,
+which announce them the same way (d3d8_resources.c); what they miss, writes
+through a pointer kept from an earlier lock, is why the renderer's vertex
+mirror is off in the browser (d3d8_gl.c, mirror_range) and draws stream
+their vertices. See docs/wasm-spike.md.
 */
 
 #include "platform.h"

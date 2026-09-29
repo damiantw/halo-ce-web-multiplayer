@@ -8,6 +8,8 @@
 //                 server must answer maps/index.json with [{name, size}]
 //   init=<text>   init.txt's contents (console commands at start-up)
 //   env=A=1,B=2   environment variables (the HALO_* settings, port_config.c)
+//                 (and window.haloFiles, if the page sets it: {name: text}
+//                 written to d:\ before the start)
 //   preload=<a,b> the maps fetched before start (default: ui; "all" for
 //                 every map in the index). Any other map is fetched when the
 //                 game first wants it (Module.haloFetchMap, called from
@@ -89,6 +91,9 @@
 				}));
 				print(`[web] ${wanted.length} of ${maps.length} maps (${(bytes / 1048576).toFixed(0)} MB) from ${mapsUrl} in /data/maps; the others when the game wants them`);
 				if (params.get("init")) FS.writeFile("/data/init.txt", params.get("init"));
+				// files the page puts in d:\ (window.haloFiles = {"camera.txt": "..."})
+				for (const [name, text] of Object.entries(window.haloFiles || {}))
+					FS.writeFile("/data/" + name.replace(/[\/\\]/g, "_"), text);
 				FS.chdir("/data");
 				Module.removeRunDependency("maps-index");
 			}).catch((error) => {

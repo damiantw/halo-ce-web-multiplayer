@@ -181,12 +181,15 @@ Fixed on the way:
 
 Remaining gaps:
 
-- World rendering in game is nearly black (HUD and menus fine) and small text is garbled: the texture cache's
-  CPU writes into textures (lightmaps, font pages) do not reach WebGL yet (wasm-spike.md). The gameplay and
-  netcode run regardless.
+- In-game rendering in the browser now matches the native client (pairs in
+  `/workspace/halo-data/shots/render_native_*.png` and `render_web_*.png`; causes and fixes in wasm-spike.md,
+  items 1 and 5). WebGL's refusal to mix constant colour and constant alpha blend factors (the plasma weapons'
+  meters) is worked around in `apply_raster_state`.
 - Two clients in one tab set are memory heavy (~0.8 GB each in headless Chrome with SwiftShader).
-- A join-in-progress player's name shows empty in the server's events (the second client joined after the
-  game started).
+- A join-in-progress player's name and machine name show empty in the server's events (reproduced: a second
+  web client joining 30 s into the game gets slot 0 and "" for both; a lobby join gets its random name). The
+  late-join path (`network_server_message_handler.c`, `network_game_server_queue_player_for_addition`, then
+  `network_game_server_add_player_to_game`) is where to look; not fixed yet.
 - The canvas-goes-black-on-click report did not reproduce in headless Chrome (no pointer lock there); it needs a
   real browser to look at.
 - WebRTC data channels (lower latency than TCP WebSocket) are the next step (wasm-spike.md, "WebRTC later").
