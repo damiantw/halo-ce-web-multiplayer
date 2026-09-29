@@ -317,13 +317,22 @@ boolean network_distributed_client_send_reliably(
 	word size)
 {
 	byte buffer[0x1000];
+	struct network_connection *connection;
 
 	if (!global_network_game_client || size > sizeof(buffer))
 		return FALSE;
+	/* the ready message and hit reports are sent every tick the machine is
+	a network client, which it becomes before its reliable stream exists
+	(searching, joining) and stays a moment after the stream closed: a write
+	then fails on no socket, and prints write_endpoint() errors every second;
+	the ready message is repeated until the host answers it, and hit reports
+	mean nothing to a host the client is not connected to */
+	connection = network_game_client_get_connection(global_network_game_client);
+	if (!connection || !network_connection_connected(connection))
+		return FALSE;
 	/* (the write swaps the header in place) */
 	csmemcpy(buffer, message, size);
-	return network_game_client_write(network_game_client_get_connection(global_network_game_client),
-		(message_header *)buffer, size, NULL, 1);
+	return network_game_client_write(connection, (message_header *)buffer, size, NULL, 1);
 }
 
 /* the platform layer's (port/linux/src/port_config.c) */

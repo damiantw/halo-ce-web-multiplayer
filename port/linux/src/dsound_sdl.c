@@ -407,10 +407,22 @@ static void mix(float *output, unsigned long frames)
 
 	memset(output, 0, frames * OUTPUT_CHANNELS * sizeof(float));
 #ifdef HALO_WEB
-	/* (web_mixer_thread's: should the lock be held long, a chunk of
-	silence rather than a stall of the stream) */
-	if (pthread_mutex_trylock(&mixer_lock) != 0)
-		return;
+	/* (web_mixer_thread's: the stream holds about 100 ms, so waiting a
+	little for the game to let go of the lock is inaudible, where a chunk
+	of silence is a click; only a lock held long gives silence) */
+	{
+		struct timespec deadline;
+
+		clock_gettime(CLOCK_REALTIME, &deadline);
+		deadline.tv_nsec += 30 * 1000 * 1000;
+		if (deadline.tv_nsec >= 1000000000L)
+		{
+			deadline.tv_nsec -= 1000000000L;
+			deadline.tv_sec++;
+		}
+		if (pthread_mutex_timedlock(&mixer_lock, &deadline) != 0)
+			return;
+	}
 #else
 	pthread_mutex_lock(&mixer_lock);
 #endif
@@ -533,11 +545,12 @@ static void *silent_clock_thread(void *parameter)
 }
 
 #ifdef HALO_WEB
-/* keeps about 60 ms queued in the stream (web: see audio_start) */
+/* keeps about 100 ms queued in the stream (web: see audio_start): the page's
+thread pulls it, and a busy moment there or here must not run it dry */
 static void *web_mixer_thread(void *parameter)
 {
 	float buffer[MIX_CHUNK_FRAMES * OUTPUT_CHANNELS];
-	const int target = OUTPUT_RATE / 16 * OUTPUT_CHANNELS * (int)sizeof(float);
+	const int target = OUTPUT_RATE / 10 * OUTPUT_CHANNELS * (int)sizeof(float);
 
 	(void)parameter;
 	for (;;)
@@ -569,7 +582,13 @@ static void audio_start(void)
 		spec.format = SDL_AUDIO_F32;
 		spec.channels = OUTPUT_CHANNELS;
 		spec.freq = OUTPUT_RATE;
+#ifdef HALO_WEB
+		/* the browser's ScriptProcessorNode runs on the page's thread:
+		larger blocks leave it more room between calls */
+		SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "1024");
+#else
 		SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "512");
+#endif
 #ifdef HALO_WEB
 		/* The browser pulls SDL's audio on the page's thread, which also
 		carries out the game threads' proxied calls (file reads): no game

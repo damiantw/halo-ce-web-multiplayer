@@ -154,8 +154,8 @@ func (g *gateway) allocate(requested string) (netip.Addr, error) {
 		if err != nil || !usable(a) {
 			return netip.Addr{}, fmt.Errorf("address %q is not a client address", requested)
 		}
-		if _, taken := g.sessions[a]; taken {
-			return netip.Addr{}, fmt.Errorf("address %s in use", a)
+		if holder, taken := g.sessions[a]; taken {
+			return netip.Addr{}, &addressInUse{addr: a, holder: holder}
 		}
 		g.sessions[a] = nil
 		return a, nil
@@ -173,6 +173,41 @@ func (g *gateway) allocate(requested string) (netip.Addr, error) {
 		}
 	}
 	return netip.Addr{}, errors.New("no free client address")
+}
+
+// addressInUse: the token's address belongs to a live session (holder; nil
+// while it is still being set up).
+type addressInUse struct {
+	addr   netip.Addr
+	holder *session
+}
+
+func (e *addressInUse) Error() string { return fmt.Sprintf("address %s in use", e.addr) }
+
+// replaceWait is how long a newer session of the same user waits for the
+// one it replaces to let go of the address.
+const replaceWait = 8 * time.Second
+
+// takeOver closes the session holding a's address for the same user (a
+// reload, or a second tab: the site pins one address per user) and claims
+// the address once it is free. The old session is closed with 1008, so its
+// page, should it wake up, gives up rather than take the address back.
+func (g *gateway) takeOver(err error, c claims, remote string) (netip.Addr, error) {
+	var inUse *addressInUse
+	if !errors.As(err, &inUse) || inUse.holder == nil || c.Sub == "" || inUse.holder.claims.Sub != c.Sub {
+		return netip.Addr{}, err
+	}
+	g.log.Info("session replaced", "sub", c.Sub, "old_sid", inUse.holder.claims.Sid, "sid", c.Sid,
+		"addr", inUse.addr.String(), "remote", remote)
+	inUse.holder.close(websocket.StatusPolicyViolation, "replaced by a newer session")
+	deadline := time.Now().Add(replaceWait)
+	for {
+		a, err := g.allocate(c.Adr)
+		if !errors.As(err, &inUse) || time.Now().After(deadline) {
+			return a, err
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 func (g *gateway) release(a netip.Addr) {
@@ -196,6 +231,9 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	addr, err := g.allocate(c.Adr)
+	if err != nil {
+		addr, err = g.takeOver(err, c, remote)
+	}
 	if err != nil {
 		g.stats.rejected.Add(1)
 		g.log.Warn("join refused", "reason", err.Error(), "sub", c.Sub, "sid", c.Sid, "remote", remote)
