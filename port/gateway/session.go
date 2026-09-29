@@ -240,6 +240,11 @@ func (s *session) handle(f []byte) {
 		if err == nil {
 			s.closeStream(id, false)
 		}
+	case framePing:
+		if len(f) <= 1+maxPingToken {
+			// droppable: a lost answer is a lost ping, as over the network
+			s.sendDroppable(append([]byte(nil), f...))
+		}
 	}
 }
 

@@ -635,6 +635,80 @@ void platform_video_drawable_size(int *width, int *height)
 	SDL_GetWindowSizeInPixels(platform_window, width, height);
 }
 
+#ifdef HALO_WEB
+/* the page's overlay (the site's /play wrapper): once a second, the frame
+rate, the mean frame time, the 1% low (the frame rate of the slowest 1% of
+the last WEB_FRAME_HISTORY frames), the longest frame of the second and the
+frame count, then the gateway socket's counters (web_library.js,
+webnet_stats) and the sends refused for no socket (posix_web_net.c) */
+#define WEB_FRAME_HISTORY 300
+
+extern void webnet_stats(double *out);
+extern void webstats_publish(const double *values, int count);
+extern unsigned long web_net_send_errors;
+
+static int compare_floats_descending(const void *a, const void *b)
+{
+	float x = *(const float *)a, y = *(const float *)b;
+
+	return x < y ? 1 : x > y ? -1 : 0;
+}
+
+static void web_frame_statistics(void)
+{
+	static float history[WEB_FRAME_HISTORY];
+	static float sorted[WEB_FRAME_HISTORY];
+	static unsigned long count, next, window_frames;
+	static Uint64 previous, window_start;
+	static float window_max;
+	/* static: the page reads them after this returns (the publish is
+	asynchronous), and by the next second they are rewritten */
+	static double values[16];
+	Uint64 now = SDL_GetTicksNS();
+
+	if (!previous)
+	{
+		previous = window_start = now;
+		return;
+	}
+	{
+		float milliseconds = (float)((double)(now - previous) / 1e6);
+
+		previous = now;
+		history[next] = milliseconds;
+		next = (next + 1) % WEB_FRAME_HISTORY;
+		if (count < WEB_FRAME_HISTORY)
+			count++;
+		window_frames++;
+		if (milliseconds > window_max)
+			window_max = milliseconds;
+	}
+	if (now - window_start >= 1000000000ull)
+	{
+		double elapsed = (double)(now - window_start) / 1e6;
+		unsigned long worst, i;
+		double sum = 0.0;
+
+		memcpy(sorted, history, count * sizeof(float));
+		qsort(sorted, count, sizeof(float), compare_floats_descending);
+		worst = count / 100 ? count / 100 : 1;
+		for (i = 0; i < worst; i++)
+			sum += sorted[i];
+		values[0] = window_frames * 1000.0 / elapsed;
+		values[1] = elapsed / window_frames;
+		values[2] = sum > 0.0 ? 1000.0 * worst / sum : 0.0;
+		values[3] = window_max;
+		values[4] = (double)window_frames;
+		webnet_stats(values + 5);
+		values[15] = (double)web_net_send_errors;
+		webstats_publish(values, 16);
+		window_start = now;
+		window_frames = 0;
+		window_max = 0.0f;
+	}
+}
+#endif
+
 void platform_video_swap(void)
 {
 	SDL_GL_SwapWindow(platform_window);
@@ -662,6 +736,7 @@ void platform_video_swap(void)
 			last = now;
 		}
 	}
+	web_frame_statistics();
 #endif
 }
 

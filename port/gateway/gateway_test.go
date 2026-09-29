@@ -425,3 +425,20 @@ func TestShutdownClosesSessions(t *testing.T) {
 }
 
 var _ = binary.BigEndian
+
+func TestPingEcho(t *testing.T) {
+	f := newFixture(t, nil)
+	ws, _ := f.join(claims{})
+	ping := []byte{framePing, 1, 2, 3, 4, 5, 6, 7, 8}
+	write(t, ws, ping)
+	if got := read(t, ws); string(got) != string(ping) {
+		t.Fatalf("want the ping back, got %v", got)
+	}
+	// an oversized token is ignored; the next ping is still answered
+	write(t, ws, make([]byte, 2+maxPingToken))
+	ws2 := []byte{framePing, 9}
+	write(t, ws, ws2)
+	if got := read(t, ws); string(got) != string(ws2) {
+		t.Fatalf("want the second ping back, got %v", got)
+	}
+}
