@@ -193,6 +193,31 @@
 		if (locked()) failed = false;
 		update();
 	});
+	// The game's keys that the browser acts on too: Tab moves the focus off
+	// the canvas (out of the page, when the game is in a frame), and that
+	// ends the pointer lock; Space scrolls, Alt opens the menu bar, F1-F11
+	// open help, reload, full screen and so on, Backspace goes back, and / and
+	// ' open Firefox's quick find. While the game has (or wants) the mouse,
+	// their default actions are cancelled. Only the default: the event still
+	// goes on to SDL's listeners, and the game sees the key. F12 and Esc keep
+	// theirs (Esc releases the mouse, F12 is the browser's tools); a text
+	// field keeps every key, and so do shortcuts with Ctrl or Cmd.
+	const gameKeys = new Set(["Tab", "AltLeft", "AltRight", "Space", "Backspace", "Slash", "Quote",
+		"F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11"]);
+	const editable = (element) => !!element && element !== canvas &&
+		(element.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(element.tagName));
+	const gameKey = (event) => {
+		if (!(wanted || locked()) || event.ctrlKey || event.metaKey || !gameKeys.has(event.code) ||
+			editable(event.target) || editable(document.activeElement)) {
+			return;
+		}
+		event.preventDefault();
+		if (document.activeElement !== canvas) canvas.focus({ preventScroll: true });
+	};
+	// (capture phase on the window: before any other listener, which still
+	// gets the event)
+	window.addEventListener("keydown", gameKey, true);
+	window.addEventListener("keyup", gameKey, true);
 	document.addEventListener("pointerlockerror", () => {
 		// e.g. a request within a second of leaving the lock with Esc; a
 		// browser without raw motion refuses the first request, and the
