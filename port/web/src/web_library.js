@@ -167,4 +167,13 @@ addToLibrary({
 		HEAPU8.set(next.subarray(0, length), frame);
 		return length;
 	},
+
+	// web_wait_animation_frame: HALO_WEB_PACE=raf (sdl_platform.c,
+	// platform_video_swap): the game's worker waits (JSPI) for its next
+	// animation frame (workers have requestAnimationFrame for OffscreenCanvas)
+	web_wait_animation_frame__async: true,
+	web_wait_animation_frame: () => new Promise((resolve) => {
+		if (typeof requestAnimationFrame === "function") requestAnimationFrame(() => resolve());
+		else setTimeout(resolve, 0);
+	}),
 });

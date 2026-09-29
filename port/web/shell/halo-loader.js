@@ -18,8 +18,32 @@
 //                 loads). Emscripten's lazy files would need synchronous XHR
 //                 on the page's main thread, which browsers forbid for binary
 //                 data; see docs/wasm-spike.md.
+//
+// Diagnostics, given with env= (the site's /play passes env= through):
+//   HALO_WEB_DPR=<n>   the device pixel ratio the game sees (1: a drawing
+//                      buffer of the canvas's CSS size on a Retina screen)
+//   HALO_WEB_PACE=raf  each frame waits for the browser's next animation
+//                      frame (sdl_platform.c, platform_video_swap), instead of
+//                      going back to the event loop and on at once
 (() => {
 	const params = new URLSearchParams(location.search);
+	const envParam = (name) => {
+		for (const pair of (params.get("env") || "").split(",")) {
+			const [key, ...value] = pair.split("=");
+			if (key === name) return value.join("=");
+		}
+		return null;
+	};
+	// HALO_WEB_DPR: SDL sizes the drawing buffer by window.devicePixelRatio
+	// (SDL_WINDOW_HIGH_PIXEL_DENSITY), read on this thread
+	const dpr = Number(envParam("HALO_WEB_DPR"));
+	if (dpr > 0) {
+		try {
+			Object.defineProperty(window, "devicePixelRatio", { configurable: true, get: () => dpr });
+		} catch (error) {
+			console.warn("HALO_WEB_DPR:", error);
+		}
+	}
 	const mapsUrl = (params.get("maps") || "maps/").replace(/\/?$/, "/");
 	const logElement = document.getElementById("log");
 	const statusElement = document.getElementById("status");

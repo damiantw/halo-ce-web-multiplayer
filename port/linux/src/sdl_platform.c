@@ -709,10 +709,31 @@ static void web_frame_statistics(void)
 }
 #endif
 
+#ifdef HALO_WEB
+extern void web_wait_animation_frame(void);
+#endif
+
 void platform_video_swap(void)
 {
 	SDL_GL_SwapWindow(platform_window);
 #ifdef HALO_WEB
+	/* HALO_WEB_PACE=raf (a diagnostic, halo-loader.js): wait for the
+	browser's next animation frame too, as a page's requestAnimationFrame
+	loop does; SDL's swap only goes back to the event loop (a zero timeout) */
+	{
+		static int pace = -1;
+
+		if (pace < 0)
+		{
+			const char *value = getenv("HALO_WEB_PACE");
+
+			pace = value && strcmp(value, "raf") == 0;
+			if (pace)
+				platform_log("web: frames paced by requestAnimationFrame (HALO_WEB_PACE=raf)");
+		}
+		if (pace)
+			web_wait_animation_frame();
+	}
 	{
 		extern volatile unsigned web_trace_frames;
 		void web_watchdog_start(void);
