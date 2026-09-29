@@ -350,7 +350,10 @@ The server:
    lobby. The machine of the server has no player, and is not in the count.
    The lobby takes `server.max_players` players at most.
 3. Plays the game. If all the players go, the game stops after
-   `server.empty_seconds`.
+   `server.empty_seconds`. With the netcode `"distributed"`, the game
+   continues when the other players go and one player (or one team) is
+   left, because players can join a game in progress. (Halo ends the game
+   then: with the netcode `"lockstep"` the server keeps that rule.)
 4. Shows the scores for `server.postgame_seconds`, then opens the lobby
    again with the next entry of the rotation. After the last entry, the
    rotation starts again.
