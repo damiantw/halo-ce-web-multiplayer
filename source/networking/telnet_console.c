@@ -87,10 +87,21 @@ struct telnet_console_globals telnet_console_globals = {0};
 
 /* ---------- public code */
 
+#ifdef HALO_LINUX
+/* port/linux/src/sdl_platform.c's */
+int halo_dedicated_server(void);
+
+#endif
 void telnet_console_initialize(
 	void)
 {
 	csmemset(&telnet_console_globals, 0, sizeof(telnet_console_globals));
+#ifdef HALO_LINUX
+	/* a dedicated server has no telnet console: it would give anyone who can
+	reach the machine the game's console */
+	if (halo_dedicated_server())
+		return;
+#endif
 
 	telnet_console_globals.listening_endpoint = create_transport_endpoint(_transport_endpoint_type_telnet);
 	if (telnet_console_globals.listening_endpoint)

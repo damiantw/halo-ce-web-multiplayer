@@ -2164,10 +2164,21 @@ boolean server_needs_more_teams(
 	return needs_more_teams;
 }
 
+#ifdef HALO_LINUX
+/* port/linux/src/sdl_platform.c's */
+int halo_dedicated_server(void);
+
+#endif
 boolean server_has_a_player_on_each_machine(
 	struct network_game_server *server)
 {
 	long client_machine_index;
+#ifdef HALO_LINUX
+	/* a dedicated server's own machine never brings a player
+	(port/linux/game/dedicated_server.c): the game waits for the others */
+	short host_machine_index = halo_dedicated_server() ?
+		network_game_client_get_local_machine_index() : NONE;
+#endif
 
 	for (client_machine_index = 0;
 		client_machine_index < MAXIMUM_NETWORK_MACHINE_COUNT;
@@ -2176,6 +2187,13 @@ boolean server_has_a_player_on_each_machine(
 		struct network_game_server_client_machine *client_machine =
 			&server->client_machines[client_machine_index];
 
+#ifdef HALO_LINUX
+		if (host_machine_index != NONE &&
+			client_machine->machine_index == host_machine_index)
+		{
+			continue;
+		}
+#endif
 		if (client_machine->machine_index >= 0 &&
 			client_machine->machine_index < MAXIMUM_NETWORK_MACHINE_COUNT)
 		{
@@ -2437,6 +2455,55 @@ void network_game_server_pause_countdown(
 	return;
 }
 
+#ifdef HALO_LINUX
+/* ---------- the dedicated server (port/linux/game/dedicated_server.c) */
+
+short network_game_server_dedicated_player_count(
+	struct network_game_server *server)
+{
+	return server ? server->game.player_count : 0;
+}
+
+boolean network_game_server_dedicated_in_pregame(
+	struct network_game_server *server)
+{
+	return server && server->state == _network_game_server_state_pregame;
+}
+
+boolean network_game_server_dedicated_in_game(
+	struct network_game_server *server)
+{
+	return server && server->state == _network_game_server_state_ingame;
+}
+
+/* every frame in the lobby: the countdown is never left paused (as a
+host's map choice screen leaves it, network_game_reset_to_pregame_ui), the
+game waits for minimum_players, and starts countdown_milliseconds after
+enough players are in (0 at once, as the host's immediate start request
+does) */
+void network_game_server_dedicated_lobby_update(
+	struct network_game_server *server,
+	long minimum_players,
+	long countdown_milliseconds)
+{
+	if (!network_game_server_dedicated_in_pregame(server))
+		return;
+	server->game.minimum_players = (char)PIN(minimum_players, 1, 127);
+	if (server->countdown_state.paused)
+	{
+		server->countdown_state.paused = FALSE;
+		network_event("dedicated server: countdown unpaused");
+	}
+	if (!server->countdown_state.active && server_ok_to_countdown(server))
+	{
+		network_game_server_begin_game_start_countdown(
+			server,
+			MAX(countdown_milliseconds, 0));
+		server->countdown_state.last_countdown_message_time = 0;
+	}
+}
+
+#endif
 void network_game_server_change_map_name(
 	struct network_game_server *server,
 	char const *map_name)

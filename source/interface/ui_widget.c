@@ -4348,6 +4348,11 @@ void display_error_damaged_media(
 	return;
 }
 
+#ifdef HALO_LINUX
+/* port/linux/src/sdl_platform.c's */
+int halo_dedicated_server(void);
+
+#endif
 void network_game_reset_to_pregame_ui(
 	void)
 {
@@ -4375,6 +4380,21 @@ void network_game_reset_to_pregame_ui(
 	}
 	else
 	{
+#ifdef HALO_LINUX
+		/* a dedicated server does not wait in the host's map choice screen for
+		someone to pick the next game: the rotation's next one is set
+		(port/linux/game/dedicated_server.c) and the countdown runs */
+		if (global_network_game_server_get() && halo_dedicated_server())
+		{
+			if (!ui_widget_load_by_name_or_tag(
+				"ui\\shell\\main_menu\\multiplayer_type_select\\connected\\pregame\\connected_pregame_screen",
+				NONE, NULL, NONE, NONE, NONE, NONE))
+			{
+				error(_error_silent, "failed to load networked pregame status screen");
+			}
+		}
+		else
+#endif
 		if (global_network_game_server_get())
 		{
 			network_game_server_pause_countdown(global_network_game_server_get(), TRUE);
