@@ -406,7 +406,14 @@ static void mix(float *output, unsigned long frames)
 	unsigned long sample;
 
 	memset(output, 0, frames * OUTPUT_CHANNELS * sizeof(float));
+#ifdef HALO_WEB
+	/* (web_mixer_thread's: should the lock be held long, a chunk of
+	silence rather than a stall of the stream) */
+	if (pthread_mutex_trylock(&mixer_lock) != 0)
+		return;
+#else
 	pthread_mutex_lock(&mixer_lock);
+#endif
 	for (stream = streams; stream; stream = stream->next)
 		mix_voice(stream, output, frames);
 	pthread_mutex_unlock(&mixer_lock);
@@ -525,6 +532,29 @@ static void *silent_clock_thread(void *parameter)
 	return NULL;
 }
 
+#ifdef HALO_WEB
+/* keeps about 60 ms queued in the stream (web: see audio_start) */
+static void *web_mixer_thread(void *parameter)
+{
+	float buffer[MIX_CHUNK_FRAMES * OUTPUT_CHANNELS];
+	const int target = OUTPUT_RATE / 16 * OUTPUT_CHANNELS * (int)sizeof(float);
+
+	(void)parameter;
+	for (;;)
+	{
+		struct timespec pause = { 0, 5000000L };
+
+		while (SDL_GetAudioStreamQueued(audio_stream) < target)
+		{
+			mix(buffer, MIX_CHUNK_FRAMES);
+			SDL_PutAudioStreamData(audio_stream, buffer, (int)sizeof(buffer));
+		}
+		nanosleep(&pause, NULL);
+	}
+	return NULL;
+}
+#endif
+
 static void audio_start(void)
 {
 	SDL_AudioSpec spec;
@@ -540,12 +570,29 @@ static void audio_start(void)
 		spec.channels = OUTPUT_CHANNELS;
 		spec.freq = OUTPUT_RATE;
 		SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "512");
+#ifdef HALO_WEB
+		/* The browser pulls SDL's audio on the page's thread, which also
+		carries out the game threads' proxied calls (file reads): no game
+		lock may be taken there. A thread of the game's mixes and pushes into
+		the stream instead; the page only takes what is queued. */
+		audio_stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL, NULL);
+		if (audio_stream)
+		{
+			pthread_t thread;
+
+			SDL_ResumeAudioStreamDevice(audio_stream);
+			pthread_create(&thread, NULL, web_mixer_thread, NULL);
+			pthread_detach(thread);
+			return;
+		}
+#else
 		audio_stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, audio_callback, NULL);
 		if (audio_stream)
 		{
 			SDL_ResumeAudioStreamDevice(audio_stream);
 			return;
 		}
+#endif
 		platform_log("cannot open an audio device (%s); sound is silent", SDL_GetError());
 	}
 	{

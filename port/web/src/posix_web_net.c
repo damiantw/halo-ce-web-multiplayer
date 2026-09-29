@@ -8,7 +8,7 @@ on these unchanged.
 Every socket is virtual. Traffic between this machine's own sockets
 (127.0.0.1 or its own address: a host joining its own game) stays here.
 Everything else is framed onto one WebSocket to the gateway
-(docs/wasm-spike.md, "Gateway"), which owns the real sockets next to the
+(port/gateway, docs/gateway.md), which owns the real sockets next to the
 game servers:
 
   client -> gateway                      gateway -> client
@@ -24,12 +24,14 @@ game servers:
 Numbers are big-endian; addresses are in network byte order, as in a
 sockaddr_in. A WebSocket message is exactly one frame.
 
-This machine's address is HALO_WEB_ADDRESS (a 100.64.x.y address the
-gateway assigns, also sent in HELLO), and the gateway's URL is
-HALO_WEB_GATEWAY (wss://host/gateway?token=..., from the Laravel page);
-without one, only local traffic works. Broadcasts (the system link game
-search) go to the gateway, which answers from the servers the join token
-allows.
+This machine's address is HALO_WEB_ADDRESS, one of the gateway's client
+addresses (127.64.x.y; the join token's "adr" claim pins it, and the
+gateway's HELLO confirms it, docs/gateway.md). The gateway's URL is
+HALO_WEB_GATEWAY (wss://host/gateway) and the join token HALO_WEB_TOKEN,
+sent as a WebSocket subprotocol ("t.<token>"); on a reconnect the page's
+HALO_WEB_TOKEN_URL gives a new one (web_library.js). Without a gateway,
+only local traffic works. Broadcasts (the system link game search) go to
+the gateway, which passes them to the servers the token allows.
 */
 
 #include "posix.h"
@@ -41,10 +43,12 @@ allows.
 #include <stdlib.h>
 #include <string.h>
 #include <emscripten.h>
+#include <pthread.h>
+#include <time.h>
 
 /* ---------- the JavaScript side (web_library.js) */
 
-extern void webnet_connect(const char *url);
+extern void webnet_connect(const char *url, const char *token, const char *token_url);
 extern int webnet_send(const void *frame, int length);
 extern int webnet_receive(void *frame, int capacity);
 
@@ -92,6 +96,9 @@ static uint32_t local_address;
 static uint16_t next_port = 49152;
 static uint32_t next_stream = 1;
 static int gateway_opened;
+/* the thread that opened the WebSocket: its frames arrive only there (the
+socket object is that worker's) */
+static pthread_t owner_thread;
 
 static int fail(int error)
 {
@@ -145,8 +152,9 @@ static void net_initialize(void)
 	if (initialized)
 		return;
 	initialized = 1;
+	owner_thread = pthread_self();
 	address = getenv("HALO_WEB_ADDRESS");
-	local_address = htonl(0x64400002); /* 100.64.0.2 */
+	local_address = htonl(0x7f400002); /* 127.64.0.2 */
 	if (address && *address)
 	{
 		unsigned a, b, c, d;
@@ -157,7 +165,10 @@ static void net_initialize(void)
 	gateway = getenv("HALO_WEB_GATEWAY");
 	if (gateway && *gateway)
 	{
-		webnet_connect(gateway);
+		const char *token = getenv("HALO_WEB_TOKEN");
+		const char *token_url = getenv("HALO_WEB_TOKEN_URL");
+
+		webnet_connect(gateway, token ? token : "", token_url ? token_url : "");
 		gateway_opened = 1;
 	}
 }
@@ -783,16 +794,61 @@ int posix_socket_select(int *read, int *read_count, int *write, int *write_count
 {
 	int total = 0;
 
-	(void)timeout_seconds;
-	(void)timeout_microseconds;
-	(void)infinite;
-	pump();
-	if (read)
-		keep(read, read_count, readable, &total);
-	if (write)
-		keep(write, write_count, writeable, &total);
-	if (error)
-		keep(error, error_count, errored, &total);
+	int *read_list = NULL, *write_list = NULL, *error_list = NULL;
+	int read_total = read_count ? *read_count : 0, write_total = write_count ? *write_count : 0;
+	int error_total = error_count ? *error_count : 0;
+	long long wait_us = infinite ? 1000000LL : (long long)timeout_seconds * 1000000LL + timeout_microseconds;
+
+	net_initialize();
+	/* A select with a timeout waits for it, in short steps: the owner thread
+	of the WebSocket (the game's) yields to its event loop with
+	emscripten_sleep (JSPI), which is when the gateway's frames arrive; the
+	game's blocking connect (transport_endpoint_winsock.c) waits so for the
+	stream to open. Other threads sleep. */
+	if (wait_us > 0)
+	{
+		read_list = read && read_total ? malloc(sizeof(int) * (size_t)read_total) : NULL;
+		write_list = write && write_total ? malloc(sizeof(int) * (size_t)write_total) : NULL;
+		error_list = error && error_total ? malloc(sizeof(int) * (size_t)error_total) : NULL;
+		if (read_list) memcpy(read_list, read, sizeof(int) * (size_t)read_total);
+		if (write_list) memcpy(write_list, write, sizeof(int) * (size_t)write_total);
+		if (error_list) memcpy(error_list, error, sizeof(int) * (size_t)error_total);
+	}
+	for (;;)
+	{
+		total = 0;
+		pump();
+		if (read)
+			keep(read, read_count, readable, &total);
+		if (write)
+			keep(write, write_count, writeable, &total);
+		if (error)
+			keep(error, error_count, errored, &total);
+		if (total > 0 || wait_us <= 0)
+			break;
+		{
+			long long step = wait_us < 2000 ? wait_us : 2000;
+
+			if (pthread_equal(pthread_self(), owner_thread))
+			{
+				emscripten_sleep((unsigned int)(step + 999) / 1000);
+			}
+			else
+			{
+				struct timespec pause = { 0, (long)(step * 1000) };
+
+				nanosleep(&pause, NULL);
+			}
+			wait_us -= step;
+		}
+		/* the lists were cut down to the ready ones: start again from the copies */
+		if (read_list) { memcpy(read, read_list, sizeof(int) * (size_t)read_total); *read_count = read_total; }
+		if (write_list) { memcpy(write, write_list, sizeof(int) * (size_t)write_total); *write_count = write_total; }
+		if (error_list) { memcpy(error, error_list, sizeof(int) * (size_t)error_total); *error_count = error_total; }
+	}
+	free(read_list);
+	free(write_list);
+	free(error_list);
 	if (total > 0)
 		last_error = 0;
 	return total;

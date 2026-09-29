@@ -108,6 +108,73 @@ void _ReadWriteBarrier(void)
 	__sync_synchronize();
 }
 
+/* ---------- maps fetched when the game first wants them
+
+The page (port/web/shell/halo-loader.js) fetches ui.map before the start and
+any other map when the game asks for it: Module.haloFetchMap(name) resolves
+once maps/<name>.map is in the file system (true), or false if the maps
+index has no such map. A system link client starts fetching the host's map
+as the pregame lobby names it (network_game_globals.c), and waits for it
+when the map loads (cache_files_windows.c). */
+
+#include <emscripten.h>
+#include <stdlib.h>
+#include <time.h>
+
+BOOL platform_data_has_map(const char *name);
+
+static void web_request_map(const char *name, volatile int *state)
+{
+	MAIN_THREAD_ASYNC_EM_ASM({
+		var name = UTF8ToString($0);
+		var state = $1;
+		_free($0);
+		var done = function (value) {
+			if (state)
+				Atomics.store(new Int32Array(wasmMemory.buffer), state >> 2, value);
+		};
+		if (!Module.haloFetchMap)
+			return done(-1);
+		Module.haloFetchMap(name).then(function (ok) { done(ok ? 1 : -1); }, function () { done(-1); });
+	}, strdup(name), state);
+}
+
+/* starts fetching maps/<name>.map if the file system lacks it */
+void web_prefetch_map(const char *name)
+{
+	if (name && *name && !platform_data_has_map(name))
+		web_request_map(name, NULL);
+}
+
+/* whether maps/<name>.map is in the file system; if not, fetches it: with
+wait, waits for it (FALSE if the page has no such map), else only starts
+the download (FALSE) */
+BOOL web_fetch_map(const char *name, BOOL wait)
+{
+	static volatile int state;
+	unsigned waited_ms = 0;
+
+	if (!name || !*name || platform_data_has_map(name))
+		return TRUE;
+	if (!wait)
+	{
+		web_request_map(name, NULL);
+		return FALSE;
+	}
+	platform_log("web: waiting for maps/%s.map", name);
+	state = 0;
+	web_request_map(name, &state);
+	while (!state)
+	{
+		struct timespec pause = { 0, 20 * 1000 * 1000 };
+
+		nanosleep(&pause, NULL);
+		waited_ms += 20;
+	}
+	platform_log("web: maps/%s.map %s after %u ms", name, state > 0 ? "fetched" : "not found", waited_ms);
+	return state > 0 ? TRUE : FALSE;
+}
+
 /* ---------- a stall watchdog (HALO_WEB_WATCHDOG=1: logs when frames stop) */
 
 #include <pthread.h>

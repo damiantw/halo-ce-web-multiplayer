@@ -370,6 +370,16 @@ struct object_type_definition item_data_definition =
 	NULL
 };
 
+#ifdef HALO_WEB
+/* weapons.c defines weapon_preprocess_node_orientations(long); WebAssembly
+traps an indirect call whose signature differs from the callee's, so the table
+gets weapons.c's adapter with the declared signature */
+void weapon_preprocess_node_orientations_web(
+	long object_index,
+	struct real_orientation *node_orientations);
+#define weapon_preprocess_node_orientations weapon_preprocess_node_orientations_web
+#endif
+
 struct object_type_definition weapon_data_definition =
 {
 	"weapon", 'weap', 0x27C, 0x270, 0x27C, 0x5C,
@@ -383,6 +393,9 @@ struct object_type_definition weapon_data_definition =
 	{ &object_data_definition, &item_data_definition, &weapon_data_definition },
 	NULL
 };
+#ifdef HALO_WEB
+#undef weapon_preprocess_node_orientations
+#endif
 
 struct object_type_definition equipment_data_definition =
 {

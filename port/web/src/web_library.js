@@ -7,13 +7,31 @@ addToLibrary({
 	$WEBNET: { socket: null, inbox: [], outbox: [], open: false },
 
 	webnet_connect__deps: ["$WEBNET", "$UTF8ToString"],
-	webnet_connect: (url) => {
+	webnet_connect: (url, token, tokenUrl) => {
 		url = UTF8ToString(url);
+		token = UTF8ToString(token);
+		tokenUrl = UTF8ToString(tokenUrl);
+		let attempts = 0;
+		// A join token opens one session (the gateway refuses it again): a
+		// reconnect asks tokenUrl (HALO_WEB_TOKEN_URL, the site's endpoint;
+		// same origin, so the page's session cookie goes along) for a new
+		// one, answered as {"token": ...} or plain text.
+		const renew = async () => {
+			if (!tokenUrl) return token;
+			const response = await fetch(tokenUrl, { method: "POST", credentials: "same-origin",
+				headers: { "Accept": "application/json" } });
+			if (!response.ok) throw new Error(`HTTP ${response.status}`);
+			const text = (await response.text()).trim();
+			return text.startsWith("{") ? JSON.parse(text).token : text;
+		};
 		const connect = () => {
-			const socket = new WebSocket(url);
+			// the token rides in the subprotocol list (port/gateway): a
+			// query string would end up in access logs
+			const socket = new WebSocket(url, token ? ["halo.v1", "t." + token] : ["halo.v1"]);
 			socket.binaryType = "arraybuffer";
 			socket.onopen = () => {
 				WEBNET.open = true;
+				attempts = 0;
 				for (const frame of WEBNET.outbox) socket.send(frame);
 				WEBNET.outbox = [];
 				err(`[webnet] connected to ${url}`);
@@ -21,10 +39,18 @@ addToLibrary({
 			socket.onmessage = (event) => {
 				if (WEBNET.inbox.length < 4096) WEBNET.inbox.push(new Uint8Array(event.data));
 			};
-			socket.onclose = () => {
+			socket.onclose = (event) => {
 				WEBNET.open = false;
-				err(`[webnet] disconnected from ${url}; retrying`);
-				setTimeout(connect, 2000);
+				// (1008: the gateway's policy refusal, a token for other servers)
+				if (++attempts > 5 || event.code === 1008) {
+					err(`[webnet] disconnected from ${url} (${event.code}); giving up`);
+					return;
+				}
+				err(`[webnet] disconnected from ${url} (${event.code}); retrying`);
+				setTimeout(() => renew().then((next) => { token = next; connect(); }, (error) => {
+					err(`[webnet] no new join token from ${tokenUrl}: ${error}`);
+					connect();
+				}), 2000);
 			};
 			WEBNET.socket = socket;
 		};

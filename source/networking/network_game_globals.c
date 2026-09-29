@@ -542,6 +542,11 @@ void dispose_global_network_game_client(
 	return;
 }
 
+#ifdef HALO_WEB
+void web_prefetch_map(const char *name);
+char const *network_game_get_map_name(struct network_game *game);
+#endif
+
 boolean network_game_client_start_frame(
 	void)
 {
@@ -599,6 +604,23 @@ boolean network_game_client_start_frame(
 				case _network_game_client_state_pregame:
 					if (player_action_collection_definition.previous_client_state != state)
 						network_event("waiting for game to start ...");
+#ifdef HALO_WEB
+					/* the page starts fetching the host's map while the lobby
+					waits (port/web/src/web_host.c) */
+					{
+						static char prefetched[64];
+						struct network_game *game = network_game_client_get_game(global_network_game_client);
+						char const *name = game ? network_game_get_map_name(game) : NULL;
+						char const *base = name ? strrchr(name, '\\') : NULL;
+
+						base = base ? base + 1 : name;
+						if (base && *base && strncmp(prefetched, base, sizeof(prefetched) - 1))
+						{
+							csstrncpy(prefetched, base, sizeof(prefetched) - 1);
+							web_prefetch_map(base);
+						}
+					}
+#endif
 					break;
 				case _network_game_client_state_ingame:
 					if (player_action_collection_definition.previous_client_state != state)

@@ -725,6 +725,16 @@ boolean network_game_remove_machine(
 	return result;
 }
 
+#ifdef HALO_WEB
+/* the game's map, levels\\test\\<map>\\<map> (the web build fetches it
+while the pregame lobby waits: network_game_globals.c) */
+char const *network_game_get_map_name(
+	struct network_game *game)
+{
+	return game->map.name;
+}
+#endif
+
 boolean network_game_create_game_objects(
 	struct network_game *game)
 {

@@ -576,6 +576,10 @@ boolean cache_files_precache_map_loaded(
 	return cached_map_files_find_map(tag_name_strip_path(map_name)) != NONE;
 }
 
+#ifdef HALO_WEB
+int web_fetch_map(const char *name, int wait);
+#endif
+
 boolean cache_files_precache_map_begin(
 	const char *map_name,
 	boolean copy_map)
@@ -587,6 +591,13 @@ boolean cache_files_precache_map_begin(
 		struct cache_file_header header;
 		char path[256];
 
+#ifdef HALO_WEB
+		/* the page fetches a map when the game first wants it
+		(port/web/src/web_host.c): a precache that need not finish now only
+		starts the download (the one that must, later, waits for it) */
+		if (!web_fetch_map(cache_map_name, copy_map))
+			return !copy_map;
+#endif
 		if (cache_file_read_header_from_dvd(cache_map_name, &header))
 		{
 			long buffer_size = cache_copy_buffer_size(copy_map);
