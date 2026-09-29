@@ -242,6 +242,42 @@ static void dedicated_read_settings(
 
 /* ---------- the rotation */
 
+/* the names the built-in game types show (at most 11 characters: a
+variant's name holds 12 with its terminator) */
+static char const *dedicated_variant_display_name(
+	char const *gametype)
+{
+	static struct
+	{
+		char const *gametype;
+		char const *name;
+	} const names[] =
+	{
+		{ "slayer", "Slayer" },
+		{ "team_slayer", "Team Slayer" },
+		{ "ctf", "CTF" },
+		{ "ironctf", "Iron CTF" },
+		{ "king", "King" },
+		{ "team_king", "Team King" },
+		{ "oddball", "Oddball" },
+		{ "team_oddball", "TeamOddball" },
+		{ "race", "Race" },
+		{ "team_race", "Team Race" },
+		{ "rally", "Rally" },
+		{ "elimination", "Elimination" },
+		{ "stalker", "Stalker" },
+		{ "accumulation", "Accumulate" },
+	};
+	short index;
+
+	for (index = 0; index < NUMBEROF(names); index++)
+	{
+		if (!strcmp(names[index].gametype, gametype))
+			return names[index].name;
+	}
+	return gametype;
+}
+
 static void dedicated_entry_variant(
 	struct dedicated_rotation_entry const *entry,
 	struct game_variant *variant)
@@ -250,6 +286,18 @@ static void dedicated_entry_variant(
 
 	csmemset(&built, 0, sizeof(built));
 	*variant = *game_engine_get_variant_by_name(&built, entry->variant_name);
+	/* the built-in variants have no name (the host's pregame screen names
+	its choices from its own list), so the players' lobby and scores showed
+	an empty game type: give the variant the game type's name */
+	if (!variant->human_readable_game_description[0])
+	{
+		char const *name = dedicated_variant_display_name(entry->variant_name);
+		short index;
+
+		for (index = 0; name[index] && index < NUMBEROF(variant->human_readable_game_description) - 1; index++)
+			variant->human_readable_game_description[index] = (wchar_t)(unsigned char)name[index];
+		variant->human_readable_game_description[index] = 0;
+	}
 }
 
 /* the game the next reset to the lobby sets up
