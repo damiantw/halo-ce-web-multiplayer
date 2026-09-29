@@ -1071,6 +1071,18 @@ static void CALLBACK cache_file_read_io_completion_routine(
 	return;
 }
 
+#ifdef HALO_WEB
+static void cache_file_windows_thread_proc(
+	void);
+
+static unsigned long __stdcall cache_file_windows_thread_start(
+	void *parameter)
+{
+	cache_file_windows_thread_proc();
+	return 0;
+}
+#endif
+
 static void cache_file_windows_thread_proc(
 	void)
 {
@@ -1140,7 +1152,11 @@ static void cache_file_windows_thread_create(
 	cache_file_globals.thread = CreateThread(
 		NULL,
 		CACHE_FILE_THREAD_STACK_SIZE,
+#ifdef HALO_WEB /* WebAssembly checks the signature of indirect calls */
+		cache_file_windows_thread_start,
+#else
 		(LPTHREAD_START_ROUTINE)cache_file_windows_thread_proc,
+#endif
 		NULL,
 		0,
 		NULL);

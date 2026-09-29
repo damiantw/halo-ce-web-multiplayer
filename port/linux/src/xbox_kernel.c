@@ -646,7 +646,24 @@ DWORD WINAPI GetTickCount(void)
 	struct timespec now;
 
 	clock_gettime(CLOCK_MONOTONIC, &now);
+#ifdef HALO_WEB
+	/* Emscripten's monotonic clock counts from the epoch (so that every
+	worker agrees), which as a DWORD lands anywhere, often past 2^31: code
+	that keeps it in a long then sees time run backwards from 0 on its first
+	frame (sound_manager.c's nondialog gain explodes). Count from start-up,
+	as the Xbox and Linux's CLOCK_MONOTONIC do. */
+	{
+		static unsigned long long start;
+		unsigned long long milliseconds = (unsigned long long)now.tv_sec * 1000ULL +
+			(unsigned long long)now.tv_nsec / 1000000ULL;
+
+		if (!start)
+			__sync_bool_compare_and_swap(&start, 0, milliseconds - 1000);
+		return (DWORD)(milliseconds - start);
+	}
+#else
 	return (DWORD)((unsigned long long)now.tv_sec * 1000ULL + (unsigned long long)now.tv_nsec / 1000000ULL);
+#endif
 }
 
 /* The Xbox performance counter runs at the 733 MHz CPU clock. Report a

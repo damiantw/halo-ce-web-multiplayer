@@ -1,0 +1,109 @@
+/*
+WEB_HOST.C
+
+What the Android guest's host provides to the shared platform layer
+(port/android/guest/runtime/guest_host.h), for the browser: the few
+OpenGL ES helpers d3d8_gl.c calls under HALO_ANDROID, in their WebGL 2
+form, and stubs for the Android-only and internet-play-only features the
+web build leaves out (tools/web_build.py PLATFORM_EXCLUDE).
+*/
+
+#include "platform.h"
+#include "gl.h"
+
+#include <string.h>
+#include <SDL3/SDL.h>
+#include <emscripten/html5.h>
+
+/* WebGL names some extensions differently from OpenGL ES (and Emscripten
+reports them with a GL_ prefix added) */
+static const char *web_extension_name(const char *name)
+{
+	static const char *const aliases[][2] =
+	{
+		{ "GL_EXT_texture_compression_s3tc", "WEBGL_compressed_texture_s3tc" },
+		{ "GL_EXT_texture_filter_anisotropic", "EXT_texture_filter_anisotropic" },
+	};
+	unsigned int index;
+
+	for (index = 0; index < sizeof(aliases) / sizeof(aliases[0]); index++)
+		if (!strcmp(name, aliases[index][0]))
+			return aliases[index][1];
+	return name;
+}
+
+int host_gl_has_extension(const char *name)
+{
+	const char *wanted = web_extension_name(name);
+	GLint count = 0, index;
+
+	if (!strncmp(wanted, "GL_", 3))
+		wanted += 3;
+	glGetIntegerv(GL_NUM_EXTENSIONS, &count);
+	for (index = 0; index < count; index++)
+	{
+		const char *extension = (const char *)glGetStringi(GL_EXTENSIONS, (GLuint)index);
+
+		if (extension && !strncmp(extension, "GL_", 3))
+			extension += 3;
+		if (extension && !strcmp(extension, wanted))
+			return 1;
+	}
+	return 0;
+}
+
+/* the visibility test counters: atomic counters are OpenGL ES 3.1, which
+WebGL 2 lacks, so xgpu_capabilities.atomic_counters is never set and this
+is not reached */
+unsigned int host_gl_read_buffer_word(unsigned int buffer, unsigned int offset)
+{
+	(void)buffer;
+	(void)offset;
+	return 0;
+}
+
+/* WebGL has no buffer mapping; bufferSubData is the only way in. The
+browser orders it after the draws already queued, so the ring's fences
+(below) are not needed for correctness. */
+void host_gl_buffer_write(unsigned int target, unsigned int offset, unsigned int size, const void *data)
+{
+	glBufferSubData(target, (GLintptr)offset, (GLsizeiptr)size, data);
+}
+
+void host_gl_fence_frame(unsigned int slot)
+{
+	(void)slot;
+}
+
+void host_gl_wait_frame(unsigned int slot)
+{
+	(void)slot;
+}
+
+bool SDL_ShowAndroidToast(const char *message, int duration, int gravity, int xoffset, int yoffset)
+{
+	(void)duration;
+	(void)gravity;
+	(void)xoffset;
+	(void)yoffset;
+	platform_log("%s", message);
+	return true;
+}
+
+/* internet play's Discord presence and UPnP: not in the browser */
+void p2p_discord_update(void)
+{
+}
+
+void p2p_discord_set_hosting(const char *secret, int player_count, int maximum_player_count)
+{
+	(void)secret;
+	(void)player_count;
+	(void)maximum_player_count;
+}
+
+/* scenario.c declares the MSVC compiler barrier as a function */
+void _ReadWriteBarrier(void)
+{
+	__sync_synchronize();
+}
