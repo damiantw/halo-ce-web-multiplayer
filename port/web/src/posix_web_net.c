@@ -107,6 +107,16 @@ static int fail(int error)
 	return -1;
 }
 
+/* sends refused for no usable socket (what the game reports as
+write_endpoint() errors), for the page's overlay (sdl_platform.c) */
+unsigned long web_net_send_errors;
+
+static int send_fail(int error)
+{
+	web_net_send_errors++;
+	return fail(error);
+}
+
 static struct web_socket *get(int descriptor)
 {
 	int index = descriptor - SOCKET_BASE;
@@ -542,7 +552,7 @@ static int send_datagram(struct web_socket *socket, const void *buffer, int leng
 {
 	ensure_bound(socket);
 	if (length > FRAME_BYTES - 9)
-		return fail(WSAEMSGSIZE);
+		return send_fail(WSAEMSGSIZE);
 	if (is_local(ip) || ip == INADDR_BROADCAST)
 		deliver_datagram(htonl(INADDR_LOOPBACK), socket->local_port, port, buffer, length);
 	if (!is_local(ip) && gateway_opened)
@@ -566,11 +576,11 @@ int posix_socket_send(int descriptor, const void *buffer, int length, int flags)
 
 	(void)flags;
 	if (!socket)
-		return fail(WSAENOTSOCK);
+		return send_fail(WSAENOTSOCK);
 	if (socket->type == SOCK_DGRAM)
 		return send_datagram(socket, buffer, length, socket->peer_ip, socket->peer_port);
 	if (!socket->connected || socket->peer_closed)
-		return fail(socket->peer_closed ? WSAECONNRESET : WSAENOTCONN);
+		return send_fail(socket->peer_closed ? WSAECONNRESET : WSAENOTCONN);
 	if (socket->local_peer >= 0)
 	{
 		struct web_socket *peer = get(socket->local_peer);
@@ -606,11 +616,11 @@ int posix_socket_sendto(int descriptor, const void *buffer, int length, int flag
 
 	(void)flags;
 	if (!socket)
-		return fail(WSAENOTSOCK);
+		return send_fail(WSAENOTSOCK);
 	if (!address || address_length < (int)sizeof(*in))
 		return posix_socket_send(descriptor, buffer, length, 0);
 	if (socket->type != SOCK_DGRAM)
-		return fail(WSAEINVAL);
+		return send_fail(WSAEINVAL);
 	return send_datagram(socket, buffer, length, in->sin_addr.s_addr, in->sin_port);
 }
 

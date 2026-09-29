@@ -12,6 +12,11 @@ package main
 //	4 DATA   stream4, payload              4 DATA   stream4, payload
 //	5 CLOSE  stream4                       5 CLOSE  stream4
 //	                                       6 HELLO  address ip4
+//	7 PING   token (up to 16 bytes)        7 PING   the same token back
+//
+// PING measures the round trip to the gateway for the page's overlay: the
+// client puts its clock in the token, and the gateway echoes the frame
+// (a gateway without it ignores the frame: no ping is shown).
 
 import (
 	"encoding/binary"
@@ -26,6 +31,9 @@ const (
 	frameData   = 4
 	frameClose  = 5
 	frameHello  = 6
+	framePing   = 7
+
+	maxPingToken = 16
 )
 
 var errShortFrame = errors.New("short frame")
