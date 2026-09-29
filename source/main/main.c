@@ -656,6 +656,11 @@ typedef char screenshot_and_framerate_globals_size_assert[
 
 #ifdef HALO_LINUX
 void network_test_update(boolean main_menu_loaded, real seconds);
+/* the headless dedicated server (port/linux/game/dedicated_server.c,
+port/linux/src/sdl_platform.c) */
+void dedicated_server_update(boolean main_menu_loaded, real seconds);
+int halo_dedicated_server(void);
+void platform_log(char const *format, ...);
 #endif
 
 /* ---------- prototypes */
@@ -2208,6 +2213,44 @@ static void main_update_time_unthrottled(
 		rasterizer_globals.frame_and_vertical_blank_index;
 }
 
+/* A dedicated server draws nothing and has no display to wait for: it
+sleeps out the rest of each 30th of a second (a fixed schedule on the
+performance counter, so the game keeps 30 ticks a second on average), and
+takes the time as the frame's. */
+static void main_update_time_dedicated(
+	void)
+{
+	static LARGE_INTEGER deadline;
+	LARGE_INTEGER counter;
+	LARGE_INTEGER frequency;
+
+	QueryPerformanceFrequency(&frequency);
+	QueryPerformanceCounter(&counter);
+	if (frequency.QuadPart)
+	{
+		__int64 period = frequency.QuadPart / 30;
+
+		if (deadline.QuadPart && counter.QuadPart < deadline.QuadPart)
+		{
+			__int64 milliseconds =
+				((deadline.QuadPart - counter.QuadPart) * 1000 + frequency.QuadPart / 2) / frequency.QuadPart;
+
+			profile_idle_start();
+			if (milliseconds > 0)
+				Sleep((unsigned long)milliseconds);
+			profile_idle_end();
+			QueryPerformanceCounter(&counter);
+		}
+		/* the next frame's start, unless a slow frame (a map loading) left the
+		schedule a quarter of a second behind: then from now */
+		if (!deadline.QuadPart || counter.QuadPart - deadline.QuadPart > frequency.QuadPart / 4)
+			deadline.QuadPart = counter.QuadPart + period;
+		else
+			deadline.QuadPart += period;
+	}
+	main_update_time_unthrottled();
+}
+
 #endif
 static void main_update_time(
 	void)
@@ -2225,6 +2268,11 @@ static void main_update_time(
 	real seconds_elapsed;
 
 #ifdef HALO_LINUX
+	if (halo_dedicated_server())
+	{
+		main_update_time_dedicated();
+		return;
+	}
 	if (halo_interpolation_enabled())
 	{
 		main_update_time_unthrottled();
@@ -2968,6 +3016,16 @@ void halt_and_catch_fire(
 void main_loop_of_death(
 	void)
 {
+#ifdef HALO_LINUX
+	/* a dedicated server has no screen to show the error on, and nobody to
+	read it: it says so and quits (for whatever restarts it to see) */
+	if (halo_dedicated_server())
+	{
+		platform_log("dedicated server: fatal: the game data could not be read (a damaged or missing map; "
+			"debug.txt in the data root has the details); quitting");
+		exit(EXIT_FAILURE);
+	}
+#endif
 	while (TRUE)
 	{
 		input_frame_begin();
@@ -3209,8 +3267,12 @@ void main_loop(
 			render_frame = TRUE;
 
 #ifdef HALO_LINUX
-			/* automated system link tests (port/linux/game/network_test.c) */
-			network_test_update(main_globals.main_menu_scenario_loaded, main_globals.seconds_elapsed);
+			/* the headless dedicated server (port/linux/game/dedicated_server.c),
+			or automated system link tests (port/linux/game/network_test.c) */
+			if (halo_dedicated_server())
+				dedicated_server_update(main_globals.main_menu_scenario_loaded, main_globals.seconds_elapsed);
+			else
+				network_test_update(main_globals.main_menu_scenario_loaded, main_globals.seconds_elapsed);
 #endif
 			connection = main_globals.connection;
 			if (connection==_game_connection_network_client)
@@ -3297,6 +3359,15 @@ void main_loop(
 					main_save_map_private();
 				}
 
+#ifdef HALO_LINUX
+				/* a dedicated server draws nothing (the sounds still advance, as
+				drawing a frame does) */
+				if (halo_dedicated_server())
+				{
+					sound_render();
+				}
+				else
+#endif
 				if (render_frame && !debug_no_drawing)
 				{
 					profile_render_start();
@@ -3310,6 +3381,12 @@ void main_loop(
 					profile_render_end();
 				}
 			}
+#ifdef HALO_LINUX
+			else if (halo_dedicated_server())
+			{
+				sound_render();
+			}
+#endif
 			else
 			{
 				profile_render_start();
@@ -3317,12 +3394,25 @@ void main_loop(
 				profile_render_end();
 			}
 
+#ifdef HALO_LINUX
+			/* (a dedicated server's frames are paced in main_update_time) */
+			if (!halo_dedicated_server())
+			{
+				main_rasterizer_throttle();
+
+				if (render_frame && !debug_no_drawing)
+				{
+					main_present_frame();
+				}
+			}
+#else
 			main_rasterizer_throttle();
 
 			if (render_frame && !debug_no_drawing)
 			{
 				main_present_frame();
 			}
+#endif
 		}
 
 		input_frame_end();
