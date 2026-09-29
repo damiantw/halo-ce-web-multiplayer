@@ -112,6 +112,10 @@ Still open (with the evidence):
    compressed textures.
 7. Clicking the canvas (focus / pointer lock) resized it to the page and went black. `SDL_SetWindowRelativeMouseMode`
    and the canvas CSS size need handling: resize the OffscreenCanvas on the game thread, keep 4:3 letterboxing.
+   Pointer lock itself: SDL's Emscripten relative mode cannot lock from the game's worker (a browser locks only
+   during a click or key handler), and the web build, which also defines `HALO_ANDROID`, never asked for it. The
+   page locks the canvas on a click while the game wants the mouse (`halo-loader.js`, "Pointer lock"; the game
+   says so through `web_mouse_capture`); SDL then reports `movementX/Y` as relative motion.
 8. Audio: SDL3's Emscripten backend uses the deprecated ScriptProcessorNode on the page thread. It works (the menu
    music plays), but it glitches under load and needs a user gesture to start. Move to an AudioWorklet reading a
    SharedArrayBuffer ring.

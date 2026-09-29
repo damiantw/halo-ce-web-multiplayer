@@ -624,7 +624,9 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 	(void)version;
 	platform_event_thread = SDL_GetCurrentThreadID();
 	platform_log("OpenGL %s on %s", (const char *)glGetString(GL_VERSION), (const char *)glGetString(GL_RENDERER));
-#ifndef HALO_ANDROID
+	/* the web build (which also defines HALO_ANDROID) has no menu pointer:
+	the mouse aims, in the menus too, until F12 or the browser (Esc) lets go */
+#if !defined(HALO_ANDROID) || defined(HALO_WEB)
 	platform_mouse_capture(TRUE);
 #endif
 	return TRUE;
@@ -740,10 +742,29 @@ void platform_video_swap(void)
 #endif
 }
 
+#ifdef HALO_WEB
+extern void web_mouse_capture(int capture);
+#endif
+
 void platform_mouse_capture(BOOL capture)
 {
-	if (platform_window)
-		SDL_SetWindowRelativeMouseMode(platform_window, capture ? true : false);
+	if (!platform_window)
+		return;
+#ifdef HALO_WEB
+	/* A browser locks the pointer only for a request made while it handles
+	a click or a key (user activation). SDL's Emscripten relative mode asks
+	from the game's worker, outside any such handler (and, with no mouse
+	focus yet, not at all), so it cannot lock the mouse. The page
+	(halo-loader.js) locks the canvas on a click instead, while the game
+	wants the mouse (web_library.js, web_mouse_capture: a
+	"halo:mouse-capture" event), and unlocks it when the game lets go (F12).
+	Once the canvas is locked, SDL's pointerlockchange handler sees it and
+	its motion events carry movementX/Y as xrel, which is what the aim
+	reads. */
+	web_mouse_capture(capture ? 1 : 0);
+#else
+	SDL_SetWindowRelativeMouseMode(platform_window, capture ? true : false);
+#endif
 }
 
 /* ---------- keyboard translation */
@@ -1118,6 +1139,9 @@ void platform_pump_events(void)
 			look_at_clipboard = TRUE;
 #ifndef HALO_ANDROID
 			if (!input_state.mouse_released && !input_state.ui_pointer)
+				platform_mouse_capture(TRUE);
+#elif defined(HALO_WEB)
+			if (!input_state.mouse_released)
 				platform_mouse_capture(TRUE);
 #endif
 			break;

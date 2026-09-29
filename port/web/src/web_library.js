@@ -158,6 +158,17 @@ addToLibrary({
 			dispatchEvent(new CustomEvent("halo:stats", { detail: stats }));
 	},
 
+	// web_mouse_capture: the game wants the mouse for aiming (1) or lets go
+	// of it (0; menus, F12) (sdl_platform.c, platform_mouse_capture). On the
+	// page's main thread: a "halo:mouse-capture" event for halo-loader.js,
+	// which locks the pointer on the next click on the canvas.
+	web_mouse_capture__proxy: "async",
+	web_mouse_capture: (capture) => {
+		Module["haloMouseWanted"] = !!capture;
+		if (typeof dispatchEvent === "function" && typeof CustomEvent === "function")
+			dispatchEvent(new CustomEvent("halo:mouse-capture", { detail: { capture: !!capture } }));
+	},
+
 	webnet_receive__deps: ["$WEBNET"],
 	webnet_receive: (frame, capacity) => {
 		frame >>>= 0;

@@ -124,3 +124,82 @@
 		onAbort: (what) => print(`[web] abort: ${what}`),
 	};
 })();
+
+// Pointer lock: the mouse aims. A browser locks the pointer only for a
+// request made while it handles a click or a key (user activation), and the
+// game runs on a worker, outside those handlers; so the game says when it
+// wants the mouse (sdl_platform.c, platform_mouse_capture; web_library.js,
+// web_mouse_capture: a "halo:mouse-capture" event) and a click on the canvas
+// locks it here. That click only takes the mouse: the game does not see it
+// (no shot). Once the canvas is locked, SDL's pointerlockchange handler sees
+// it and its motion events carry movementX/Y. Esc (the browser's) releases
+// the mouse, and so does F12 (the game lets go of it). While the game wants
+// the mouse and does not have it, a hint says to click.
+(() => {
+	const canvas = document.getElementById("canvas");
+	if (!canvas || typeof canvas.requestPointerLock !== "function") return;
+	let wanted = false;
+	let failed = false;
+	const hint = document.createElement("div");
+	hint.id = "halo-mouse-hint";
+	hint.hidden = true;
+	hint.setAttribute("role", "status");
+	hint.style.cssText = "position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 10;"
+		+ " pointer-events: none; padding: 5px 12px; border-radius: 4px; background: rgba(0, 0, 0, 0.75);"
+		+ " color: #fff; font: 13px/1.3 system-ui, sans-serif; white-space: nowrap;";
+	document.body.appendChild(hint);
+	const locked = () => document.pointerLockElement === canvas;
+	const update = () => {
+		hint.textContent = failed ? "Click the game again to capture the mouse" : "Click to capture the mouse";
+		hint.hidden = !wanted || locked();
+	};
+	const settle = (request) => {
+		if (request && typeof request.catch === "function") request.catch(() => {});
+	};
+	const lock = () => {
+		let request;
+		try {
+			// raw mouse motion (no pointer acceleration) where the browser has it
+			request = canvas.requestPointerLock({ unadjustedMovement: true });
+		} catch (error) {
+			request = null;
+		}
+		if (request && typeof request.then === "function") {
+			request.catch((error) => {
+				if (error && error.name === "NotSupportedError" && wanted && !locked()) settle(canvas.requestPointerLock());
+			});
+		} else if (request === null) {
+			settle(canvas.requestPointerLock());
+		}
+	};
+	// capture phase on the window: before SDL's listeners on the canvas
+	window.addEventListener("pointerdown", (event) => {
+		if (event.target !== canvas || event.pointerType !== "mouse" || !wanted || locked()) return;
+		event.stopImmediatePropagation();
+		canvas.focus();
+		lock();
+	}, true);
+	window.addEventListener("halo:mouse-capture", (event) => {
+		wanted = !!(event.detail && event.detail.capture);
+		if (!wanted && locked()) {
+			document.exitPointerLock();
+		} else if (wanted && !locked() && navigator.userActivation && navigator.userActivation.isActive) {
+			// a click or key just now (the one that closed the menu): no second click
+			lock();
+		}
+		update();
+	});
+	document.addEventListener("pointerlockchange", () => {
+		if (locked()) failed = false;
+		update();
+	});
+	document.addEventListener("pointerlockerror", () => {
+		// e.g. a request within a second of leaving the lock with Esc; a
+		// browser without raw motion refuses the first request, and the
+		// retry without it follows at once
+		setTimeout(() => {
+			if (!locked()) failed = true;
+			update();
+		}, 250);
+	});
+})();
