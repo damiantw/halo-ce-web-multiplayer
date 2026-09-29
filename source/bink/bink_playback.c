@@ -514,6 +514,13 @@ void bink_playback_start(
 {
 	bink_get_memory_available("begin bink_playback_start");
 
+#ifdef HALO_WEB
+	/* port: the site sends the browser the maps only, no movies (and the
+	build has no DirectSound for Bink): nothing to play */
+	(void)full_pathname;
+	(void)flags;
+	return;
+#endif
 	if (!bink_globals.initialized)
 		return;
 	if (cache_files_precache_in_progress())
