@@ -372,8 +372,9 @@ is one of the built-in game variants: `slayer`, `team_slayer`, `ctf`,
 `ironctf`, `king`, `team_king`, `oddball`, `team_oddball`, `race`,
 `team_race`, `rally`, `elimination`, `stalker` or `accumulation`. Without a
 gametype, the entry is `slayer`. At start-up, the server writes the rotation
-to the log. It removes an entry with an unknown gametype or with no map
-file. If no entry remains, the rotation is `bloodgulch:slayer`. Team
+to the log. It removes an entry with an unknown gametype, with no map
+file, or with a map that is not a multiplayer map (a campaign level such as
+`a10`, or `ui`). If no entry remains, the rotation is `bloodgulch:slayer`. Team
 games start only when each team has a player.
 
 The dedicated server always uses these settings, and ignores the file and

@@ -51,6 +51,7 @@ void platform_log(char const *format, ...);
 int halo_dedicated_server(void);
 int platform_quit_requested(void);
 int platform_data_has_map(char const *name);
+int platform_data_map_type(char const *name);
 /* network_server_manager.c's */
 short network_game_server_dedicated_player_count(struct network_game_server *server);
 boolean network_game_server_dedicated_in_pregame(struct network_game_server *server);
@@ -132,6 +133,7 @@ static void dedicated_add_rotation_entry(
 	char const *base;
 	struct dedicated_rotation_entry *entry;
 	size_t length = colon ? (size_t)(colon - text) : strlen(text);
+	int map_type;
 
 	if (!length)
 		return;
@@ -154,6 +156,15 @@ static void dedicated_add_rotation_entry(
 	if (!platform_data_has_map(base))
 	{
 		platform_log("dedicated server: rotation entry \"%s\": no maps/%s.map; left out", text, base);
+		return;
+	}
+	/* (a campaign level or the main menu cannot be hosted: the players'
+	machines leave, and the lobby waits forever) */
+	map_type = platform_data_map_type(base);
+	if (map_type == 0 || map_type == 2)
+	{
+		platform_log("dedicated server: rotation entry \"%s\": maps/%s.map is %s, not a multiplayer map; left out",
+			text, base, map_type == 0 ? "a campaign level" : "the main menu");
 		return;
 	}
 	if (dedicated.rotation_count >= MAXIMUM_ROTATION_ENTRIES)
