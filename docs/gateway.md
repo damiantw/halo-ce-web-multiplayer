@@ -83,7 +83,10 @@ gateway -> client   {"type":"answer","sdp":...}
   The page's main thread (not the game's worker, which can be busy loading a map) sends a keepalive
   PING (`7 'k'`) every half second, which the gateway echoes. The gateway gives up on a channel it
   hears nothing from for 3 s, on a failed connection, or on a closed channel, and says `bye`.
-  The next attempt is made on the next WebSocket connection.
+  A channel that did not open in time or was lost is tried again on the same WebSocket 8 s later (then
+  16 s), 3 attempts in all: a lossy moment can outlast the 4 s (at 5% loss the DTLS and SCTP handshakes
+  lose packets and wait out their 1 s retransmissions). Not when the gateway has no WebRTC or refused
+  the offer for the limits; after the last attempt the next is on the next WebSocket connection.
 - **Offers are limited.** Each offer makes a peer connection (DTLS keys, an SCTP association), so a
   session takes at most 5, one at a time and at least 2 s apart; the page makes one per WebSocket
   connection. Others are answered `bye` (`"too many offers"`, `"offer too soon"`) and the datagrams stay

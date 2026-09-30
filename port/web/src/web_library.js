@@ -22,16 +22,32 @@ addToLibrary({
 	// frames cross over a BroadcastChannel named for this attempt. Should
 	// the channel not open within WEBRTC_OPEN_MS, or fail or go quiet later,
 	// the datagrams go back to the WebSocket (which the gateway keeps
-	// accepting all along), and the game carries on; the next attempt is on
-	// the next WebSocket connection. HALO_WEB_RTC=0 turns it off.
+	// accepting all along), and the game carries on. A channel that did not
+	// open in time or was lost is tried again on the same WebSocket after
+	// WEBRTC_RETRY_MS (times the attempt), WEBRTC_ATTEMPTS in all (a lossy
+	// or busy moment, a map loading, can outlast the 4 s); after that, and
+	// when the gateway has no WebRTC, the next attempt is on the next
+	// WebSocket connection. (The gateway takes 5 offers a session, 2 s
+	// apart.) HALO_WEB_RTC=0 turns it off.
 	$WEBRTC_OPEN_MS: 4000,
+	$WEBRTC_RETRY_MS: 8000,
+	$WEBRTC_ATTEMPTS: 3,
 	// webrtc_start: a new attempt for the WebSocket just opened
-	$webrtc_start__deps: ["$WEBNET", "$WEBRTC_OPEN_MS", "$webrtc_signal", "$webrtc_stop", "$webnet_deliver", "webrtc_main_start"],
-	$webrtc_start: (socket) => {
+	$webrtc_start__deps: ["$WEBNET", "$WEBRTC_OPEN_MS", "$WEBRTC_RETRY_MS", "$WEBRTC_ATTEMPTS", "$webrtc_signal", "$webrtc_stop", "$webnet_deliver", "webrtc_main_start"],
+	$webrtc_start: (socket, attempt = 1) => {
 		if (typeof BroadcastChannel !== "function") return;
 		const id = (Math.random() * 0x7fffffff) | 0;
 		const channel = new BroadcastChannel(`halo-rtc-${id}`);
-		const rtc = { id, channel, socket, state: "connecting", started: performance.now(), timer: 0 };
+		const rtc = { id, channel, socket, state: "connecting", started: performance.now(), timer: 0, attempt };
+		// (webrtc_stop: another attempt later, on this WebSocket if it is
+		// still the session's and nothing else has started meanwhile)
+		rtc.retry = () => {
+			if (attempt >= WEBRTC_ATTEMPTS) return false;
+			setTimeout(() => {
+				if (WEBNET.rtc === rtc && WEBNET.socket === socket && socket.readyState === 1) webrtc_start(socket, attempt + 1);
+			}, WEBRTC_RETRY_MS * attempt);
+			return true;
+		};
 		WEBNET.rtc = rtc;
 		rtc.timer = setTimeout(() => {
 			if (rtc.state === "connecting") webrtc_stop(rtc, "timeout", true);
@@ -68,7 +84,12 @@ addToLibrary({
 		rtc.channel.postMessage({ t: "close" });
 		setTimeout(() => rtc.channel.close(), 1000);
 		if (tell) webrtc_signal(rtc, { type: "bye", reason: String(reason) });
-		err(`[webnet] WebRTC ${was === "open" ? "lost" : "not used"} (${reason}); datagrams over the WebSocket`);
+		// worth another try on this WebSocket: not when it is gone, WebRTC is
+		// off or missing (page or gateway), or the gateway refused the offer
+		const final = /^(WebSocket closed|unsupported|disabled|gateway: (unavailable|too many offers))$/.test(String(reason));
+		const again = !final && rtc.retry && rtc.retry();
+		err(`[webnet] WebRTC ${was === "open" ? "lost" : "not used"} (${reason}); datagrams over the WebSocket` +
+			(again ? `; trying again (attempt ${rtc.attempt + 1})` : ""));
 	},
 	// webrtc_frame: frame 8 from the gateway
 	$webrtc_frame__deps: ["$WEBNET", "$webrtc_stop"],
