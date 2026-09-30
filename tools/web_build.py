@@ -22,6 +22,10 @@ from .linux_build import (
 )
 
 WEB_DIR = Path("port/web")
+# SDL 3, pinned to the Android and Windows builds' release rather than the
+# SDK's (port/web/ports/sdl3_pinned.py)
+SDL_PORT = WEB_DIR / "ports" / "sdl3_pinned.py"
+SDL_PORT_FLAG = f"--use-port={SDL_PORT.as_posix()}"
 ANDROID_INCLUDE = Path("port/android/include")
 
 # as the Linux build (tools/linux_build.py LINUX_ABI_FLAGS), minus what only
@@ -67,7 +71,7 @@ PLATFORM_EXCLUDE = {"posix_update.c", "posix_upnp.c", "updater.c", "memory_watch
 WEB_LDFLAGS = [
     "-O2",
     "-pthread",
-    "-sUSE_SDL=3",
+    SDL_PORT_FLAG,
     "-sMAX_WEBGL_VERSION=2",
     "-sMIN_WEBGL_VERSION=2",
     "-sFULL_ES3=1",
@@ -125,6 +129,14 @@ def generate_web_build(n: Writer, sln: Any) -> None:
         depfile="$out.d",
         deps="gcc",
     )
+    # the SDL port, built into Emscripten's cache once before the compiles
+    # that use it: left to them, every parallel compile would try to build it
+    # at once and fight over the cache's lock
+    n.rule(
+        name="web_port",
+        command="$web_cc -pthread $port -c -x c /dev/null -o $out",
+        description="WEB PORT $port",
+    )
     n.rule(
         name="web_link",
         command="$web_cc $ldflags -o $out @$out.rsp",
@@ -145,6 +157,9 @@ def generate_web_build(n: Writer, sln: Any) -> None:
     shims_path = WEB_DIR / "web_abi_shims.json"
     shim_units = json.loads(shims_path.read_text())["units"] if shims_path.is_file() else {}
 
+    sdl_port_stamp = build_dir / "sdl3_pinned.o"
+    n.build(outputs=sdl_port_stamp, rule="web_port", implicit=[SDL_PORT], variables={"port": SDL_PORT_FLAG})
+
     def add_object(source: Path, cflags: str) -> None:
         obj = obj_dir / source.with_suffix(".o")
         objects.append(obj)
@@ -153,6 +168,7 @@ def generate_web_build(n: Writer, sln: Any) -> None:
             rule="web_cc",
             inputs=source,
             implicit=[*xdk_headers(), prefix_header, semantics_header, platform_semantics_header],
+            order_only=[sdl_port_stamp],
             variables={"cflags": cflags},
         )
 
@@ -183,7 +199,7 @@ def generate_web_build(n: Writer, sln: Any) -> None:
 
     platform_dir = Path(config["platform_sources"])
     platform_cflags = " ".join([
-        abi, " ".join(PLATFORM_FLAGS), "-w", "-sUSE_SDL=3",
+        abi, " ".join(PLATFORM_FLAGS), "-w", SDL_PORT_FLAG,
         f"-include {prefix_header}", f"-include {platform_semantics_header}",
         f"-I{platform_dir}", f"-I{port_include}", f"-I{WEB_DIR / 'src'}", f"-I{TOML_DIR}", f"-I{KCP_DIR}",
         "-Isource -Isource/cseries", sdk_flags,
@@ -208,7 +224,7 @@ def generate_web_build(n: Writer, sln: Any) -> None:
         outputs=output,
         rule="web_link",
         inputs=objects,
-        implicit=[WEB_DIR / "src" / "web_library.js"],
+        implicit=[WEB_DIR / "src" / "web_library.js", sdl_port_stamp],
         # Emscripten's runtime checks (heap, stack cookie, argument checks
         # in the JavaScript glue) in development builds only: a
         # configure.py --release build has none, as it has no game
