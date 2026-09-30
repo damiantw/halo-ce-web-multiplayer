@@ -408,6 +408,9 @@ struct profile_globals
 
 /* ---------- prototypes */
 
+#ifdef HALO_LINUX
+void platform_log(char const *format, ...);
+#endif
 static void profile_timesection_inherit(
 	struct profile_timer *parent_timesection,
 	struct profile_timer *child_timesection);
@@ -1292,6 +1295,26 @@ static void profile_timesection_inherit(
 	struct profile_timer *parent_timesection,
 	struct profile_timer *child_timesection)
 {
+#ifdef HALO_LINUX
+	/* port (upstream's 30709dbf): a machine joining a game in progress
+	loads it mid-frame (the host's start, handled in the frame's network
+	update), and the loading screen draws its windows outside the frame's
+	render: the frame's times do not add up, and are only for the profiler.
+	The web build keeps its assertions on, where this one could end the game
+	of a web client joining a game in progress */
+	if (parent_timesection->frame_total < child_timesection->total)
+	{
+		static boolean logged = FALSE;
+
+		if (!logged)
+		{
+			logged = TRUE;
+			platform_log("profile: a frame's times did not add up (a load mid-frame), not counted");
+		}
+		parent_timesection->frame_total = 0.0f;
+		return;
+	}
+#endif
 	match_vassert("c:\\halo\\SOURCE\\cseries\\profile.c", 434,
 		parent_timesection->frame_total>=child_timesection->total,
 		"parent_timesection->self_msec >= child_timesection->elapsed_msec");
