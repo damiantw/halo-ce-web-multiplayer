@@ -302,13 +302,17 @@ render_frame_pregame): the web build without menus never shows the SELECT
 TEAMS screen (the site picked the team, and the lobby has nothing to do)
 while the machine joins a game, waits in the lobby for the next map or
 starts loading it, which it would show for as long as the map downloads
-and loads between games (the scores, in the postgame state, stay). Only
+and loads between games (the scores, in the postgame state, stay). Both
+frames draw it: the pregame's (render_frame_pregame, loading TRUE: no map
+is loaded, and that of a game told to start counts too) and the one of the
+loaded scenario (render_frame: a map kept for the next game, or the main
+menu's scenario the web build waits in, loading FALSE). Only
 the drawing: the screen stays open and the game's states are as before
 (hiding them otherwise broke machines joining a game in progress). The
 page shows the download's progress (Module.setStatus), the game its
 loading bar. */
 boolean web_lobby_screen_hidden(
-	void)
+	boolean loading)
 {
 #if defined(HALO_WEB) && defined(HALO_MULTIPLAYER_ONLY)
 	/* network_game_globals.c's enum network_game_client_state */
@@ -330,8 +334,11 @@ boolean web_lobby_screen_hidden(
 		return FALSE;
 	}
 	state = network_game_client_get_state(client, NULL);
-	return state == _client_state_joining || state == _client_state_pregame || state == _client_state_ingame;
+	/* (in a game, its menus are drawn: the pause menu) */
+	return state == _client_state_joining || state == _client_state_pregame ||
+		(loading && state == _client_state_ingame);
 #else
+	(void)loading;
 	return FALSE;
 #endif
 }
