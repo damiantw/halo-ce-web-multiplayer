@@ -19,6 +19,10 @@ Keyboard and mouse (port 0):
 	F12              release or recapture the mouse (not on the web: Esc
 	                 releases it there, a click recaptures it)
 
+On the web the HUD's button prompts name these keys ("Hold E to pick
+up") rather than showing the Xbox buttons, until a gamepad is used
+(halo_linux_button_key_name).
+
 In the menus the mouse is free and drives a pointer instead
 (port/linux/include/halo_ui_pointer.h, source/interface/ui_widget.c): its
 motion, buttons and wheel do not reach the controller then.
@@ -282,6 +286,50 @@ static void wheel_update(void)
 	pthread_mutex_unlock(&mouse_lock);
 }
 
+/* ---------- button prompts */
+
+#ifdef HALO_WEB
+/* whether port 0's latest input came from the keyboard and mouse (else from
+a gamepad): the HUD's button prompts name the keys then */
+static BOOL keyboard_input_latest = TRUE;
+
+static BOOL gamepad_active(const XINPUT_GAMEPAD *pad)
+{
+	int index;
+
+	if (pad->wButtons || pad->sThumbLX || pad->sThumbLY || pad->sThumbRX || pad->sThumbRY)
+		return TRUE;
+	for (index = 0; index < 8; index++)
+	{
+		if (pad->bAnalogButtons[index] > 0x20)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+/* The keyboard and mouse key for an Xbox button, in the HUD's icon order
+(source/interface/hud_messaging.c: A B X Y black white, the triggers, the
+D-pad, start, back, the stick clicks, the sticks), as keyboard_gamepad maps
+them; NULL while a gamepad is what the player uses, or for another index.
+The HUD and the menus' icon prompts show it instead of the Xbox glyph
+("Hold E to pick up"). */
+wchar_t const *halo_linux_button_key_name(short button)
+{
+	static wchar_t const *const names[] =
+	{
+		L"Space", L"F", L"E", L"Tab", L"X", L"Q",
+		L"G", L"Click",
+		L"Up", L"Down", L"Left", L"Right",
+		L"Esc", L"F1", L"C", L"Z",
+		L"WASD", L"Mouse",
+	};
+
+	if (!keyboard_input_latest || button < 0 || button >= (short)(sizeof(names) / sizeof(names[0])))
+		return NULL;
+	return names[button];
+}
+#endif
+
 /* ---------- SDL gamepads */
 
 /* the SDL gamepads in connection order, at most one per port */
@@ -510,6 +558,19 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 		wheel_update();
 		if (!console_is_active())
 			keyboard_gamepad(&input, &state->Gamepad);
+#ifdef HALO_WEB
+		if (gamepad_active(&state->Gamepad) || input.mouse_dx != 0.0f || input.mouse_dy != 0.0f)
+			keyboard_input_latest = TRUE;
+		else if (count > 0)
+		{
+			XINPUT_GAMEPAD pad;
+
+			memset(&pad, 0, sizeof(pad));
+			sdl_gamepad_state(gamepads[0], &pad);
+			if (gamepad_active(&pad))
+				keyboard_input_latest = FALSE;
+		}
+#endif
 		if (count > 0)
 			sdl_gamepad_state(gamepads[0], &state->Gamepad);
 		test_input_gamepad(&state->Gamepad);

@@ -3958,6 +3958,21 @@ void draw_string_and_hack_in_icons(
 				icon_index = remapped_icon_type;
 			}
 
+#ifdef HALO_WEB
+			{
+				/* the keyboard key for the button, while the player uses the
+				keyboard (port/linux/src/xinput_sdl.c) */
+				extern wchar_t const *halo_linux_button_key_name(short button);
+				wchar_t const *key = halo_linux_button_key_name(icon_index);
+
+				if (key)
+				{
+					render_state_text(bounds, &cursor_bounds, key);
+					continue;
+				}
+			}
+#endif
+
 			{
 				struct icon_hud_element_definition *icon = TAG_BLOCK_GET_ELEMENT(
 					&hud_globals->messaging.button_icons,
