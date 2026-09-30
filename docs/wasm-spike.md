@@ -38,9 +38,11 @@ Web replacements live in `port/web/src`. The build uses the same flags as the An
 the OpenGL ES 3.0 renderer path and the Android fixes for variadic prototypes.
 
 - `tools/web_build.py`: the `ninja web` target, called from `tools/project_x86.py`. Link flags:
-  `-sUSE_SDL=3 -sMIN/MAX_WEBGL_VERSION=2 -sFULL_ES3 -sPROXY_TO_PTHREAD -sJSPI -sOFFSCREENCANVAS_SUPPORT
+  `--use-port=port/web/ports/sdl3_pinned.py -sMIN/MAX_WEBGL_VERSION=2 -sFULL_ES3 -sPROXY_TO_PTHREAD -sJSPI -sOFFSCREENCANVAS_SUPPORT
   -sOFFSCREENCANVASES_TO_PTHREAD=#canvas -sPTHREAD_POOL_SIZE=8 -sALLOW_MEMORY_GROWTH -sMAXIMUM_MEMORY=4GB
-  -sINITIAL_MEMORY=256MB -sSTACK_SIZE=4MB -lwebsocket.js`.
+  -sINITIAL_MEMORY=256MB -sSTACK_SIZE=4MB -lwebsocket.js`. SDL 3 is an external Emscripten port pinned to the
+  Android and Windows builds' release (3.4.16, checked by SHA512) rather than the SDK's `-sUSE_SDL=3` (3.4.2,
+  whose gamepad code fails on the game's worker thread).
 - `tools/web_abi_shims.py`: wasm, unlike x86, traps when a call's signature differs from the callee's.
   The script reads wasm-ld's "function signature mismatch" warnings and generates 32 adapters
   (`port/web/src/web_abi_shims.c`) plus 38 per-file `-D` renames (`port/web/web_abi_shims.json`).
