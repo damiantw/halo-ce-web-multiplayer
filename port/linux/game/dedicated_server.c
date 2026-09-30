@@ -51,6 +51,7 @@ Called from the main loop every frame instead of network_test_update
 #include "game/players.h"
 #include "memory/data.h"
 #include "network_distributed.h"
+#include "variant_overrides.h"
 #include "../src/dedicated_control.h"
 
 #include <stdio.h>
@@ -123,6 +124,9 @@ struct dedicated_rotation_entry
 {
 	char map_path[DEDICATED_MAP_PATH_LENGTH];
 	char variant_name[DEDICATED_VARIANT_NAME_LENGTH];
+	/* the entry's rule changes, "key=value+key=value" (variant_overrides.c),
+	or empty */
+	char overrides[VARIANT_OVERRIDES_LENGTH];
 };
 
 /* a player the server has seen, for the joined and left events */
@@ -278,7 +282,7 @@ static void dedicated_reject(
 	}
 }
 
-/* "<map>[:<variant>]": a full scenario path (with backslashes) or a
+/* "<map>[:<variant>[+key=value...]]": a full scenario path (with backslashes) or a
 multiplayer map's name, levels\test\<map>\<map>; FALSE (and the reason
 kept in dedicated.rejected) if it cannot be played */
 static boolean dedicated_parse_entry(
@@ -289,8 +293,10 @@ static boolean dedicated_parse_entry(
 	char variant[DEDICATED_VARIANT_NAME_LENGTH] = "slayer";
 	char reason[96];
 	char const *colon = strchr(text, ':');
+	char const *plus = colon ? strchr(colon, '+') : NULL;
 	char const *base;
 	size_t length = colon ? (size_t)(colon - text) : strlen(text);
+	size_t variant_length = colon ? (plus ? (size_t)(plus - colon - 1) : strlen(colon + 1)) : 0;
 	int map_type;
 
 	if (!length)
@@ -298,20 +304,33 @@ static boolean dedicated_parse_entry(
 		dedicated_reject(text, "no map");
 		return FALSE;
 	}
-	if (length >= sizeof(map) || (colon && strlen(colon + 1) >= sizeof(variant)))
+	if (length >= sizeof(map) || variant_length >= sizeof(variant) ||
+		(plus && strlen(plus + 1) >= sizeof(entry->overrides)))
 	{
 		dedicated_reject(text, "too long");
 		return FALSE;
 	}
 	memcpy(map, text, length);
 	map[length] = 0;
-	if (colon && colon[1])
-		snprintf(variant, sizeof(variant), "%s", colon + 1);
+	if (variant_length)
+		snprintf(variant, sizeof(variant), "%.*s", (int)variant_length, colon + 1);
 	if (!dedicated_variant_is_known(variant))
 	{
 		snprintf(reason, sizeof(reason), "no game type \"%s\"", variant);
 		dedicated_reject(text, reason);
 		return FALSE;
+	}
+	if (plus)
+	{
+		struct game_variant built;
+
+		csmemset(&built, 0, sizeof(built));
+		game_engine_get_variant_by_name(&built, variant);
+		if (!variant_overrides_validate(&built, plus + 1, reason, sizeof(reason)))
+		{
+			dedicated_reject(text, reason);
+			return FALSE;
+		}
 	}
 	base = strrchr(map, '\\');
 	base = base ? base + 1 : map;
@@ -336,6 +355,7 @@ static boolean dedicated_parse_entry(
 	else
 		snprintf(entry->map_path, sizeof(entry->map_path), "levels\\test\\%s\\%s", map, map);
 	snprintf(entry->variant_name, sizeof(entry->variant_name), "%s", variant);
+	snprintf(entry->overrides, sizeof(entry->overrides), "%s", plus ? plus + 1 : "");
 	return TRUE;
 }
 
@@ -374,8 +394,9 @@ static void dedicated_log_rotation(
 		dedicated.rotation_count);
 	for (index = 0; index < dedicated.rotation_count; index++)
 	{
-		platform_log("dedicated server:   %d. %s (%s)", index + 1, dedicated.rotation[index].map_path,
-			dedicated.rotation[index].variant_name);
+		platform_log("dedicated server:   %d. %s (%s%s%s)", index + 1, dedicated.rotation[index].map_path,
+			dedicated.rotation[index].variant_name, dedicated.rotation[index].overrides[0] ? " +" : "",
+			dedicated.rotation[index].overrides);
 	}
 }
 
@@ -577,6 +598,9 @@ static void dedicated_entry_variant(
 			variant->human_readable_game_description[index] = (wchar_t)(unsigned char)name[index];
 		variant->human_readable_game_description[index] = 0;
 	}
+	/* the entry's rule changes (checked when the rotation was set) */
+	if (entry->overrides[0] && !variant_overrides_apply(variant, entry->overrides))
+		platform_log("dedicated server: the rules \"%s\" of %s could not be applied", entry->overrides, entry->variant_name);
 }
 
 /* the game the next reset to the lobby sets up
@@ -714,6 +738,10 @@ static void dedicated_write_entry_fields(
 	control_field_string("map", dedicated_map_name(entry->map_path));
 	control_field_string("map_path", entry->map_path);
 	control_field_string("gametype", entry->variant_name);
+	if (entry->overrides[0])
+		control_field_string("rules", entry->overrides);
+	else
+		control_field_null("rules");
 }
 
 static void dedicated_write_entry(
@@ -1548,7 +1576,7 @@ static void dedicated_command_change_map(
 	struct control_command const *command,
 	struct network_game_server *server)
 {
-	char text[DEDICATED_MAP_PATH_LENGTH + DEDICATED_VARIANT_NAME_LENGTH + 2];
+	char text[DEDICATED_MAP_PATH_LENGTH + DEDICATED_VARIANT_NAME_LENGTH + VARIANT_OVERRIDES_LENGTH + 3];
 	char const *map = control_argument(command, "map");
 	char const *gametype = control_argument(command, "gametype");
 	struct dedicated_rotation_entry entry;
