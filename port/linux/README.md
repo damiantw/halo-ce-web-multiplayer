@@ -119,6 +119,12 @@ to 4.
 One movement of the mouse wheel changes the weapon one time. A second
 movement after a short pause changes it again.
 
+In the web build, the button prompts in the HUD and in the menus show these
+keys instead of the Xbox buttons: for example "Hold E to pick up" and
+"F = quit". Each button's first key in this table is used. The Xbox buttons
+come back as soon as a gamepad is used, and the keys return when the keyboard
+or mouse is used again.
+
 In the menus, the mouse moves a pointer:
 
 - The item below the pointer gets the focus.
