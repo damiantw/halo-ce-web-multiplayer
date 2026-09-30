@@ -34,6 +34,7 @@ type config struct {
 	IdleTimeout   time.Duration // no frame from the client for this long closes it
 	PrebindPorts  []uint16      // the client ports bound when a session starts
 	AllowInsecure bool          // no secret: accept unsigned test tokens (development)
+	RTC           rtcConfig     // WebRTC data channels (rtc.go); off without RTC.Listen
 }
 
 func defaultConfig() config {
@@ -64,10 +65,12 @@ type gateway struct {
 	sessions map[netip.Addr]*session
 	nextAddr uint32
 	hubs     []*net.UDPConn
+	rtc      *rtcServer // nil: no WebRTC, the WebSocket carries everything
 	wg       sync.WaitGroup
 	closing  atomic.Bool
 	stats    struct {
 		accepted, rejected, framesIn, framesOut, dropped atomic.Int64
+		rtcOpened, rtcFallbacks                          atomic.Int64
 	}
 }
 
@@ -88,6 +91,14 @@ func (g *gateway) start() error {
 		g.hubs = append(g.hubs, conn)
 		g.wg.Add(1)
 		go g.hubLoop(conn, port)
+	}
+	if g.cfg.RTC.Listen != "" {
+		r, err := newRTCServer(g.cfg.RTC)
+		if err != nil {
+			g.stopHubs()
+			return err
+		}
+		g.rtc = r
 	}
 	return nil
 }
@@ -281,4 +292,5 @@ func (g *gateway) shutdown(ctx context.Context) {
 	case <-ctx.Done():
 		g.log.Warn("shutdown timed out")
 	}
+	g.rtc.close()
 }

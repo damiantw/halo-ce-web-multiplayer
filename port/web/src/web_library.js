@@ -11,9 +11,173 @@ addToLibrary({
 	// down), closes and ping (ms, the last PING's round trip; NaN: none
 	// answered) are for the page's overlay (webnet_stats)
 	$WEBNET: { socket: null, inbox: [], outbox: [], open: false, generation: 0,
-		framesIn: 0, framesOut: 0, bytesIn: 0, bytesOut: 0, dropped: 0, closes: 0, ping: NaN, pingAt: 0 },
+		framesIn: 0, framesOut: 0, bytesIn: 0, bytesOut: 0, dropped: 0, closes: 0, ping: NaN, pingAt: 0,
+		rtc: null },
 
-	webnet_connect__deps: ["$WEBNET", "$UTF8ToString"],
+	// WebRTC (docs/gateway.md, "WebRTC"): once the WebSocket is open, the
+	// datagrams (UDP frames and PING) move to a data channel, unordered and
+	// never retransmitted, as UDP is; streams, HELLO and the signaling stay
+	// on the WebSocket. The browser has no RTCPeerConnection in workers, so
+	// the peer lives on the page's main thread (webrtc_main_start) and the
+	// frames cross over a BroadcastChannel named for this attempt. Should
+	// the channel not open within WEBRTC_OPEN_MS, or fail or go quiet later,
+	// the datagrams go back to the WebSocket (which the gateway keeps
+	// accepting all along), and the game carries on; the next attempt is on
+	// the next WebSocket connection. HALO_WEB_RTC=0 turns it off.
+	$WEBRTC_OPEN_MS: 4000,
+	// webrtc_start: a new attempt for the WebSocket just opened
+	$webrtc_start__deps: ["$WEBNET", "$WEBRTC_OPEN_MS", "$webrtc_signal", "$webrtc_stop", "$webnet_deliver", "webrtc_main_start"],
+	$webrtc_start: (socket) => {
+		if (typeof BroadcastChannel !== "function") return;
+		const id = (Math.random() * 0x7fffffff) | 0;
+		const channel = new BroadcastChannel(`halo-rtc-${id}`);
+		const rtc = { id, channel, socket, state: "connecting", started: performance.now(), timer: 0 };
+		WEBNET.rtc = rtc;
+		rtc.timer = setTimeout(() => {
+			if (rtc.state === "connecting") webrtc_stop(rtc, "timeout", true);
+		}, WEBRTC_OPEN_MS);
+		channel.onmessage = (event) => {
+			const m = event.data;
+			if (WEBNET.rtc !== rtc || rtc.state === "down") return;
+			if (m.t === "offer") webrtc_signal(rtc, { type: "offer", sdp: m.sdp });
+			else if (m.t === "open") {
+				rtc.state = "open";
+				clearTimeout(rtc.timer);
+				err(`[webnet] datagrams over WebRTC (${Math.round(performance.now() - rtc.started)} ms)`);
+			} else if (m.t === "frame") webnet_deliver(new Uint8Array(m.data));
+			else if (m.t === "down") webrtc_stop(rtc, m.reason, true);
+		};
+		_webrtc_main_start(id);
+	},
+	$webrtc_signal__deps: ["$WEBNET"],
+	$webrtc_signal: (rtc, message) => {
+		if (rtc.socket.readyState !== 1) return;
+		const body = new TextEncoder().encode(JSON.stringify(message));
+		const frame = new Uint8Array(1 + body.length);
+		frame[0] = 8;
+		frame.set(body, 1);
+		rtc.socket.send(frame);
+	},
+	// webrtc_stop: back to the WebSocket; tell: say so to the gateway
+	$webrtc_stop__deps: ["$WEBNET", "$webrtc_signal"],
+	$webrtc_stop: (rtc, reason, tell) => {
+		if (!rtc || rtc.state === "down") return;
+		const was = rtc.state;
+		rtc.state = "down";
+		clearTimeout(rtc.timer);
+		rtc.channel.postMessage({ t: "close" });
+		setTimeout(() => rtc.channel.close(), 1000);
+		if (tell) webrtc_signal(rtc, { type: "bye", reason: String(reason) });
+		err(`[webnet] WebRTC ${was === "open" ? "lost" : "not used"} (${reason}); datagrams over the WebSocket`);
+	},
+	// webrtc_frame: frame 8 from the gateway
+	$webrtc_frame__deps: ["$WEBNET", "$webrtc_stop"],
+	$webrtc_frame: (frame) => {
+		const rtc = WEBNET.rtc;
+		let message;
+		try { message = JSON.parse(new TextDecoder().decode(frame.subarray(1))); } catch (e) { return; }
+		if (!rtc || rtc.state === "down") return;
+		if (message.type === "answer") rtc.channel.postMessage({ t: "answer", sdp: message.sdp });
+		else if (message.type === "bye") webrtc_stop(rtc, "gateway: " + message.reason, false);
+	},
+
+	// webrtc_main_start: the peer connection, on the page's main thread. It
+	// makes the offer and its data channel, and relays frames between the
+	// channel and the game's worker. It sends a keepalive PING (7 'k') every
+	// second, which the gateway echoes: either end hearing nothing for a few
+	// seconds gives the channel up (the game's worker may be busy loading a
+	// map, so the main thread keeps this time, not the game).
+	webrtc_main_start__proxy: "async",
+	webrtc_main_start: (id) => {
+		const channel = new BroadcastChannel(`halo-rtc-${id}`);
+		const env = (typeof Module !== "undefined" && Module["ENV"]) || {};
+		const status = (globalThis.haloWebRTC = globalThis.haloWebRTC || { transport: "ws" });
+		if (typeof RTCPeerConnection !== "function" || env.HALO_WEB_RTC === "0") {
+			channel.postMessage({ t: "down", reason: typeof RTCPeerConnection !== "function" ? "unsupported" : "disabled" });
+			setTimeout(() => channel.close(), 1000);
+			return;
+		}
+		const pc = new RTCPeerConnection({ iceServers: [] });
+		const dc = pc.createDataChannel("halo", { ordered: false, maxRetransmits: 0 });
+		dc.binaryType = "arraybuffer";
+		let lastRx = 0, done = false, keepalive = 0;
+		const keepaliveFrame = new Uint8Array([7, 0x6b]);
+		const finish = () => {
+			done = true;
+			clearInterval(keepalive);
+			if (status.id === id) status.transport = "ws";
+			try { dc.close(); } catch (e) {}
+			try { pc.close(); } catch (e) {}
+			setTimeout(() => channel.close(), 1000);
+		};
+		const down = (reason) => {
+			if (done) return;
+			channel.postMessage({ t: "down", reason });
+			finish();
+		};
+		dc.onopen = () => {
+			if (done) return;
+			lastRx = performance.now();
+			status.id = id;
+			status.transport = "rtc";
+			channel.postMessage({ t: "open" });
+			keepalive = setInterval(() => {
+				if (performance.now() - lastRx > 4000) down("no traffic");
+				else if (dc.readyState === "open") dc.send(keepaliveFrame);
+			}, 1000);
+		};
+		dc.onclose = () => down("channel closed");
+		dc.onmessage = (event) => {
+			lastRx = performance.now();
+			const data = event.data;
+			if (data.byteLength === 2 && new Uint8Array(data)[0] === 7) return; // the keepalive's echo
+			channel.postMessage({ t: "frame", data });
+		};
+		pc.onconnectionstatechange = () => {
+			if (pc.connectionState === "failed" || pc.connectionState === "closed") down("connection " + pc.connectionState);
+		};
+		channel.onmessage = (event) => {
+			const m = event.data;
+			if (done) return;
+			if (m.t === "send") {
+				// a congested channel drops, as a router would
+				if (dc.readyState === "open" && dc.bufferedAmount < 262144) dc.send(m.data);
+			} else if (m.t === "answer") {
+				pc.setRemoteDescription({ type: "answer", sdp: m.sdp }).catch((e) => down("answer: " + e.message));
+			} else if (m.t === "close") finish();
+		};
+		pc.createOffer()
+			.then((offer) => pc.setLocalDescription(offer))
+			.then(() => channel.postMessage({ t: "offer", sdp: pc.localDescription.sdp }))
+			.catch((e) => down("offer: " + e.message));
+	},
+
+	// webnet_deliver: a frame from the gateway (WebSocket or data channel)
+	// for the game
+	$webnet_deliver__deps: ["$WEBNET"],
+	$webnet_deliver: (frame) => {
+		WEBNET.framesIn++;
+		WEBNET.bytesIn += frame.length;
+		// 7 PING: the gateway's echo of webnet_stats' ping. Taken
+		// here, between the game's frames, so it includes the time a
+		// frame waits for the game: the latency the game sees.
+		if (frame[0] === 7) {
+			if (frame.length === 9) {
+				const sent = new DataView(frame.buffer, frame.byteOffset).getFloat64(1);
+				if (sent === WEBNET.pingAt) WEBNET.ping = performance.now() - sent;
+			}
+			return;
+		}
+		if (frame[0] === 1 && WEBNET.inbox.length >= 4096) return;
+		if (WEBNET.inbox.length >= 65536) {
+			err(`[webnet] ${WEBNET.inbox.length} frames waiting; closing the session`);
+			WEBNET.socket.close(4000, "client backlog");
+			return;
+		}
+		WEBNET.inbox.push(frame);
+	},
+
+	webnet_connect__deps: ["$WEBNET", "$UTF8ToString", "$webrtc_start", "$webrtc_stop", "$webrtc_frame", "$webnet_deliver"],
 	webnet_connect: (url, token, tokenUrl) => {
 		url = UTF8ToString(url);
 		token = UTF8ToString(token);
@@ -42,6 +206,7 @@ addToLibrary({
 				for (const frame of WEBNET.outbox) socket.send(frame);
 				WEBNET.outbox = [];
 				err(`[webnet] connected to ${url}`);
+				webrtc_start(socket);
 			};
 			// Frames are taken between the game's frames. Datagrams (type 1)
 			// may be dropped when too many are waiting, as the network would;
@@ -51,28 +216,14 @@ addToLibrary({
 			// silently corrupted.
 			socket.onmessage = (event) => {
 				const frame = new Uint8Array(event.data);
-				WEBNET.framesIn++;
-				WEBNET.bytesIn += frame.length;
-				// 7 PING: the gateway's echo of webnet_stats' ping. Taken
-				// here, between the game's frames, so it includes the time a
-				// frame waits for the game: the latency the game sees.
-				if (frame[0] === 7) {
-					if (frame.length === 9) {
-						const sent = new DataView(frame.buffer).getFloat64(1);
-						if (sent === WEBNET.pingAt) WEBNET.ping = performance.now() - sent;
-					}
-					return;
-				}
-				if (frame[0] === 1 && WEBNET.inbox.length >= 4096) return;
-				if (WEBNET.inbox.length >= 65536) {
-					err(`[webnet] ${WEBNET.inbox.length} frames waiting; closing the session`);
-					socket.close(4000, "client backlog");
-					return;
-				}
-				WEBNET.inbox.push(frame);
+				// 8: WebRTC signaling (webrtc_frame)
+				if (frame[0] === 8) return webrtc_frame(frame);
+				webnet_deliver(frame);
 			};
 			socket.onclose = (event) => {
 				WEBNET.open = false;
+				// the gateway's session, and with it the peer, is gone
+				webrtc_stop(WEBNET.rtc, "WebSocket closed", false);
 				WEBNET.generation++;
 				WEBNET.closes++;
 				// what was queued for the dead session's streams means nothing
@@ -99,7 +250,13 @@ addToLibrary({
 		frame >>>= 0;
 		// a copy: WebSocket.send takes no views of shared memory
 		const copy = HEAPU8.slice(frame, frame + length);
-		if (WEBNET.open) {
+		const rtc = WEBNET.rtc;
+		if (WEBNET.open && rtc && rtc.state === "open" && copy[0] === 1) {
+			// a datagram: over the data channel (webrtc_main_start)
+			rtc.channel.postMessage({ t: "send", data: copy.buffer });
+			WEBNET.framesOut++;
+			WEBNET.bytesOut += length;
+		} else if (WEBNET.open) {
 			WEBNET.socket.send(copy);
 			WEBNET.framesOut++;
 			WEBNET.bytesOut += length;
@@ -131,7 +288,10 @@ addToLibrary({
 			ping[0] = 7;
 			WEBNET.pingAt = performance.now();
 			new DataView(ping.buffer).setFloat64(1, WEBNET.pingAt);
-			WEBNET.socket.send(ping);
+			// the way the datagrams go: the ping is theirs
+			const rtc = WEBNET.rtc;
+			if (rtc && rtc.state === "open") rtc.channel.postMessage({ t: "send", data: ping.buffer });
+			else WEBNET.socket.send(ping);
 		} else {
 			WEBNET.ping = NaN;
 		}
@@ -153,6 +313,8 @@ addToLibrary({
 				bytesIn: v[10], bytesOut: v[11], dropped: v[12], waiting: v[13], closes: v[14],
 				sendErrors: v[15] },
 		};
+		// what carries the datagrams (webrtc_main_start, on this thread)
+		stats.net.transport = (globalThis.haloWebRTC && globalThis.haloWebRTC.transport) || "ws";
 		Module["haloStats"] = stats;
 		if (typeof dispatchEvent === "function" && typeof CustomEvent === "function")
 			dispatchEvent(new CustomEvent("halo:stats", { detail: stats }));

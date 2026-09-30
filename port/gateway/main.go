@@ -68,6 +68,27 @@ func loadConfig() (config, string, string, string, error) {
 			}
 		}
 	}
+	cfg.RTC.Listen = os.Getenv("HALO_GATEWAY_RTC_LISTEN")
+	if cfg.RTC.Listen == "off" {
+		cfg.RTC.Listen = ""
+	}
+	for _, v := range strings.Split(os.Getenv("HALO_GATEWAY_RTC_PUBLIC_IPS"), ",") {
+		if v = strings.TrimSpace(v); v == "" {
+			continue
+		}
+		a, err := netip.ParseAddr(v)
+		if err != nil {
+			return cfg, "", "", "", fmt.Errorf("HALO_GATEWAY_RTC_PUBLIC_IPS: %w", err)
+		}
+		cfg.RTC.PublicIPs = append(cfg.RTC.PublicIPs, a)
+	}
+	if v := os.Getenv("HALO_GATEWAY_RTC_PORT"); v != "" {
+		port, err := strconv.ParseUint(v, 10, 16)
+		if err != nil {
+			return cfg, "", "", "", fmt.Errorf("HALO_GATEWAY_RTC_PORT: %w", err)
+		}
+		cfg.RTC.Port = uint16(port)
+	}
 	return cfg, listen, control, servers, nil
 }
 
@@ -114,17 +135,25 @@ func controlHandler(g *gateway) http.Handler {
 			Sub, Sid, Addr               string
 			Servers                      []string
 			FramesIn, FramesOut, Dropped int64
+			Transport                    string // "rtc" while the data channel carries the datagrams, else "ws"
 		}
 		var out []row
 		for _, s := range g.sessionList() {
-			out = append(out, row{s.claims.Sub, s.claims.Sid, s.addr.String(), s.claims.Srv, s.framesIn.Load(), s.framesOut.Load(), s.dropped.Load()})
+			out = append(out, row{s.claims.Sub, s.claims.Sid, s.addr.String(), s.claims.Srv, s.framesIn.Load(), s.framesOut.Load(), s.dropped.Load(), s.transport()})
 		}
 		writeJSON(w, out)
 	})
 	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
+		sessions, rtc := g.sessionList(), int64(0)
+		for _, s := range sessions {
+			if s.transport() == "rtc" {
+				rtc++
+			}
+		}
 		writeJSON(w, map[string]int64{
-			"sessions": int64(len(g.sessionList())), "accepted": g.stats.accepted.Load(), "rejected": g.stats.rejected.Load(),
+			"sessions": int64(len(sessions)), "accepted": g.stats.accepted.Load(), "rejected": g.stats.rejected.Load(),
 			"frames_in": g.stats.framesIn.Load(), "frames_out": g.stats.framesOut.Load(), "dropped": g.stats.dropped.Load(),
+			"rtc_sessions": rtc, "rtc_opened": g.stats.rtcOpened.Load(), "rtc_fallbacks": g.stats.rtcFallbacks.Load(),
 		})
 	})
 	return mux
@@ -184,8 +213,12 @@ func main() {
 	if control != "" && control != "off" {
 		go func() { errs <- private.ListenAndServe() }()
 	}
+	rtc := "off"
+	if g.rtc != nil {
+		rtc = fmt.Sprintf("udp %s, announced %v port %d", g.rtc.conn.LocalAddr(), cfg.RTC.PublicIPs, g.rtc.cfg.Port)
+	}
 	log.Info("gateway listening", "listen", listen, "control", control, "hub", cfg.Hub.String(),
-		"client_net", cfg.ClientNet.String(), "servers", reg.snapshot(), "max_clients", cfg.MaxClients)
+		"client_net", cfg.ClientNet.String(), "servers", reg.snapshot(), "max_clients", cfg.MaxClients, "rtc", rtc)
 
 	stop := make(chan os.Signal, 2)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)

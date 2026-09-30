@@ -32,6 +32,7 @@ type session struct {
 	mu        sync.Mutex
 	udp       map[uint16]*net.UDPConn
 	streams   map[uint32]*net.TCPConn
+	rtc       *rtcPeer // the WebRTC peer (rtc.go), nil without one; under mu
 	framesIn  atomic.Int64
 	framesOut atomic.Int64
 	dropped   atomic.Int64
@@ -64,9 +65,20 @@ func (s *session) close(code websocket.StatusCode, why string) {
 	}
 }
 
-// sendDroppable queues a datagram's frame; a full queue drops it, as the
-// network would.
+// sendDroppable sends a datagram's frame: on the data channel when there
+// is one (rtc.go), else queued for the WebSocket; a full queue drops it, as
+// the network would.
 func (s *session) sendDroppable(f []byte) {
+	if p := s.currentRTC(); p != nil && p.send(f) {
+		s.framesOut.Add(1)
+		s.g.stats.framesOut.Add(1)
+		return
+	}
+	s.sendWSDroppable(f)
+}
+
+// sendWSDroppable queues a datagram's frame for the WebSocket.
+func (s *session) sendWSDroppable(f []byte) {
 	select {
 	case s.out <- f:
 	default:
@@ -125,19 +137,30 @@ read:
 		if typ != websocket.MessageBinary || len(frame) == 0 {
 			continue
 		}
-		s.framesIn.Add(1)
-		s.g.stats.framesIn.Add(1)
-		if !s.frames.take(1) || !s.bytes.take(float64(len(frame))) {
-			s.dropped.Add(1)
-			s.g.stats.dropped.Add(1)
-			continue
-		}
-		s.handle(frame)
+		s.receive(frame, nil)
 	}
 	s.closeMu.Lock()
 	code, why := s.code, s.why
 	s.closeMu.Unlock()
 	return why + " (" + code.String() + ")"
+}
+
+// receive takes a frame from the WebSocket (via nil) or the data channel:
+// counted, limited by the session's buckets, then handled. The data channel
+// carries only datagrams and PING: streams need the WebSocket's order and
+// delivery.
+func (s *session) receive(frame []byte, via *rtcPeer) {
+	if via != nil && frame[0] != frameUDP && frame[0] != framePing {
+		return
+	}
+	s.framesIn.Add(1)
+	s.g.stats.framesIn.Add(1)
+	if !s.frames.take(1) || !s.bytes.take(float64(len(frame))) {
+		s.dropped.Add(1)
+		s.g.stats.dropped.Add(1)
+		return
+	}
+	s.handle(frame, via)
 }
 
 func isTooBig(err error) bool {
@@ -181,6 +204,9 @@ func (s *session) cleanup() {
 	if code == 0 {
 		code = websocket.StatusNormalClosure
 	}
+	if p := s.currentRTC(); p != nil {
+		p.shutdown("session closed", false)
+	}
 	s.mu.Lock()
 	for _, c := range s.udp {
 		c.Close()
@@ -206,7 +232,7 @@ func (s *session) portAllowed(p uint16) bool {
 	return false
 }
 
-func (s *session) handle(f []byte) {
+func (s *session) handle(f []byte, via *rtcPeer) {
 	switch f[0] {
 	case frameUDP:
 		u, err := parseUDP(f)
@@ -242,8 +268,16 @@ func (s *session) handle(f []byte) {
 		}
 	case framePing:
 		if len(f) <= 1+maxPingToken {
-			// droppable: a lost answer is a lost ping, as over the network
-			s.sendDroppable(append([]byte(nil), f...))
+			// droppable: a lost answer is a lost ping, as over the network;
+			// answered the way it came, so each path's round trip is measured
+			echo := append([]byte(nil), f...)
+			if via == nil || !via.send(echo) {
+				s.sendWSDroppable(echo)
+			}
+		}
+	case frameRTC:
+		if via == nil {
+			s.handleSignal(f)
 		}
 	}
 }
