@@ -246,7 +246,8 @@ window.haloFeatures = Object.assign(window.haloFeatures || {}, { webJoin: true, 
 	notice.id = "halo-gamepad-notice";
 	notice.hidden = true;
 	notice.setAttribute("role", "status");
-	notice.style.cssText = "position: fixed; left: 16px; top: 16px; z-index: 10; pointer-events: none; padding: 6px 12px;"
+	// top centre, clear of the page's own corner buttons and stats
+	notice.style.cssText = "position: fixed; left: 50%; top: 56px; transform: translateX(-50%); z-index: 10; pointer-events: none; padding: 6px 12px;"
 		+ " border-radius: 4px; background: rgba(0, 0, 0, 0.75); color: #fff; font: 13px/1.3 system-ui, sans-serif; max-width: 60vw;";
 	let noticeTimer = 0;
 	const show = (text) => {
