@@ -537,6 +537,16 @@ void player_ui_get_active_player_profile(
 		if (web_player_name(name, MAXIMUM_PLAYER_PROFILE_NAME_LENGTH) > 0)
 			csmemcpy(((struct player_profile *)profile)->player_name, name, sizeof(name));
 	}
+	/* and the colour the player picked there (HALO_WEB_PLAYER_COLOR,
+	web_host.c): the one network games ask the host for
+	(network_client_manager.c, network_game_client_add_player) */
+	{
+		extern int web_player_color(void);
+		int color = web_player_color();
+
+		if (color >= 0)
+			((struct player_profile *)profile)->primary_color_index = (short)color;
+	}
 #endif
 	return;
 }

@@ -12,6 +12,8 @@ web build leaves out (tools/web_build.py PLATFORM_EXCLUDE).
 #include "gl.h"
 
 #include <string.h>
+#include <stdlib.h>
+#include <strings.h>
 #include <SDL3/SDL.h>
 #include <emscripten/html5.h>
 
@@ -271,4 +273,41 @@ int web_player_name(unsigned short *name, int capacity)
 	}
 	name[count] = 0;
 	return count;
+}
+
+/* ---------- the player's colour
+
+HALO_WEB_PLAYER_COLOR (the page passes it with the name: the colour the
+player chose on the site) is the player's colour in network games instead of
+the profile's (none: the host picks one at random), as the profile's colour
+picker would set it (player_ui.c, player_ui_get_active_player_profile). The
+index into player_profile.c's profile_color_table (0-17) or its name, in the
+order of the game's colour picker. Team games colour the players by team
+(game_engine.c, game_engine_player_get_change_color). -1: none, or not a
+colour. */
+int web_player_color(void)
+{
+	static char const *const names[] =
+	{
+		"white", "black", "red", "blue", "gray", "yellow", "green", "pink", "purple",
+		"cyan", "cobalt", "orange", "teal", "sage", "brown", "tan", "maroon", "salmon",
+	};
+	const char *text = getenv("HALO_WEB_PLAYER_COLOR");
+	int index;
+
+	if (!text || !*text)
+		return -1;
+	if (text[0] >= '0' && text[0] <= '9')
+	{
+		char *end;
+		long value = strtol(text, &end, 10);
+
+		return !*end && value >= 0 && value < (long)(sizeof(names) / sizeof(names[0])) ? (int)value : -1;
+	}
+	for (index = 0; index < (int)(sizeof(names) / sizeof(names[0])); index++)
+	{
+		if (!strcasecmp(text, names[index]) || (index == 4 && !strcasecmp(text, "grey")))
+			return index;
+	}
+	return -1;
 }

@@ -2824,6 +2824,21 @@ boolean network_game_server_dedicated_player(
 	return TRUE;
 }
 
+/* the colour of the player in a slot of the server's list: its index in
+player_profile.c's colour table (the one the player asked for, else the
+one the server picked), NONE for an empty slot */
+short network_game_server_dedicated_player_color(
+	struct network_game_server *server,
+	long slot)
+{
+	struct network_player *player;
+
+	if (!server || slot < 0 || slot >= MAXIMUM_NETWORK_PLAYER_COUNT)
+		return NONE;
+	player = &server->game.players[slot];
+	return network_player_is_valid(player) ? player->primary_color_index : NONE;
+}
+
 /* a machine in the server's game (FALSE if there is none of that index):
 its name's 32 characters and, while it has a connection, its IPv4 address
 and port (else 0) */

@@ -4,7 +4,8 @@ XINPUT_SDL.C
 Xbox controllers and the debug keyboard for the Linux build.
 
 Port 0 is always connected: it is the keyboard and mouse, merged with the
-first SDL gamepad when one is present. Further SDL gamepads take ports 1-3.
+first SDL gamepad when one is present. Further SDL gamepads take ports 1-3
+(not in the multiplayer-only web build: one player a browser).
 
 Keyboard and mouse (port 0):
 	W A S D          left stick          arrows           D-pad
@@ -414,8 +415,15 @@ static DWORD connected_gamepads(void)
 	int port;
 
 	/* the first pad shares port 0 with the keyboard */
+#if defined(HALO_WEB) && defined(HALO_MULTIPLAYER_ONLY)
+	/* the web build has one player a browser (no split screen): further
+	pads are not controllers of their own */
+	(void)port;
+	(void)count;
+#else
 	for (port = 1; port < count; port++)
 		mask |= 1UL << port;
+#endif
 	return mask;
 }
 

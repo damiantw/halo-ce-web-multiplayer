@@ -4663,12 +4663,44 @@ static void perform_filesystem_initialization(
 	return;
 }
 
+#if defined(HALO_WEB) && defined(HALO_MULTIPLAYER_ONLY)
+/* port/linux/game/auto_join.c's */
+boolean web_multiplayer_only(void);
+void web_menu_requested(short error_code);
+#endif
+
 void main_screen_shell_load(
 	void)
 {
 	boolean load_main_menu = TRUE;
 
 	ui_widgets_inhibit_processing(FALSE);
+#if defined(HALO_WEB) && defined(HALO_MULTIPLAYER_ONLY)
+	/* the web build has no main menu (port/linux/game/auto_join.c): at start
+	the main menu scenario loads without the intro movie, the menu or its
+	music, and the game joins the server the site's page picked by itself;
+	coming back here later (the pause menu's Quit, B in the lobby, a lost
+	connection or a refused join, with its error) leaves the page, unless
+	the auto-join starts over (auto_join.c, web_menu_requested) */
+	if (web_multiplayer_only())
+	{
+		ui_widgets_close_all();
+		if (main_screen_shell_first_load == TRUE)
+		{
+			perform_filesystem_initialization();
+			input_abstraction_reset_controller_detection_timer();
+		}
+		else
+		{
+			web_menu_requested(widget_globals.main_menu_deferred_error_code);
+		}
+		widget_globals.main_menu_deferred_error_code = NONE;
+		if (!virtual_keyboard_initialize())
+			error(_error_silent, "failed to initialize the virtual keyboard");
+		main_screen_shell_first_load = FALSE;
+		return;
+	}
+#endif
 	if (main_screen_shell_first_load == TRUE)
 	{
 		char const *command_line = shell_get_command_line();

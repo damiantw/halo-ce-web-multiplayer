@@ -22,10 +22,23 @@
 // Diagnostics, given with env= (the site's /play passes env= through):
 //   HALO_WEB_DPR=<n>   the device pixel ratio the game sees (1: a drawing
 //                      buffer of the canvas's CSS size on a Retina screen)
+// Player settings, given with env= or by the site's game bridge:
+//   HALO_WEB_PLAYER_NAME=<name>    the player's name in network games
+//   HALO_WEB_PLAYER_COLOR=<color>  the player's colour: 0-17 or its name
+//                                  (white, black, red, blue, gray, yellow,
+//                                  green, pink, purple, cyan, cobalt, orange,
+//                                  teal, sage, brown, tan, maroon, salmon)
+//   HALO_WEB_EXIT_URL=<url>        where the page goes when the player
+//                                  leaves the game (default: stay)
+//   HALO_WEB_MENUS=1               the multiplayer-only build's menus back
+//                                  (development)
 // What this build understands, for the site's game bridge (which runs before
 // the game starts, after this script): webJoin, the web.join setting
-// (HALO_WEB_JOIN=first, port/linux/game/auto_join.c).
-window.haloFeatures = Object.assign(window.haloFeatures || {}, { webJoin: true });
+// (HALO_WEB_JOIN=first, port/linux/game/auto_join.c); playerColor,
+// HALO_WEB_PLAYER_COLOR; leave, the "halo:leave" event: the build has no
+// main menu, it boots into the join and, when the player leaves the game,
+// asks the page to leave (web_library.js, web_leave_game).
+window.haloFeatures = Object.assign(window.haloFeatures || {}, { webJoin: true, playerColor: true, leave: true });
 (() => {
 	const params = new URLSearchParams(location.search);
 	const envParam = (name) => {
@@ -128,6 +141,23 @@ window.haloFeatures = Object.assign(window.haloFeatures || {}, { webJoin: true }
 		onAbort: (what) => print(`[web] abort: ${what}`),
 	};
 })();
+
+// Leaving: the game says the player left (web_library.js, web_leave_game).
+// The site's game bridge takes the event (preventDefault) and the site goes
+// back to its home page; standing alone, the page goes to HALO_WEB_EXIT_URL
+// if given and otherwise says so.
+window.addEventListener("halo:leave", (event) => {
+	setTimeout(() => {
+		if (event.defaultPrevented) return;
+		const exitUrl = (new URLSearchParams(location.search).get("env") || "").split(",")
+			.map((pair) => pair.split("=")).filter(([key]) => key === "HALO_WEB_EXIT_URL").map(([, ...value]) => value.join("="))[0];
+		if (exitUrl) {
+			location.assign(decodeURIComponent(exitUrl));
+		} else if (window.Module && window.Module.setStatus) {
+			window.Module.setStatus(event.detail && event.detail.reason === "no_game" ? "No game to join" : "You left the game");
+		}
+	}, 0);
+});
 
 // Pointer lock: the mouse aims. A browser locks the pointer only for a
 // request made while it handles a click or a key (user activation), and the

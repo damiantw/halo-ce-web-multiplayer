@@ -79,6 +79,7 @@ void network_game_server_dedicated_lobby_update(struct network_game_server *serv
 boolean network_game_server_dedicated_countdown(struct network_game_server *server, long *milliseconds_remaining);
 boolean network_game_server_dedicated_player(struct network_game_server *server, long slot, wchar_t *name,
 	long *machine_index, long *controller_index, long *team_index);
+short network_game_server_dedicated_player_color(struct network_game_server *server, long slot);
 boolean network_game_server_dedicated_machine(struct network_game_server *server, long machine_index, wchar_t *name,
 	unsigned long *address, word *port);
 boolean network_game_server_dedicated_remove_machine(struct network_game_server *server, long machine_index);
@@ -130,6 +131,7 @@ struct dedicated_known_player
 	boolean present;
 	short slot;
 	long team_index;
+	short color_index;
 	wchar_t name[12];
 	wchar_t machine_name[32];
 	unsigned long address;
@@ -144,6 +146,7 @@ struct dedicated_player_row
 	long machine_index;
 	long controller_index;
 	long team_index;
+	short color_index;
 	wchar_t name[12];
 	boolean connected;
 	boolean has_statistics;
@@ -638,6 +641,31 @@ static char const *dedicated_engine_name(
 	return engine_index >= 0 && engine_index < NUMBEROF(names) ? names[engine_index] : "unknown";
 }
 
+/* a player's colour, by its index in player_profile.c's colour table (the
+order of the game's colour picker); NULL for none */
+static char const *dedicated_color_name(
+	long color_index)
+{
+	static char const *const names[] =
+	{
+		"white", "black", "red", "blue", "gray", "yellow", "green", "pink", "purple",
+		"cyan", "cobalt", "orange", "teal", "sage", "brown", "tan", "maroon", "salmon",
+	};
+
+	return color_index >= 0 && color_index < NUMBEROF(names) ? names[color_index] : NULL;
+}
+
+static void dedicated_write_color(
+	long color_index)
+{
+	char const *name = dedicated_color_name(color_index);
+
+	if (name)
+		control_field_string("color", name);
+	else
+		control_field_null("color");
+}
+
 static char const *dedicated_team_name(
 	long team_index)
 {
@@ -819,6 +847,7 @@ static short dedicated_collect_players(
 		row->slot = slot;
 		row->connected = TRUE;
 		row->player_index = NONE;
+		row->color_index = network_game_server_dedicated_player_color(server, slot);
 		if (statistics)
 		{
 			data_iterator_new(&iterator, player_data);
@@ -853,6 +882,7 @@ static short dedicated_collect_players(
 			row->slot = NONE;
 			row->machine_index = player->network_player_data.machine_index;
 			row->controller_index = player->network_player_data.controller_index;
+			row->color_index = player->network_player_data.primary_color_index;
 			csmemcpy(row->name, player->name, sizeof(row->name));
 			row->name[NUMBEROF(row->name) - 1] = 0;
 			row->connected = FALSE;
@@ -884,6 +914,7 @@ static void dedicated_write_player(
 	control_field_utf16("name", (unsigned short const *)row->name, NUMBEROF(row->name));
 	control_field_integer("machine", row->machine_index);
 	control_field_integer("controller", row->controller_index);
+	dedicated_write_color(row->color_index);
 	if (has_teams)
 	{
 		control_field_integer("team", row->team_index);
@@ -1167,6 +1198,7 @@ static void dedicated_write_known_player(
 	control_field_utf16("name", (unsigned short const *)known->name, NUMBEROF(known->name));
 	control_field_integer("machine", key / MAXIMUM_LOCAL_PLAYERS);
 	control_field_integer("controller", key % MAXIMUM_LOCAL_PLAYERS);
+	dedicated_write_color(known->color_index);
 	if (known->team_index >= 0)
 	{
 		control_field_integer("team", known->team_index);
@@ -1221,6 +1253,7 @@ static void dedicated_update_players(
 		{
 			known->slot = (short)slot;
 			known->team_index = teams ? team_index : NONE;
+			known->color_index = network_game_server_dedicated_player_color(server, slot);
 			continue;
 		}
 		if (known->present)
@@ -1235,6 +1268,7 @@ static void dedicated_update_players(
 		known->present = TRUE;
 		known->slot = (short)slot;
 		known->team_index = teams ? team_index : NONE;
+		known->color_index = network_game_server_dedicated_player_color(server, slot);
 		csmemcpy(known->name, name, sizeof(name));
 		network_game_server_dedicated_machine(server, machine_index, known->machine_name, &known->address,
 			&known->port);
