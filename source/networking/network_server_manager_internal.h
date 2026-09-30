@@ -43,6 +43,12 @@ boolean network_game_server_accepts_late_joins(
 boolean network_game_server_client_machine_is_loaded(
 	struct network_game_server *server,
 	struct network_game_server_client_machine *machine);
+boolean network_game_server_takes_late_joiner(
+	struct network_game_server *server,
+	struct network_game_server_client_machine *machine);
+boolean network_game_server_client_machine_let_go(
+	struct network_game_server *server,
+	struct network_game_server_client_machine *machine);
 void network_game_server_late_joiner_loaded(
 	struct network_game_server *server,
 	struct network_game_server_client_machine *machine);

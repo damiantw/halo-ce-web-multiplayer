@@ -410,6 +410,10 @@ boolean game_engine_has_teams(
 
 boolean game_engine_allow_pause(
 	void);
+#ifdef HALO_LINUX
+boolean game_engine_game_is_ending(
+	void);
+#endif
 
 boolean game_engine_allow_dynamic_lighting(
 	void);

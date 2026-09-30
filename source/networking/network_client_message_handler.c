@@ -896,7 +896,16 @@ static boolean network_game_client_handle_message_server_machine_rejected(
 	boolean result = TRUE;
 
 	if (network_game_client_address_matches_server(client, source_address) &&
-		network_game_client_get_state(client, NULL) == _network_game_client_state_joining)
+		(network_game_client_get_state(client, NULL) == _network_game_client_state_joining
+#ifdef HALO_LINUX
+		/* or a game in progress that ended while this machine joined it: the
+		host lets it go (network_server_manager.c's
+		network_game_server_close_ended_game), and it is back to searching,
+		to join the next game */
+		|| (network_game_client_get_state(client, NULL) == _network_game_client_state_pregame &&
+			network_game_distributed_client())
+#endif
+		))
 	{
 		struct message_server_machine_rejected rejection;
 		short packet_type = _message_server_machine_rejected;
@@ -919,6 +928,20 @@ static boolean network_game_client_handle_message_server_machine_rejected(
 			result = FALSE;
 		}
 	}
+#ifdef HALO_LINUX
+	/* or a game in progress that ended while this machine loaded it (it
+	loads within a frame, network_game_client_game_has_started, and was
+	let go meanwhile): it leaves the game, and web.join joins the next one
+	(auto_join.c, network_game_client_take_let_go) */
+	else if (network_game_client_address_matches_server(client, source_address) &&
+		network_game_client_get_state(client, NULL) == _network_game_client_state_ingame &&
+		network_game_distributed_client())
+	{
+		network_event("the game ended as this machine joined it: leaving it, to join the next one");
+		network_game_client_set_let_go();
+		result = FALSE;
+	}
+#endif
 	else
 	{
 		network_event("ignoring a message_server_machine_rejected message; either a bad machine or we aren't joining");

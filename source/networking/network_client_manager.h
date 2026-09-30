@@ -38,6 +38,12 @@ short network_game_client_get_state(
 #ifdef HALO_LINUX
 boolean network_game_client_join_first_available_game(
 	void);
+short network_game_client_join_progress(
+	void);
+void network_game_client_set_let_go(
+	void);
+boolean network_game_client_take_let_go(
+	void);
 boolean network_game_client_set_team(
 	char team_index);
 /* whether the advertised game's host has this machine's network version

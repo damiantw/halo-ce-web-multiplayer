@@ -458,6 +458,9 @@ symbols in this file:
 #include "cseries/cseries_windows.h"
 #include "cseries/errors.h"
 #include "game/game.h"
+#ifdef HALO_LINUX
+#include "game/game_engine.h"
+#endif
 #include "game/game_engine_runtime.h"
 #include "game/player_queues_new.h"
 #include "game/players.h"
@@ -772,6 +775,13 @@ static void network_game_server_start_late_joiner(
 	struct network_game_server_client_machine *machine);
 static void network_game_server_keep_late_joiners_alive(
 	struct network_game_server *server);
+static void network_game_server_close_ended_game(
+	struct network_game_server *server);
+static void network_game_server_let_go_machines(
+	struct network_game_server *server);
+static void network_game_server_forget_let_go_machines(
+	struct network_game_server *server,
+	boolean remove);
 #endif
 static boolean network_game_server_add_new_client(
 	struct network_game_server *server,
@@ -865,6 +875,9 @@ struct network_game_server *network_game_server_create(
 
 			server->sent_start_game_message = FALSE;
 			server->time_of_first_client_loading_completion = 0;
+#ifdef HALO_LINUX
+			network_game_server_forget_let_go_machines(server, FALSE);
+#endif
 
 			if (!network_game_server_reset_to_pregame(server))
 			{
@@ -1052,11 +1065,16 @@ boolean network_game_server_idle(
 
 					case _network_game_server_state_ingame:
 #ifdef HALO_LINUX
+						network_game_server_close_ended_game(server);
+						network_game_server_let_go_machines(server);
 						network_game_server_keep_late_joiners_alive(server);
 #endif
 						break;
 
 					case _network_game_server_state_postgame:
+#ifdef HALO_LINUX
+						network_game_server_let_go_machines(server);
+#endif
 						success = network_game_server_idle_postgame_tasks(server);
 						break;
 
@@ -1950,11 +1968,114 @@ host's objects when it has loaded (network_objects.c). Until then the
 machine hears none of the game's messages (network_game_server_send_message_to_all_machines),
 which a machine in the pregame would refuse. */
 
+/* whether a new machine's join is accepted: not once the game is ending
+(network_game_server_close_ended_game) */
 boolean network_game_server_accepts_late_joins(
 	struct network_game_server *server)
 {
 	return network_game_distributed() && server->state == _network_game_server_state_ingame &&
-		network_game_server_game_is_open(server);
+		network_game_server_game_is_open(server) && !game_engine_game_is_ending();
+}
+
+/* the machines let go (by client machine slot): when, 0 none */
+static unsigned long network_game_server_let_go_time[MAXIMUM_NETWORK_MACHINE_COUNT];
+
+/* a distributed game that has ended (its end, then the scores) takes no more
+machines: a machine joining it now would be left out of the scores (it hears
+none of the game's messages until it has loaded) and then refuse the next
+lobby (the host's switch to the pregame is for machines in the postgame),
+dropping the game with its player never added. So the game closes, as the
+Xbox game closes a game when it starts: the list shows it closed and the
+lobby opens it again (network_game_server_setup_game_from_playlist); the
+machines still joining (not yet loaded) are let go, so that they find the
+game again when it is open (auto_join.c retries). */
+
+static void network_game_server_close_ended_game(
+	struct network_game_server *server)
+{
+	struct message_server_machine_rejected rejection = { _rejection_code_game_is_closed };
+	struct network_message *message;
+	long client_machine_index;
+
+	if (!network_game_distributed() || !network_game_server_game_is_open(server) ||
+		!game_engine_game_is_ending())
+	{
+		return;
+	}
+	network_game_server_close_game(server);
+	for (client_machine_index = 0; client_machine_index < MAXIMUM_NETWORK_MACHINE_COUNT; client_machine_index++)
+	{
+		struct network_game_server_client_machine *machine = &server->client_machines[client_machine_index];
+
+		/* (and never the host's own machine, when a player hosts) */
+		if (machine->machine_index == NONE ||
+			TEST_FLAG(machine->flags, _network_client_machine_level_loaded_bit) ||
+			machine->machine_index == network_game_client_get_local_machine_index())
+		{
+			continue;
+		}
+		network_event("the game has ended: machine #%d, still joining it, is let go", machine->machine_index);
+		/* (the game is closed: a machine of this build goes back to
+		searching, network_client_message_handler.c) */
+		message = create_network_game_message(_message_server_machine_rejected, &rejection, sizeof(rejection));
+		if (!message || !network_game_server_send_message_to_client_machine(server, machine, message))
+			network_event("failed to tell machine #%d that the game is closed", machine->machine_index);
+		/* (it disconnects when told; closing its connection now would drop
+		the message: network_game_server_let_go_machines closes it if it has
+		not in a few seconds) */
+		network_game_server_let_go_time[client_machine_index] = system_milliseconds() | 1;
+	}
+}
+
+static void network_game_server_let_go_machines(
+	struct network_game_server *server)
+{
+	unsigned long now = system_milliseconds();
+	long client_machine_index;
+
+	for (client_machine_index = 0; client_machine_index < MAXIMUM_NETWORK_MACHINE_COUNT; client_machine_index++)
+	{
+		struct network_game_server_client_machine *machine = &server->client_machines[client_machine_index];
+		unsigned long since = network_game_server_let_go_time[client_machine_index];
+
+		if (!since)
+			continue;
+		if (machine->machine_index == NONE)
+		{
+			network_game_server_let_go_time[client_machine_index] = 0;
+		}
+		else if ((long)(now - since) > 3L * MILLISECONDS_PER_SECOND)
+		{
+			network_game_server_let_go_time[client_machine_index] = 0;
+			network_event("machine #%d, let go, is still connected: closing its connection", machine->machine_index);
+			if (!network_game_server_remove_machine_from_game(server, &server->game.machines[machine->machine_index]))
+				network_event("failed to let machine #%d go", machine->machine_index);
+		}
+	}
+}
+
+/* no machine is being let go: a new server's, or the lobby opening again
+(the machines let go and still there are gone first, not taken into the
+lobby, where they would refuse its settings) */
+static void network_game_server_forget_let_go_machines(
+	struct network_game_server *server,
+	boolean remove)
+{
+	long client_machine_index;
+
+	for (client_machine_index = 0; client_machine_index < MAXIMUM_NETWORK_MACHINE_COUNT; client_machine_index++)
+	{
+		struct network_game_server_client_machine *machine = &server->client_machines[client_machine_index];
+
+		if (remove && network_game_server_let_go_time[client_machine_index] && machine->machine_index != NONE)
+		{
+			network_event("machine #%d, let go, is still connected as the lobby opens: closing its connection",
+				machine->machine_index);
+			if (!network_game_server_remove_machine_from_game(server, &server->game.machines[machine->machine_index]))
+				network_event("failed to let machine #%d go", machine->machine_index);
+		}
+		network_game_server_let_go_time[client_machine_index] = 0;
+	}
 }
 
 boolean network_game_server_client_machine_is_loaded(
@@ -1963,6 +2084,34 @@ boolean network_game_server_client_machine_is_loaded(
 {
 	(void)server;
 	return TEST_FLAG(machine->flags, _network_client_machine_level_loaded_bit);
+}
+
+/* whether the game has let the machine go (network_game_server_close_ended_game) */
+boolean network_game_server_client_machine_let_go(
+	struct network_game_server *server,
+	struct network_game_server_client_machine *machine)
+{
+	long slot = machine - server->client_machines;
+
+	return slot >= 0 && slot < MAXIMUM_NETWORK_MACHINE_COUNT && network_game_server_let_go_time[slot] != 0;
+}
+
+/* whether the messages of a machine joining the game in progress (its
+settings, its players, its loading) are taken: until it has loaded, and not
+once the game is ending. A machine not loaded when the game began ending is
+let go (network_game_server_close_ended_game, which runs in the server's idle:
+a message handled between the end and the next idle would otherwise add the
+machine's player to a game that then drops it, a player joining and leaving
+at once on every machine), and never taken again. (A new machine's join is
+network_game_server_accepts_late_joins.) */
+boolean network_game_server_takes_late_joiner(
+	struct network_game_server *server,
+	struct network_game_server_client_machine *machine)
+{
+	return network_game_distributed() && server->state == _network_game_server_state_ingame &&
+		!game_engine_game_is_ending() &&
+		!TEST_FLAG(machine->flags, _network_client_machine_level_loaded_bit) &&
+		!network_game_server_client_machine_let_go(server, machine);
 }
 
 /* whether players of the machine are still waiting to be added (after the
@@ -4005,6 +4154,9 @@ boolean network_game_server_reset_to_pregame(
 
 	if (server->state == _network_game_server_state_postgame)
 	{
+#ifdef HALO_LINUX
+		network_game_server_forget_let_go_machines(server, TRUE);
+#endif
 		message = create_network_game_message(
 			_message_server_switch_to_pregame,
 			&message_packet,
