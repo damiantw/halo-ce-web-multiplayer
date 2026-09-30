@@ -783,6 +783,33 @@ static boolean dedicated_game_has_teams(
 
 /* ---------- players */
 
+/* a team's score in the team game in progress, for the team balance
+(network_server_manager.c, network_game_server_pick_team): FALSE when there
+is no such game or no player on that team to ask */
+boolean dedicated_team_score(
+	short team_index,
+	long *score)
+{
+	struct data_iterator iterator;
+	struct player_datum *player;
+
+	if (!game_engine || !game_in_progress() || !player_data || !player_data->valid ||
+		!dedicated_game_has_teams() || !game_engine->get_player_score)
+	{
+		return FALSE;
+	}
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+	{
+		if (!player->quit_out_of_game && player->team_index == team_index)
+		{
+			*score = game_engine->get_player_score(iterator.datum_index, _get_score_team);
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
 static boolean dedicated_statistics_available(
 	struct network_game_server *server)
 {

@@ -403,6 +403,19 @@ file, or with a map that is not a multiplayer map (a campaign level such as
 `a10`, or `ui`). If no entry remains, the rotation is `bloodgulch:slayer`. Team
 games start only when each team has a player.
 
+**Teams.** A player who joins goes on the team with fewer players. On a tie,
+the player goes to the team that is behind on score (in a game in progress),
+otherwise the teams alternate. A player can ask for a team: the join request's
+`team_index` is `0` (red) or `1` (blue), and the original clients send none.
+The web build sends `HALO_WEB_PLAYER_TEAM`. The server honours the request
+unless it would make the teams differ by more than one player. Players who
+leave can make the teams uneven. When they differ by more than one player,
+the server moves players from the bigger team to the smaller one, in the lobby
+and between games. It moves players who asked for the smaller team first, then those who did not
+ask for the bigger one, the last in the player list first. So a team game such as CTF starts once two
+players are in, even after others left. The original's side swap between
+games (red ↔ blue) stays. The log's `team balance:` lines say what happened.
+
 The dedicated server always uses these settings, and ignores the file and
 the environment for them:
 

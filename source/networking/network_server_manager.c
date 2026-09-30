@@ -1745,6 +1745,155 @@ void network_game_server_handle_client_update_packet(
 	return;
 }
 
+#ifdef HALO_LINUX
+/* ---------- port: team balance
+
+Who joins a team game goes on the team with fewer players; on a tie, the
+one behind on score (a game in progress: dedicated_server.c,
+dedicated_team_score), else the teams alternate as the original does. A
+player's request (a web client's HALO_WEB_PLAYER_TEAM arrives as the join
+request's team_index: the original clients send NONE) is honoured while it
+keeps the teams within one player of each other. Between games, and in the
+lobby, the teams are evened out again (network_game_server_rebalance_teams)
+when players who left made them differ by more than one. */
+
+/* dedicated_server.c: a team's score in the game in progress */
+boolean dedicated_team_score(short team_index, long *score);
+
+/* the team each machine's players asked for (NONE: any), kept for the rebalance */
+static char network_game_server_requested_team[MAXIMUM_NETWORK_MACHINE_COUNT][MAXIMUM_NUMBER_OF_LOCAL_PLAYERS];
+
+static void network_game_server_count_teams(
+	struct network_game_server *server,
+	struct network_player const *except,
+	short counts[NUMBER_OF_MULTIPLAYER_TEAMS])
+{
+	long index;
+
+	counts[_team_red] = counts[_team_blue] = 0;
+	for (index = 0; index < MAXIMUM_NETWORK_PLAYER_COUNT; index++)
+	{
+		struct network_player const *other = &server->game.players[index];
+
+		if (!network_player_is_valid(other) || other->team_index < 0 ||
+			other->team_index >= NUMBER_OF_MULTIPLAYER_TEAMS)
+		{
+			continue;
+		}
+		if (except && other->machine_index == except->machine_index &&
+			other->controller_index == except->controller_index)
+		{
+			continue;
+		}
+		counts[other->team_index]++;
+	}
+}
+
+static char network_game_server_requested_team_of(
+	struct network_player const *player)
+{
+	if (player->machine_index < 0 || player->machine_index >= MAXIMUM_NETWORK_MACHINE_COUNT ||
+		player->controller_index < 0 || player->controller_index >= MAXIMUM_NUMBER_OF_LOCAL_PLAYERS)
+	{
+		return NONE;
+	}
+	return network_game_server_requested_team[player->machine_index][player->controller_index];
+}
+
+/* the team for a player who joins (its team_index: the team it asked for, or NONE) */
+long network_game_server_pick_team(
+	struct network_game_server *server,
+	struct network_player const *player,
+	long alternate_team_index)
+{
+	short counts[NUMBER_OF_MULTIPLAYER_TEAMS];
+	long requested = player->team_index;
+	long picked;
+	long red_score, blue_score;
+
+	if (player->machine_index >= 0 && player->machine_index < MAXIMUM_NETWORK_MACHINE_COUNT &&
+		player->controller_index >= 0 && player->controller_index < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS)
+	{
+		network_game_server_requested_team[player->machine_index][player->controller_index] =
+			requested >= 0 && requested < NUMBER_OF_MULTIPLAYER_TEAMS ? (char)requested : NONE;
+	}
+	network_game_server_count_teams(server, player, counts);
+
+	if (requested >= 0 && requested < NUMBER_OF_MULTIPLAYER_TEAMS &&
+		counts[requested] + 1 - counts[1 - requested] <= 1)
+	{
+		picked = requested;
+	}
+	else if (counts[_team_red] != counts[_team_blue])
+	{
+		picked = counts[_team_red] < counts[_team_blue] ? _team_red : _team_blue;
+	}
+	else if (dedicated_team_score(_team_red, &red_score) && dedicated_team_score(_team_blue, &blue_score) &&
+		red_score != blue_score)
+	{
+		picked = red_score < blue_score ? _team_red : _team_blue;
+	}
+	else
+	{
+		picked = alternate_team_index >= 0 && alternate_team_index < NUMBER_OF_MULTIPLAYER_TEAMS ?
+			alternate_team_index : _team_red;
+	}
+	network_event("team balance: player on %s (red %d, blue %d, asked for %s)",
+		picked == _team_red ? "red" : "blue", counts[_team_red], counts[_team_blue],
+		requested == _team_red ? "red" : requested == _team_blue ? "blue" : "any");
+	return picked;
+}
+
+/* evens out the teams of a team game when they differ by more than one
+player: moves players from the bigger team, those who asked for the other
+team first, then those who did not ask for this one, the last in the list
+first. The number of players moved. */
+long network_game_server_rebalance_teams(
+	struct network_game_server *server)
+{
+	long moved = 0;
+
+	if (!server || !server->game.variant.universal_variant.teams)
+		return 0;
+	for (;;)
+	{
+		short counts[NUMBER_OF_MULTIPLAYER_TEAMS];
+		long bigger, index, pass, candidate = NONE;
+
+		network_game_server_count_teams(server, NULL, counts);
+		if (counts[_team_red] - counts[_team_blue] <= 1 && counts[_team_blue] - counts[_team_red] <= 1)
+			break;
+		bigger = counts[_team_red] > counts[_team_blue] ? _team_red : _team_blue;
+		/* pass 0: someone who asked for the other team; pass 1: someone who
+		did not ask for this one; pass 2: anyone */
+		for (pass = 0; pass < 3 && candidate == NONE; pass++)
+		{
+			for (index = MAXIMUM_NETWORK_PLAYER_COUNT - 1; index >= 0; index--)
+			{
+				struct network_player const *player = &server->game.players[index];
+				char requested = network_game_server_requested_team_of(player);
+
+				if (network_player_is_valid(player) && player->team_index == bigger &&
+					(pass == 2 || (pass == 0 && requested == 1 - bigger) || (pass == 1 && requested != bigger)))
+				{
+					candidate = index;
+					break;
+				}
+			}
+		}
+		if (candidate == NONE)
+			break;
+		server->game.players[candidate].team_index = (char)(1 - bigger);
+		moved++;
+	}
+	if (moved)
+	{
+		network_event("team balance: moved %ld player(s) to even the teams", moved);
+	}
+	return moved;
+}
+
+#endif
 boolean network_game_server_add_player_to_game(
 	struct network_game_server *server,
 	struct network_game_server_client_machine *machine,
@@ -1759,9 +1908,21 @@ boolean network_game_server_add_player_to_game(
 
 	if (machine->machine_index == player->machine_index)
 	{
+#ifdef HALO_LINUX
+		/* port: the team with fewer players (a tie: the one behind on score,
+		else alternating), or the one the player asked for while that keeps
+		the teams within one player (network_game_server_pick_team). The
+		original alternates whatever the teams are, so players who leave can
+		leave a team game with one side empty, which never starts */
+		player->team_index = (char)network_game_server_pick_team(server, player,
+			network_game_server_next_team_index);
+		network_game_server_next_team_index =
+			(player->team_index + 1) % NUMBER_OF_MULTIPLAYER_TEAMS;
+#else
 		player->team_index = (char)network_game_server_next_team_index;
 		network_game_server_next_team_index =
 			(network_game_server_next_team_index + 1) % NUMBER_OF_MULTIPLAYER_TEAMS;
+#endif
 
 		if (!player->name[0])
 			get_unique_random_name(server, player);
@@ -2772,6 +2933,13 @@ void network_game_server_dedicated_lobby_update(
 	{
 		server->countdown_state.paused = FALSE;
 		network_event("dedicated server: countdown unpaused");
+	}
+	/* players who left the lobby may have left a team game with one side
+	empty, which never starts (server_needs_more_teams): even the teams */
+	if (network_game_server_rebalance_teams(server) &&
+		!network_game_server_send_game_data_pregame(server))
+	{
+		network_event("dedicated server: failed to send the rebalanced teams");
 	}
 	if (!server->countdown_state.active && server_ok_to_countdown(server))
 	{
@@ -4213,6 +4381,8 @@ boolean network_game_server_reset_to_pregame(
 			if (network_game_server_setup_game_from_playlist(server))
 			{
 #ifdef HALO_LINUX
+				/* port: players who left may have made the teams uneven */
+				network_game_server_rebalance_teams(server);
 				/* the settings record goes out in pieces */
 				if (network_game_server_send_game_settings_to_all_machines(server, &server->game, sizeof(server->game)))
 #else
@@ -4278,6 +4448,10 @@ boolean network_game_server_reset_to_pregame(
 				}
 			}
 		}
+#ifdef HALO_LINUX
+		/* port: players who left may have made the teams uneven */
+		network_game_server_rebalance_teams(server);
+#endif
 	}
 
 	return success;
