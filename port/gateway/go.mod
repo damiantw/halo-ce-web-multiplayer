@@ -1,4 +1,4 @@
-module github.com/damiantw/halo-ce-universal/port/gateway
+module github.com/damiantw/halo-ce-web-multiplayer/port/gateway
 
 go 1.24.0
 
