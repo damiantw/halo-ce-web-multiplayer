@@ -7,7 +7,8 @@ system link machine on a loopback address.
 
 It lives in this repository because the frame format is defined by `posix_web_net.c`: the two change
 together, are tested together, and the daemon image builds the gateway beside the game binary
-(`go build ./port/gateway`, a static binary, one dependency: `github.com/coder/websocket`).
+(`go build ./port/gateway`, a static binary; dependencies: `github.com/coder/websocket`, and Pion
+(`github.com/pion/webrtc/v4`) for the data channels, below).
 
 ## Addressing
 
@@ -37,7 +38,59 @@ One WebSocket message is one frame; numbers are big-endian, addresses as in `soc
 4 DATA    stream4, payload
 5 CLOSE   stream4
 6 HELLO   ip4                 (gateway -> client: the session's address)
+7 PING    token (<= 16 bytes) (echoed the way it came: WebSocket or data channel)
+8 RTC     JSON                (WebRTC signaling, WebSocket only; below)
 ```
+
+## WebRTC
+
+A WebSocket is TCP: a lost packet holds up everything behind it until it is resent (the minimum
+retransmission timeout is 200 ms), so the game's per-tick datagrams arrive late and in bursts rather
+than not at all. Once the WebSocket is open, the page offers a **data channel** (label `halo`,
+`ordered: false`, `maxRetransmits: 0`: UDP's behaviour) and, when it opens, sends and receives the
+**UDP frames and PING** over it. Everything else (HELLO, the TCP streams, signaling) stays on the
+WebSocket, which also keeps accepting datagrams, so a switch either way loses only what is in flight.
+The join token, the addressing and the token URL are unchanged: the channel belongs to the WebSocket's
+session.
+
+Signaling is frame 8, a JSON object:
+
+```
+client -> gateway   {"type":"offer","sdp":...}          (the page makes the channel)
+                    {"type":"candidate","candidate":{}} (optional; not needed by an ICE-lite gateway)
+                    {"type":"bye","reason":...}         the page gave up on the channel
+gateway -> client   {"type":"answer","sdp":...}
+                    {"type":"bye","reason":...}         "unavailable" (no WebRTC here), or it failed
+```
+
+- **One UDP port for all sessions.** The gateway is an **ICE-lite** agent on `HALO_GATEWAY_RTC_LISTEN`
+  (Pion's UDP mux: sessions are told apart by ICE user name), and its answer carries one **host
+  candidate** per address in `HALO_GATEWAY_RTC_PUBLIC_IPS`, on `HALO_GATEWAY_RTC_PORT`. The browser
+  connects to that; nothing else needs to be open, and no STUN or TURN server is involved. Inside a
+  container the public addresses replace the container's (the port is published with DNAT, so the
+  gateway still sees the browsers' own addresses).
+- **The port: 3478/udp.** 443/udp is Caddy's HTTP/3 on the production host, 7780/7781 are the gateway's
+  WebSocket and control API (TCP, but one number each is less confusing), and 3478 is the IANA
+  STUN/TURN port: networks that let video calls through tend to allow it. A TURN server added later
+  can take 5349 or 443/tcp elsewhere.
+- **Worker and page.** Browsers have no `RTCPeerConnection` in workers, and the WebSocket lives in the
+  game's worker (`web_library.js`). The peer connection is made on the page's main thread
+  (`webrtc_main_start`, proxied) and the frames cross between it and the worker over a
+  `BroadcastChannel` named for the attempt.
+- **Fallback.** The page gives up when the channel is not open 4 s after the WebSocket opened (UDP
+  blocked, an old gateway, `HALO_WEB_RTC=0`) or when it fails or hears nothing for 2.5 s later: it
+  tells the gateway (`bye`) and sends the datagrams over the WebSocket again, and the game carries on.
+  The page's main thread (not the game's worker, which can be busy loading a map) sends a keepalive
+  PING (`7 'k'`) every half second, which the gateway echoes. The gateway gives up on a channel it
+  hears nothing from for 3 s, on a failed connection, or on a closed channel, and says `bye`.
+  The next attempt is made on the next WebSocket connection.
+- **Congestion.** A frame waiting behind more than 256 KiB in a channel's send buffer is dropped,
+  as a router would.
+- **Observability.** `webstats_publish` adds `net.transport` (`"rtc"` or `"ws"`) for the page's
+  overlay; the page's console logs `[webnet] datagrams over WebRTC (N ms)` and
+  `[webnet] WebRTC lost (reason); datagrams over the WebSocket`. The gateway logs `rtc open`
+  (with `setup_ms`) and `rtc closed` (reason, frames), `GET /sessions` gives each session's
+  `Transport`, and `GET /metrics` `rtc_sessions`, `rtc_opened` and `rtc_fallbacks`.
 
 ## Join tokens
 
@@ -72,6 +125,9 @@ Environment (defaults in brackets):
 | `HALO_GATEWAY_MAX_CLIENTS` [256], `HALO_GATEWAY_MAX_FRAME` [65536] | limits (a larger frame closes with 1009) |
 | `HALO_GATEWAY_FRAME_RATE` [600/s], `HALO_GATEWAY_BYTE_RATE` [2 MiB/s] | per-session token buckets (burst 2x); excess frames are dropped and counted |
 | `HALO_GATEWAY_LOG_LEVEL` [info] | JSON logs (slog): session opened/closed with sub, sid, address, frame counts, drops, reason |
+| `HALO_GATEWAY_RTC_LISTEN` [empty: off] | the WebRTC UDP address, e.g. `0.0.0.0:3478` |
+| `HALO_GATEWAY_RTC_PUBLIC_IPS` | comma-separated addresses announced as host candidates (IPv4 and/or IPv6); empty: the interfaces' |
+| `HALO_GATEWAY_RTC_PORT` [the bound port] | the port announced, when a port mapping changes it |
 
 Also per session: 16 streams, 8 UDP source ports, 60 s idle timeout, 5 s dial timeout.
 SIGINT/SIGTERM closes every session with 1001 and exits; a second signal exits at once.
@@ -88,7 +144,9 @@ GET    /metrics                       counters
 ```
 
 Tests: `cd port/gateway && go test -race ./...` (frames, tokens, registry, buckets, bad tokens, address
-allocation and the client limit, discovery fan-out and hub broadcasts over real UDP, streams, limits, shutdown).
+allocation and the client limit, discovery fan-out and hub broadcasts over real UDP, streams, limits, shutdown;
+WebRTC with a Pion client: the answer's candidates, datagrams and PING both ways over the channel, streams
+refused on it, and the fallbacks: a closed channel, a silent one, the page's `bye`, no WebRTC, a bad offer).
 
 ## In the Laravel daemon container
 
@@ -191,4 +249,5 @@ Remaining gaps:
 - Two clients in one tab set are memory heavy (~0.8 GB each in headless Chrome with SwiftShader).
 - The canvas-goes-black-on-click report did not reproduce in headless Chrome (no pointer lock there); it needs a
   real browser to look at.
-- WebRTC data channels (lower latency than TCP WebSocket) are the next step (wasm-spike.md, "WebRTC later").
+- WebRTC data channels carry the datagrams when UDP 3478 reaches the gateway (above, "WebRTC"); there is no
+  TURN yet, so networks that block it stay on the WebSocket.

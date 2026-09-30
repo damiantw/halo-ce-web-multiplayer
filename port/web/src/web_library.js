@@ -84,8 +84,8 @@ addToLibrary({
 	// webrtc_main_start: the peer connection, on the page's main thread. It
 	// makes the offer and its data channel, and relays frames between the
 	// channel and the game's worker. It sends a keepalive PING (7 'k') every
-	// second, which the gateway echoes: either end hearing nothing for a few
-	// seconds gives the channel up (the game's worker may be busy loading a
+	// half second, which the gateway echoes: hearing nothing for 2.5 s (the
+	// gateway: 3 s) gives the channel up (the game's worker may be busy loading a
 	// map, so the main thread keeps this time, not the game).
 	webrtc_main_start__proxy: "async",
 	webrtc_main_start: (id) => {
@@ -122,9 +122,9 @@ addToLibrary({
 			status.transport = "rtc";
 			channel.postMessage({ t: "open" });
 			keepalive = setInterval(() => {
-				if (performance.now() - lastRx > 4000) down("no traffic");
+				if (performance.now() - lastRx > 2500) down("no traffic");
 				else if (dc.readyState === "open") dc.send(keepaliveFrame);
-			}, 1000);
+			}, 500);
 		};
 		dc.onclose = () => down("channel closed");
 		dc.onmessage = (event) => {

@@ -8,7 +8,7 @@ package main
 // PING go over it, both ways; the WebSocket still accepts them, so a switch
 // in either direction loses nothing but what was in flight. Should the
 // channel fail or go quiet (no frame for rtcStaleAfter; the page sends a
-// keepalive PING every second), both ends go back to the WebSocket, and the
+// keepalive PING every half second), both ends go back to the WebSocket, and the
 // game carries on.
 //
 // Signaling is frame 8, a JSON object, over the WebSocket:
@@ -51,9 +51,9 @@ const (
 	rtcMaxSignal   = 16 * 1024
 )
 
-// the page sends a keepalive every second; a channel this long silent is
-// given up (a variable for the tests)
-var rtcStaleAfter = 5 * time.Second
+// the page sends a keepalive every half second; a channel this long silent
+// is given up (the page gives up after 2.5 s; a variable for the tests)
+var rtcStaleAfter = 3 * time.Second
 
 type rtcConfig struct {
 	Listen    string       // UDP address to bind (":3478"); empty: no WebRTC
