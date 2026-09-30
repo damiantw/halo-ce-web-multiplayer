@@ -210,6 +210,13 @@ static const struct config_setting config_settings[] =
 		"Shut the dedicated server down (as SIGTERM does) when its command input\n"
 		"ends, when the process that started it has gone." },
 
+	{ "web.join", _config_string, "\"\"", "HALO_WEB_JOIN", _environment_value, _platform_all,
+		"Join a game without the menus (port/linux/game/auto_join.c): \"first\" joins\n"
+		"the first game found (the site's /play sets it: its join token shows only\n"
+		"the server the player picked); empty for none." },
+	{ "debug.network_log", _config_boolean, "false", "HALO_NETWORK_LOG", _environment_value, _platform_all,
+		"Log where every player is (and the netcode's counters) every second in a\n"
+		"game, as the automated tests do (port/linux/game/network_test.c)." },
 	{ "debug.network_test", _config_string, "\"\"", "HALO_NETWORK_TEST", _environment_value, _platform_all,
 		"Automated system link sessions for testing (port/linux/game/network_test.c):\n"
 		"\"host:<map>\" hosts a game on that map, \"join\" joins the first game found;\n"

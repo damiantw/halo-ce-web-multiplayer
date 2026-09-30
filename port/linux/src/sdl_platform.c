@@ -20,6 +20,7 @@ and the debug keyboard that the game's console reads.
 #include <SDL3/SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 #include <string.h>
 #if !defined(HALO_ANDROID) && !defined(_WIN32)
 #include <signal.h>
@@ -642,8 +643,18 @@ void platform_video_drawable_size(int *width, int *height)
 rate, the mean frame time, the 1% low (the frame rate of the slowest 1% of
 the last WEB_FRAME_HISTORY frames), the longest frame of the second and the
 frame count, then the gateway socket's counters (web_library.js,
-webnet_stats) and the sends refused for no socket (posix_web_net.c) */
+webnet_stats) and the sends refused for no socket (posix_web_net.c).
+
+The 1% low starts over when a map loads (game.c's game_new_map_count: the
+game starts, or joins one) and leaves out the first WEB_FRAME_SETTLE_NS
+after that and after start, whose frames are the loading's hitches rather
+than the game's: until WEB_FRAME_MINIMUM frames count it is not a number
+(the page shows a dash). */
 #define WEB_FRAME_HISTORY 300
+#define WEB_FRAME_SETTLE_NS 3000000000ull
+#define WEB_FRAME_MINIMUM 60
+
+extern unsigned long game_new_map_count;
 
 extern void webnet_stats(double *out);
 extern void webstats_publish(const double *values, int count);
@@ -663,6 +674,8 @@ static void web_frame_statistics(void)
 	static unsigned long count, next, window_frames;
 	static Uint64 previous, window_start;
 	static float window_max;
+	static unsigned long maps_seen;
+	static Uint64 settle_until;
 	/* static: the page reads them after this returns (the publish is
 	asynchronous), and by the next second they are rewritten */
 	static double values[16];
@@ -671,16 +684,26 @@ static void web_frame_statistics(void)
 	if (!previous)
 	{
 		previous = window_start = now;
+		settle_until = now + WEB_FRAME_SETTLE_NS;
 		return;
+	}
+	if (maps_seen != game_new_map_count)
+	{
+		maps_seen = game_new_map_count;
+		count = next = 0;
+		settle_until = now + WEB_FRAME_SETTLE_NS;
 	}
 	{
 		float milliseconds = (float)((double)(now - previous) / 1e6);
 
 		previous = now;
-		history[next] = milliseconds;
-		next = (next + 1) % WEB_FRAME_HISTORY;
-		if (count < WEB_FRAME_HISTORY)
-			count++;
+		if (now >= settle_until)
+		{
+			history[next] = milliseconds;
+			next = (next + 1) % WEB_FRAME_HISTORY;
+			if (count < WEB_FRAME_HISTORY)
+				count++;
+		}
 		window_frames++;
 		if (milliseconds > window_max)
 			window_max = milliseconds;
@@ -698,7 +721,7 @@ static void web_frame_statistics(void)
 			sum += sorted[i];
 		values[0] = window_frames * 1000.0 / elapsed;
 		values[1] = elapsed / window_frames;
-		values[2] = sum > 0.0 ? 1000.0 * worst / sum : 0.0;
+		values[2] = count < WEB_FRAME_MINIMUM ? NAN : sum > 0.0 ? 1000.0 * worst / sum : 0.0;
 		values[3] = window_max;
 		values[4] = (double)window_frames;
 		webnet_stats(values + 5);
