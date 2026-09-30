@@ -30,7 +30,6 @@ from tools.project_x86 import (
     is_windows,
 )
 import os
-import subprocess
 import sys
 # arguments
 parser = argparse.ArgumentParser()
@@ -226,12 +225,6 @@ for build_project in build_config["projects"]:
 # build file generation
 
 if args.mode == "configure":
-    if sln.matching and any(
-        obj["status"] != "MISSING" and obj["name"].startswith("libs/d3d8/")
-        for project in build_config["projects"]
-        for obj in project["objects"]
-    ):
-        subprocess.run([sys.executable, "libs/d3d8/generate_sdk_overlay.py"], check=True)
     # Write build.ninja and objdiff.json
     generate_build(sln)
 elif args.mode == "progress":

@@ -13,16 +13,16 @@ Screenshots (from the user's own disc data; not committed):
 
 | file | what it shows |
 |---|---|
-| `/workspace/halo-data/shots/wasm_final_01.png` | main menu with widgets (HALO logo, Campaign/Multiplayer/Settings) |
-| `/workspace/halo-data/shots/wasm_mainmenu_01.png` | same, GL-error checking on |
-| `/workspace/halo-data/shots/wasm_input_02.png` | after ArrowDown+Enter: the Select Profile screen (small text garbled: see "texture cache") |
-| `/workspace/halo-data/shots/wasm_profile_text_nocache.png` | same screen with `HALO_TEXTURE_NO_CACHE=1`: the text is correct, which confirms the cause |
-| `/workspace/halo-data/shots/wasm_menu_00.png`, `wasm_run7_02.png` | earlier milestones: the menu background only |
+| `shots/wasm_final_01.png` | main menu with widgets (HALO logo, Campaign/Multiplayer/Settings) |
+| `shots/wasm_mainmenu_01.png` | same, GL-error checking on |
+| `shots/wasm_input_02.png` | after ArrowDown+Enter: the Select Profile screen (small text garbled: see "texture cache") |
+| `shots/wasm_profile_text_nocache.png` | same screen with `HALO_TEXTURE_NO_CACHE=1`: the text is correct, which confirms the cause |
+| `shots/wasm_menu_00.png`, `wasm_run7_02.png` | earlier milestones: the menu background only |
 
 ## How to build and run
 
 ```sh
-source /workspace/emsdk/emsdk_env.sh          # emsdk "latest" = emcc 6.0.10, SDL3 port 3.4.2
+source <emsdk>/emsdk_env.sh                    # emsdk "latest" = emcc 6.0.10, SDL3 port 3.4.2
 python3 configure.py && ninja web              # -> build/web/halo.{js,wasm} (3.0 MB wasm, 0.3 MB js), ~10 s on 8 cores
 python3 port/web/serve.py --maps /path/to/maps --port 8000   # COOP/COEP/CORP, Range, /maps/index.json
 # open http://127.0.0.1:8000/   (only ui.map is fetched first, other maps on demand; options: ?preload=all  ?env=A=1,B=2  ?init=<console commands>)

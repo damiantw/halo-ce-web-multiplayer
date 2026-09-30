@@ -96,7 +96,7 @@ gateway -> client   {"type":"answer","sdp":...}
   `HALO_GATEWAY_RTC_PUBLIC_IPS`: the answer then carries them, not the container's address, and
   Docker's DNAT delivers the browser's packets to the gateway unchanged (tested end to end: the gateway
   and a server in a container on its own bridge network, a browser on the host connecting to the host's
-  address; `/workspace/rtc-e2e/docker-nat.sh`). With a different host port, set
+  address). With a different host port, set
   `HALO_GATEWAY_RTC_PORT` to it.
 - **Congestion.** A frame waiting behind more than 256 KiB in a channel's send buffer is dropped,
   as a router would.
@@ -268,7 +268,6 @@ in headless Chrome through `port/web/serve.py`: the browser finds the server in 
 fan-out, joins over the relayed TCP stream, the server logs `player_joined` (address `127.64.0.2`) and
 `game_started`, the client downloads bloodgulch.map on demand and plays (HUD, motion tracker, the netcode's
 per-second ticks). Two browser clients (`127.64.0.2`, `127.64.0.3`) in the same game see each other move.
-Screenshots and logs: `/workspace/halo-data/shots/gateway_*`.
 
 Fixed on the way:
 
@@ -282,8 +281,8 @@ Fixed on the way:
 
 Remaining gaps:
 
-- In-game rendering in the browser now matches the native client (pairs in
-  `/workspace/halo-data/shots/render_native_*.png` and `render_web_*.png`; causes and fixes in wasm-spike.md,
+- In-game rendering in the browser now matches the native client (compared
+  screenshot by screenshot, not committed; causes and fixes in wasm-spike.md,
   items 1 and 5). WebGL's refusal to mix constant colour and constant alpha blend factors (the plasma weapons'
   meters) is worked around in `apply_raster_state`.
 - Two clients in one tab set are memory heavy (~0.8 GB each in headless Chrome with SwiftShader).
