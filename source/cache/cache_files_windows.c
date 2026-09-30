@@ -205,7 +205,16 @@ enum
 
 	SOLO_CACHE_FILE_MAXIMUM_SIZE = 0x11600000,
 	MAIN_MENU_CACHE_FILE_MAXIMUM_SIZE = 0x02300000,
+#ifdef HALO_LINUX
+	/* (the native and web builds take larger multiplayer maps than the
+	Xbox's 47 MiB slots: community maps such as Halo CE+ X decompress to up
+	to 64 MiB. 0x07300000 is the size that mod's patched executable gives
+	them. The slots are sparse files natively and zero-filled, lazily
+	committed buffers on the web, so an unused size costs next to nothing) */
+	MULTIPLAYER_CACHE_FILE_MAXIMUM_SIZE = 0x07300000,
+#else
 	MULTIPLAYER_CACHE_FILE_MAXIMUM_SIZE = 0x02F00000,
+#endif
 };
 
 /* ---------- macros */
