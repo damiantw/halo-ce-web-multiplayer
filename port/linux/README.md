@@ -113,7 +113,7 @@ to 4.
 | escape | start | pause menu |
 | F1 | back | |
 | \` | | open the developer console |
-| F12 | | release or capture the mouse |
+| F12 | | release or capture the mouse (not in the web build: there Escape releases it and a click captures it) |
 | F11 | | change between fullscreen and window |
 
 One movement of the mouse wheel changes the weapon one time. A second

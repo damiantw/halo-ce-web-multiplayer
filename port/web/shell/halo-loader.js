@@ -137,7 +137,8 @@ window.haloFeatures = Object.assign(window.haloFeatures || {}, { webJoin: true }
 // locks it here. That click only takes the mouse: the game does not see it
 // (no shot). Once the canvas is locked, SDL's pointerlockchange handler sees
 // it and its motion events carry movementX/Y. Esc (the browser's) releases
-// the mouse, and so does F12 (the game lets go of it). While the game wants
+// the mouse; that is the only key that does (F12 is the browser's tools, the
+// game does not take it on the web). While the game wants
 // the mouse and does not have it, a hint says to click.
 (() => {
 	const canvas = document.getElementById("canvas");
