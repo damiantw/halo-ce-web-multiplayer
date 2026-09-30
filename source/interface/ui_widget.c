@@ -4948,6 +4948,12 @@ static long search_and_replace(
 	return replacements;
 }
 
+#ifdef HALO_WEB
+static wchar_t const *ui_key_icon_key_name(struct widget_instance *widget);
+static wchar_t const *ui_key_label_key_name(struct widget_instance *widget,
+	struct ui_widget_definition const *definition, short *icon_x0_delta);
+#endif
+
 static void widget_instance_render_text_box(
 	struct widget_instance *widget,
 	struct ui_widget_definition *definition,
@@ -5078,6 +5084,39 @@ static void widget_instance_render_text_box(
 				SECONDS_PER_MILLISECOND * 3.0f) + 1.5f) * 0.4f) * color.alpha;
 	}
 	draw_string_set_draw_mode(font_index, NONE, justification, 0, &color);
+#ifdef HALO_WEB
+	{
+		/* a screen key's label ("=CANCEL" right of the B button's icon)
+		while the player uses the keyboard: the key's name takes the icon's
+		place ("F=CANCEL"; ui_key_icon_key_name hides the icon) */
+		short icon_x0_delta = 0;
+		wchar_t const *key = justification == 0 ?
+			ui_key_label_key_name(widget, definition, &icon_x0_delta) : NULL;
+
+		if (key)
+		{
+			wchar_t label[128];
+			wchar_t const *rest = *text;
+			short extra = 64;
+
+			label[0] = 0;
+			wcsncat(label, key, NUMBEROF(label) - 1);
+			/* ("F=CANCEL", as the icon was followed by "=CANCEL") */
+			if (rest[0] != L'=')
+				wcsncat(label, L" ", NUMBEROF(label) - 1 - wcslen(label));
+			wcsncat(label, rest, NUMBEROF(label) - 1 - wcslen(label));
+			bounds.x0 += icon_x0_delta;
+			bounds.x1 += extra;
+			if (!clip_rect)
+			{
+				clip.x0 += icon_x0_delta;
+				clip.x1 += extra;
+			}
+			rasterizer_draw_unicode_string(&bounds, &clip, NULL, 0, label);
+			return;
+		}
+	}
+#endif
 	if (string_has_icons_to_draw(*text))
 		draw_string_and_hack_in_icons(&bounds, &clip, NULL, 0, *text, FALSE);
 	else
@@ -5420,6 +5459,115 @@ static short ui_mouse_key_button(
 
 	return NONE;
 }
+
+#ifdef HALO_WEB
+/* ---------- screen keys on the web
+
+A screen's key (the pause menu's footer: the B button's icon, "=CANCEL",
+the A button's icon, "=SELECT") names the keyboard keys while the player
+uses the keyboard and mouse, as the HUD's and the menus' icon prompts do
+(port/linux/src/xinput_sdl.c, halo_linux_button_key_name): the icon is not
+drawn, and its label starts where the icon was with the key's name
+("F=CANCEL", "Space=SELECT"). A gamepad brings the icons back. */
+
+extern wchar_t const *halo_linux_button_key_name(short button);
+
+/* the keyboard key a screen key's icon ("a_butn", "b_butn_sm" and so on)
+stands for, while the player uses the keyboard; NULL for another widget or
+with a gamepad */
+static wchar_t const *ui_key_icon_key_name(
+	struct widget_instance *widget)
+{
+	static struct
+	{
+		char const *name;
+		short icon_index;
+	} const keys[] =
+	{
+		/* (the HUD's icon order: A B X Y black white, the triggers, the
+		D-pad, start, back) */
+		{ "a_butn", 0 },
+		{ "b_butn", 1 },
+		{ "x_butn", 2 },
+		{ "y_butn", 3 },
+		{ "black_butn", 4 },
+		{ "white_butn", 5 },
+		{ "start_butn", 12 },
+		{ "back_butn", 13 },
+	};
+	char const *name;
+	char const *leaf;
+	long key_index;
+
+	if (!widget || !halo_linux_button_key_name(0))
+		return NULL;
+	name = tag_get_name(widget->definition_tag_index);
+	leaf = name ? strrchr(name, '\\') : NULL;
+	leaf = leaf ? leaf + 1 : name;
+	for (key_index = 0; leaf && key_index < NUMBEROF(keys); key_index++)
+	{
+		long length = (long)strlen(keys[key_index].name);
+
+		if (!strncmp(leaf, keys[key_index].name, length) &&
+			(leaf[length] == '\0' || leaf[length] == '_'))
+		{
+			return halo_linux_button_key_name(keys[key_index].icon_index);
+		}
+	}
+
+	return NULL;
+}
+
+/* the key for a text box that is a screen key's label (its text begins just
+right of a key icon among its siblings, as ui_mouse_note_target finds it),
+and how far left of the text the icon begins; NULL otherwise */
+static wchar_t const *ui_key_label_key_name(
+	struct widget_instance *widget,
+	struct ui_widget_definition const *definition,
+	short *icon_x0_delta)
+{
+	struct widget_instance *sibling;
+	rectangle2d text_bounds = definition->bounds;
+	wchar_t const *best_key = NULL;
+	short best_distance = 17;
+
+	if (!widget->parent || !halo_linux_button_key_name(0))
+		return NULL;
+	text_bounds.x0 += widget->horizontal_offset;
+	text_bounds.x1 += widget->horizontal_offset;
+	text_bounds.y0 += widget->vertical_offset;
+	text_bounds.y1 += widget->vertical_offset;
+	for (sibling = widget->parent->child; sibling; sibling = sibling->next)
+	{
+		struct ui_widget_definition *sibling_definition;
+		rectangle2d icon_bounds;
+		wchar_t const *key;
+		short distance;
+
+		if (sibling == widget || !sibling->visible)
+			continue;
+		key = ui_key_icon_key_name(sibling);
+		if (!key)
+			continue;
+		sibling_definition = ui_widget_definition_get(sibling->definition_tag_index);
+		icon_bounds = sibling_definition->bounds;
+		icon_bounds.x0 += sibling->horizontal_offset;
+		icon_bounds.x1 += sibling->horizontal_offset;
+		icon_bounds.y0 += sibling->vertical_offset;
+		icon_bounds.y1 += sibling->vertical_offset;
+		distance = (short)ABS(text_bounds.x0 - icon_bounds.x1);
+		if (distance < best_distance &&
+			icon_bounds.y0 < text_bounds.y1 && icon_bounds.y1 > text_bounds.y0)
+		{
+			best_distance = distance;
+			best_key = key;
+			*icon_x0_delta = icon_bounds.x0 - text_bounds.x0;
+		}
+	}
+
+	return best_key;
+}
+#endif
 
 /* whether the d-pad moves the focus to a widget: an item of a column list,
 or a child its parent tabs through */
@@ -5857,6 +6005,12 @@ static void widget_instance_render_recursive(
 		definition->background_bitmap.index,
 		0,
 		widget->animation.current_frame_index);
+#ifdef HALO_WEB
+	/* (a screen key's icon while the player uses the keyboard: its label
+	names the key instead, widget_instance_render_text_box) */
+	if (bitmap && ui_key_icon_key_name(widget))
+		bitmap = NULL;
+#endif
 	if (bitmap)
 	{
 		real alpha = alpha_modifier;

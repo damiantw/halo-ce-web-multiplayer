@@ -120,8 +120,9 @@ One movement of the mouse wheel changes the weapon one time. A second
 movement after a short pause changes it again.
 
 In the web build, the button prompts in the HUD and in the menus show these
-keys instead of the Xbox buttons: for example "Hold E to pick up" and
-"F = quit". Each button's first key in this table is used. The Xbox buttons
+keys instead of the Xbox buttons: for example "Hold E to pick up",
+"F = quit", "Hold F1 for score" and the pause menu's "F=CANCEL
+Space=SELECT". Each button's first key in this table is used. The Xbox buttons
 come back as soon as a gamepad is used, and the keys return when the keyboard
 or mouse is used again.
 
@@ -189,7 +190,7 @@ the setting for one start of the game. It has priority over the file.
 | `discord.application_id` | the application of the project | `HALO_DISCORD_APPLICATION` | The Discord application for invites. Empty: no Discord. |
 | `update.auto` | `true` | `HALO_UPDATE_AUTO` | `true`: at start-up, the game looks for a new version. Refer to "Updates". `false`: the game does not look. |
 | `server.dedicated` | `false` | `HALO_DEDICATED` | `true`: a headless dedicated server for system link. Refer to "Dedicated server". |
-| `server.name`, `server.rotation`, `server.countdown`, `server.minimum_players`, `server.max_players`, `server.postgame_seconds`, `server.empty_seconds`, `server.rehost_seconds` | refer to "Dedicated server" | `HALO_SERVER_NAME`, `HALO_SERVER_ROTATION`, `HALO_SERVER_COUNTDOWN`, `HALO_SERVER_MINIMUM_PLAYERS`, `HALO_SERVER_MAX_PLAYERS`, `HALO_SERVER_POSTGAME`, `HALO_SERVER_EMPTY`, `HALO_SERVER_REHOST` | The settings of the dedicated server. |
+| `server.name`, `server.rotation`, `server.lobby`, `server.countdown`, `server.minimum_players`, `server.max_players`, `server.postgame_seconds`, `server.empty_seconds`, `server.rehost_seconds` | refer to "Dedicated server" | `HALO_SERVER_NAME`, `HALO_SERVER_ROTATION`, `HALO_SERVER_LOBBY`, `HALO_SERVER_COUNTDOWN`, `HALO_SERVER_MINIMUM_PLAYERS`, `HALO_SERVER_MAX_PLAYERS`, `HALO_SERVER_POSTGAME`, `HALO_SERVER_EMPTY`, `HALO_SERVER_REHOST` | The settings of the dedicated server. |
 | `server.status_interval`, `server.control`, `server.control_output_fd`, `server.control_input_fd`, `server.control_exit_on_eof` | refer to "Dedicated server control" | `HALO_SERVER_STATUS_INTERVAL`, `HALO_SERVER_CONTROL`, `HALO_SERVER_CONTROL_OUTPUT_FD`, `HALO_SERVER_CONTROL_INPUT_FD`, `HALO_SERVER_CONTROL_EXIT_ON_EOF` | The control channel of the dedicated server. |
 | `debug.update_answer` | `""` | `HALO_UPDATE_ANSWER` | The answer to the update question, for automatic tests: `yes`, `no` or `never`. Empty: the game asks. |
 | `debug.exit_after` | `0.0` | `HALO_EXIT_AFTER` | The game stops after this number of seconds. `0`: never. |
@@ -359,20 +360,32 @@ The server:
 1. Waits for the main menu to load, then hosts a game with the first entry
    of the rotation. The machines on the local network see the game with the
    name `server.name`.
-2. Starts the countdown when `server.minimum_players` players are in the
-   lobby. The machine of the server has no player, and is not in the count.
-   The lobby takes `server.max_players` players at most.
+2. Starts the game as soon as one player is in (the default,
+   `server.lobby = false`): no countdown, and (with the netcode
+   `"distributed"`) a team game (CTF, Team Slayer, ...) starts with players
+   on one team only. The server does not
+   run a game while nobody is there: the first game starts when the first
+   player joins. With `server.lobby = true`, the lobby waits for
+   `server.minimum_players` players, then counts down `server.countdown`
+   seconds (a team game still starts with one team, with the netcode
+   `"distributed"`). The machine of the
+   server has no player, and is not in the count. The game takes
+   `server.max_players` players at most. The teams stay balanced: a player
+   who joins goes to the smaller team, and the teams are evened out between
+   games.
 3. Plays the game. If all the players go, the game stops after
    `server.empty_seconds`. With the netcode `"distributed"`, the game
    continues when the other players go and one player (or one team) is
    left, because players can join a game in progress. (Halo ends the game
    then: with the netcode `"lockstep"` the server keeps that rule.)
-4. Shows the scores for `server.postgame_seconds`, then opens the lobby
-   again with the next entry of the rotation. After the last entry, the
-   rotation starts again. From the end of the game until the lobby opens,
-   the game is closed: the list shows it closed, and a machine that was
-   still joining it is told that it is closed (`web.join` then joins the
-   next lobby).
+4. Shows the scores for `server.postgame_seconds`, then sets up the next
+   entry of the rotation. Without `server.lobby`, the next game starts as
+   soon as the machines have loaded its map (or when the first player joins,
+   if nobody is left); with it, the lobby opens again. After the last entry,
+   the rotation starts again. From the end of the game until the next game
+   is set up, the game is closed: the list shows it closed, and a machine
+   that was still joining it is told that it is closed (`web.join` then
+   joins the next game).
 5. If the game stops because of a network failure, hosts a new game after
    `server.rehost_seconds`.
 
@@ -394,10 +407,11 @@ the server again.
 | `server.dedicated` | `false` | `HALO_DEDICATED` | `true`: the dedicated server. |
 | `server.name` | `"Halo Dedicated"` | `HALO_SERVER_NAME` | The name of the game in the list of system link games. The list shows 15 characters. Use ASCII characters. |
 | `server.rotation` | `"bloodgulch:slayer"` | `HALO_SERVER_ROTATION` | The games, in sequence: `map[:gametype]`, with commas, semicolons or spaces between them. |
-| `server.countdown` | `30` | `HALO_SERVER_COUNTDOWN` | The seconds of the countdown in the lobby (0 to 600). `0`: the game starts immediately, as the immediate start of the host does. |
-| `server.minimum_players` | `1` | `HALO_SERVER_MINIMUM_PLAYERS` | The players that the countdown waits for (1 to `server.max_players`). |
+| `server.lobby` | `false` | `HALO_SERVER_LOBBY` | `false`: the games follow one another without a lobby or a countdown; a game starts as soon as one player is in, and `server.countdown` and `server.minimum_players` do not apply. `true`: the lobby waits for `server.minimum_players`, then counts down `server.countdown` seconds. |
+| `server.countdown` | `30` | `HALO_SERVER_COUNTDOWN` | With `server.lobby`: the seconds of the countdown in the lobby (0 to 600). `0`: the game starts immediately, as the immediate start of the host does. |
+| `server.minimum_players` | `1` | `HALO_SERVER_MINIMUM_PLAYERS` | With `server.lobby`: the players that the countdown waits for (1 to `server.max_players`). |
 | `server.max_players` | `16` | `HALO_SERVER_MAX_PLAYERS` | The maximum players in the game (1 to 16, the system link limit of the Xbox). The list of system link games shows it. When the game is full, the server refuses a machine that tries to join ("game is full"). |
-| `server.postgame_seconds` | `15` | `HALO_SERVER_POSTGAME` | The seconds that the scores show after a game (after the 12 seconds of the end of the game). |
+| `server.postgame_seconds` | `10` | `HALO_SERVER_POSTGAME` | The seconds that the scores show after a game (after the 12 seconds of the end of the game), before the next game. |
 | `server.empty_seconds` | `10` | `HALO_SERVER_EMPTY` | The seconds that a game without players continues. `0`: the game continues. |
 | `server.rehost_seconds` | `5` | `HALO_SERVER_REHOST` | The seconds before the server hosts again after it lost the game. |
 | `server.status_interval`, `server.control`, `server.control_output_fd`, `server.control_input_fd`, `server.control_exit_on_eof` | refer to "Dedicated server control" | | The control channel for a supervising process: JSON events on stdout, commands on stdin. |
@@ -550,7 +564,7 @@ Common objects:
 | Event | When | Fields |
 | --- | --- | --- |
 | `starting` | First, when the process starts. | `protocol` (1), `pid`, `name`, `commands` (boolean: the server reads commands). |
-| `server_started` | Once, when the first lobby opens. | `name`, `protocol`, `distributed` (boolean: the distributed netcode), `rotation` (array of entries), `settings` `{countdown, minimum_players, max_players, postgame_seconds, empty_seconds, rehost_seconds, status_interval, exit_on_eof}`. |
+| `server_started` | Once, when the first lobby opens. | `name`, `protocol`, `distributed` (boolean: the distributed netcode), `rotation` (array of entries), `settings` `{lobby, countdown, minimum_players, max_players, postgame_seconds, empty_seconds, rehost_seconds, status_interval, exit_on_eof}`. |
 | `lobby` | The lobby opens, the player count changes, the countdown starts or stops, or the lobby map changes. | `reason` (`opened`, `players`, `countdown_started`, `countdown_stopped`, `map_changed`), entry fields, variant fields, `player_count`, `minimum_players`, `max_players`, `countdown` (the seconds that remain, or `null`), `players` (array). |
 | `game_started` | The map loaded and the game can score. | Entry fields, variant fields, `players` (array). |
 | `player_joined` | A player joins (lobby or game). | `player`, `name`, `machine`, `controller`, `color`, `team`, `team_name`, `machine_name`, `address`, `port`, `in_game` (boolean). |
@@ -622,7 +636,7 @@ null`.
 | `change_map` | `map`, `gametype` (optional, default `slayer`), `now` (boolean); or text `map[:gametype] [now]` | Sets the next game. In the lobby: the lobby changes now (`effect: "lobby"`). In a game: the game is next (`next_game`); with `now`, the current game ends and the scores do not show (`ending_game`). Before the server hosts: `next_lobby`. The rotation continues after that game (at the position where it stopped). `ack` `{effect, next}`. `error` `invalid_map` (unknown gametype, or no map file). |
 | `set_rotation` | `rotation` (string `"a:b,c"` or array `["a:b","c"]`), or the text | Replaces the rotation (in memory only, not in `config.toml`). The next game is the first entry of the new rotation (a `change_map` that is waiting goes first). In the lobby, the lobby changes now. `ack` `{effect, rotation, rejected}`. `error` `invalid_rotation` (no usable entry; the reply has `rejected`), with no change. |
 | `kick` | `player` (slot), `machine`, or `name`; or text `kick <player>` | Removes the machine of the player from the game, as a lost connection does. All players of that machine go. It is not a ban: the machine can join again. `ack` `{machine, machine_name, players}`, then a `player_left` event (reason `kicked`) for each player. Errors: `not_hosting`, `no_such_player`, `ambiguous_name`, `no_such_machine`, `cannot_kick_host`, `kick_failed`. |
-| `reload` | none | Reads `server.rotation`, `server.countdown`, `server.minimum_players`, `server.max_players`, `server.postgame_seconds`, `server.empty_seconds`, `server.rehost_seconds`, `server.status_interval`, and `server.control_exit_on_eof` again from `config.toml` and from the environment of the process. The environment has priority, and the environment of a running process does not change. If the rotation text changed, the rotation starts again as for `set_rotation`. `ack` `{rotation_changed, rotation, rejected, settings}`. `error` `reload_failed` (errors in `config.toml`; no change). If the new rotation has no usable entry, the server writes `error` `invalid_rotation` and then the `ack` with `rotation_changed: false`. |
+| `reload` | none | Reads `server.rotation`, `server.lobby`, `server.countdown`, `server.minimum_players`, `server.max_players`, `server.postgame_seconds`, `server.empty_seconds`, `server.rehost_seconds`, `server.status_interval`, and `server.control_exit_on_eof` again from `config.toml` and from the environment of the process. The environment has priority, and the environment of a running process does not change. If the rotation text changed, the rotation starts again as for `set_rotation`. `ack` `{rotation_changed, rotation, rejected, settings}`. `error` `reload_failed` (errors in `config.toml`; no change). If the new rotation has no usable entry, the server writes `error` `invalid_rotation` and then the `ack` with `rotation_changed: false`. |
 | `quit` | none | `ack`, then the server stops as for SIGTERM (`shutdown` with reason `command`, exit code 0). |
 | `help` | none | `ack` `{protocol, commands}`. |
 | `say`, `broadcast` | any | `error` `not_supported`. System link has no chat, and the host has no message that shows text on the machines of the players. |
@@ -636,7 +650,7 @@ Example session (`>` is stdin, `<` is stdout):
 
 ```
 < {"event":"starting","seq":0,"time":1790662000.101,"protocol":1,"pid":4242,"name":"Halo Dedicated","commands":true}
-< {"event":"server_started","seq":1,"time":1790662004.512,"name":"Halo Dedicated","protocol":1,"distributed":false,"rotation":[{"map":"bloodgulch","map_path":"levels\\test\\bloodgulch\\bloodgulch","gametype":"slayer"},{"map":"sidewinder","map_path":"levels\\test\\sidewinder\\sidewinder","gametype":"ctf"}],"settings":{"countdown":30,"minimum_players":1,"max_players":16,"postgame_seconds":15,"empty_seconds":10,"rehost_seconds":5,"status_interval":2,"exit_on_eof":false}}
+< {"event":"server_started","seq":1,"time":1790662004.512,"name":"Halo Dedicated","protocol":1,"distributed":false,"rotation":[{"map":"bloodgulch","map_path":"levels\\test\\bloodgulch\\bloodgulch","gametype":"slayer"},{"map":"sidewinder","map_path":"levels\\test\\sidewinder\\sidewinder","gametype":"ctf"}],"settings":{"lobby":true,"countdown":30,"minimum_players":1,"max_players":16,"postgame_seconds":15,"empty_seconds":10,"rehost_seconds":5,"status_interval":2,"exit_on_eof":false}}
 < {"event":"lobby","seq":2,"time":1790662004.513,"reason":"opened","map":"bloodgulch","map_path":"levels\\test\\bloodgulch\\bloodgulch","gametype":"slayer","variant":"Slayer","engine":"slayer","teams":false,"score_limit":25,"player_count":0,"minimum_players":1,"max_players":16,"countdown":null,"players":[]}
 < {"event":"player_joined","seq":3,"time":1790662010.020,"player":0,"name":"Chief","machine":1,"controller":0,"color":"cobalt","team":null,"team_name":null,"machine_name":"Xbox","address":"192.168.1.20","port":2302,"in_game":false}
 > {"cmd":"change_map","id":"a1","map":"sidewinder","gametype":"ctf"}

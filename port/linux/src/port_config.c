@@ -169,20 +169,26 @@ static const struct config_setting config_settings[] =
 		"gametype one of slayer, team_slayer, ctf, ironctf, king, team_king,\n"
 		"oddball, team_oddball, race, team_race, rally, elimination, stalker,\n"
 		"accumulation (slayer when left out)." },
+	{ "server.lobby", _config_boolean, "false", "HALO_SERVER_LOBBY", _environment_value, _platform_desktop,
+		"false: the dedicated server plays its rotation back to back, without\n"
+		"a lobby countdown: a game starts as soon as a player is in, the next\n"
+		"map straight after the scores (server.postgame_seconds), and players\n"
+		"who join go into the game in progress. true: the lobby waits for\n"
+		"server.minimum_players, then counts down server.countdown seconds." },
 	{ "server.countdown", _config_integer, "30", "HALO_SERVER_COUNTDOWN", _environment_value, _platform_desktop,
 		"Seconds of countdown once enough players are in the dedicated server's\n"
-		"lobby (0-600); 0 starts the game straight away." },
+		"lobby (0-600); 0 starts the game straight away. Only with server.lobby." },
 	{ "server.minimum_players", _config_integer, "1", "HALO_SERVER_MINIMUM_PLAYERS", _environment_value,
 		_platform_desktop,
 		"Players the dedicated server waits for before counting down (1-127;\n"
-		"at most server.max_players)." },
+		"at most server.max_players). Only with server.lobby." },
 	{ "server.max_players", _config_integer, "16", "HALO_SERVER_MAX_PLAYERS", _environment_value,
 		_platform_desktop,
 		"Players the dedicated server's games take at most (1-16, as system link\n"
 		"on the Xbox); a machine that would go over is refused as the game is full." },
-	{ "server.postgame_seconds", _config_integer, "15", "HALO_SERVER_POSTGAME", _environment_value, _platform_desktop,
-		"Seconds the dedicated server shows the scores after a game before going\n"
-		"back to the lobby with the rotation's next game." },
+	{ "server.postgame_seconds", _config_integer, "10", "HALO_SERVER_POSTGAME", _environment_value, _platform_desktop,
+		"Seconds the dedicated server shows the scores after a game before the\n"
+		"rotation's next game (straight away, or its lobby with server.lobby)." },
 	{ "server.empty_seconds", _config_integer, "10", "HALO_SERVER_EMPTY", _environment_value, _platform_desktop,
 		"Seconds a dedicated server's game runs with nobody in it before it ends\n"
 		"and goes back to the lobby; 0 never." },

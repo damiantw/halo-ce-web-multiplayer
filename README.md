@@ -22,7 +22,7 @@ This fork adds what a service needs to **host** Halo multiplayer:
 | Part | What it is | Where |
 | --- | --- | --- |
 | **Dedicated server** | The Linux build, started headless: no window, GPU, audio or player of its own. It hosts system link games forever from a map and game type rotation, and a supervising process controls it through JSON over its pipes. | [port/linux/README.md, "Dedicated server"](port/linux/README.md#dedicated-server) |
-| **WebAssembly client** | The game compiled with Emscripten (`ninja web`) for the browser, WebGL 2. By default it is **multiplayer only, with no menus**: the page that embeds it picks the player's name, colour, team and server, and the game loads straight into that server's lobby. | [docs/gateway.md](docs/gateway.md), [docs/wasm-spike.md](docs/wasm-spike.md) |
+| **WebAssembly client** | The game compiled with Emscripten (`ninja web`) for the browser, WebGL 2. By default it is **multiplayer only, with no menus**: the page that embeds it picks the player's name, colour, team and server, and the game loads straight into that server's game (the dedicated server runs its rotation back to back, with no lobby countdown). | [docs/gateway.md](docs/gateway.md), [docs/wasm-spike.md](docs/wasm-spike.md) |
 | **Gateway** (`halo-gateway`) | A small Go daemon that runs next to the dedicated servers. A browser has no UDP or TCP sockets, so the web client's sockets are framed onto one WebSocket to the gateway, which owns the real sockets. The game's datagrams move to a WebRTC data channel (unordered, no retransmits, as UDP) when one can open, with the WebSocket as the fallback. Access is by short-lived signed join tokens. | [port/gateway](port/gateway), [docs/gateway.md](docs/gateway.md) |
 
 ## Supported builds

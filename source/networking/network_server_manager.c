@@ -2561,11 +2561,28 @@ void network_game_server_begin_game_start_countdown(
 	return;
 }
 
+#ifdef HALO_LINUX
+/* port/linux/src/sdl_platform.c's */
+int halo_dedicated_server(void);
+
+#endif
 boolean server_needs_more_teams(
 	struct network_game_server *server)
 {
 	boolean needs_more_teams = FALSE;
 
+#ifdef HALO_LINUX
+	/* a dedicated server of the distributed netcode starts a team game with
+	players on one team only (port/linux/game/dedicated_server.c): a lone
+	player would otherwise wait in the lobby until someone takes the other
+	team. Its game goes on with one team (game_engine_should_end_game) and
+	the others join it in progress; the teams stay balanced as players join
+	(network_game_server_pick_team) and between games
+	(network_game_server_rebalance_teams). (With the netcode "lockstep" a
+	game with one team would end at once, as on the Xbox.) */
+	if (halo_dedicated_server() && network_game_distributed())
+		return FALSE;
+#endif
 	if (server->game.variant.universal_variant.teams)
 	{
 		short player_count_by_team[NUMBER_OF_MULTIPLAYER_TEAMS] = { 0, 0 };
@@ -2601,11 +2618,6 @@ boolean server_needs_more_teams(
 	return needs_more_teams;
 }
 
-#ifdef HALO_LINUX
-/* port/linux/src/sdl_platform.c's */
-int halo_dedicated_server(void);
-
-#endif
 boolean server_has_a_player_on_each_machine(
 	struct network_game_server *server)
 {
@@ -2935,7 +2947,7 @@ void network_game_server_dedicated_lobby_update(
 		network_event("dedicated server: countdown unpaused");
 	}
 	/* players who left the lobby may have left a team game with one side
-	empty, which never starts (server_needs_more_teams): even the teams */
+	much bigger than the other: even the teams */
 	if (network_game_server_rebalance_teams(server) &&
 		!network_game_server_send_game_data_pregame(server))
 	{
