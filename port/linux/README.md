@@ -191,7 +191,7 @@ the setting for one start of the game. It has priority over the file.
 | `debug.hidden_window`, `debug.null_renderer` | `false` | `HALO_HIDDEN_WINDOW`, `HALO_NULL_RENDERER` | `true`: no visible window, or no graphics. |
 | `debug.gpu_stats`, `debug.gpu_trace_frame`, `debug.gpu_trace_constants`, `debug.gpu_dump_shaders`, `debug.texture_dump_directory`, `debug.texture_log`, `debug.gl_debug`, `debug.texture_no_cache` | off | `HALO_GPU_STATS`, `HALO_GPU_TRACE`, `HALO_GPU_TRACE_CONSTANTS`, `HALO_GPU_DUMP_SHADERS`, `HALO_TEXTURE_DUMP`, `HALO_TEXTURE_LOG`, `HALO_GL_DEBUG`, `HALO_TEXTURE_NO_CACHE` | Tools to find problems in the graphics: counts for each frame, all the GL state of one frame, the GLSL code, the textures. |
 | `debug.gpu_skip_vertex_shaders`, `debug.gpu_debug_expression`, `debug.gpu_debug_flat`, `debug.gpu_debug_texture0` | off | `HALO_GPU_SKIP_VS`, `HALO_GPU_DEBUG_EXPR`, `HALO_GPU_DEBUG_FLAT`, `HALO_GPU_DEBUG_T0` | Tools to find problems in the graphics: skip the draws of a vertex shader, or replace the output of all pixel shaders with a GLSL expression (for example `t0.rgb`). |
-| `web.join` | `""` | `HALO_WEB_JOIN` | `"first"`: join the first system link game found without the menus (`game/auto_join.c`), as picking it and pressing A in its lobby do. The site's `/play` sets it for the server the player picked (its gateway token shows only that server). |
+| `web.join` | `""` | `HALO_WEB_JOIN` | `"first"`: join the first system link game found without the menus (`game/auto_join.c`), as picking it and pressing A in its lobby do. The site's `/play` sets it for the server the player picked (its gateway token shows only that server). If the game refuses the machine, or ends while the machine joins it, the machine joins again when the game is open (the next lobby). |
 | `debug.network_log` | `false` | `HALO_NETWORK_LOG` | Log where every player is, and the netcode's counters, every second in a game (the `network test: tick` lines of the automated tests, without a test). |
 | `debug.network_test`, `debug.network_test_start`, `debug.network_test_kill`, `debug.network_test_shoot`, `debug.network_test_vehicle`, `debug.network_test_pickup`, `debug.test_input` | off | `HALO_NETWORK_TEST`, `HALO_NETWORK_TEST_START`, `HALO_NETWORK_TEST_KILL`, `HALO_NETWORK_TEST_SHOOT`, `HALO_NETWORK_TEST_VEHICLE`, `HALO_NETWORK_TEST_PICKUP`, `HALO_TEST_INPUT` | Automatic tests of system link (`game/network_test.c`). Refer to `NETCODE.md`. |
 | `debug.network_latency`, `debug.network_loss` | `0` | `HALO_NETWORK_LATENCY`, `HALO_NETWORK_LOSS` | The game holds all the data that it receives for this number of milliseconds, and ignores this percentage of the datagrams. Use these settings to test the netcode as on the internet. |
@@ -358,7 +358,10 @@ The server:
    then: with the netcode `"lockstep"` the server keeps that rule.)
 4. Shows the scores for `server.postgame_seconds`, then opens the lobby
    again with the next entry of the rotation. After the last entry, the
-   rotation starts again.
+   rotation starts again. From the end of the game until the lobby opens,
+   the game is closed: the list shows it closed, and a machine that was
+   still joining it is told that it is closed (`web.join` then joins the
+   next lobby).
 5. If the game stops because of a network failure, hosts a new game after
    `server.rehost_seconds`.
 
