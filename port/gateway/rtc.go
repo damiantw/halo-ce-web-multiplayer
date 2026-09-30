@@ -51,6 +51,16 @@ const (
 	rtcMaxSignal   = 16 * 1024
 )
 
+// A session's offers are limited: each makes a peer connection (DTLS keys,
+// an SCTP association), so a page (or a hostile client) repeating them must
+// not cost the gateway more than a few. The page makes one per WebSocket
+// connection; a session takes rtcMaxOffers in all, one at a time, at least
+// rtcOfferInterval apart. Others are refused with a bye ("too many offers",
+// "offer too soon"), and the datagrams stay on (or go back to) the WebSocket.
+const rtcMaxOffers = 5
+
+var rtcOfferInterval = 2 * time.Second // a variable for the tests
+
 // the page sends a keepalive every half second; a channel this long silent
 // is given up (the page gives up after 2.5 s; a variable for the tests)
 var rtcStaleAfter = 3 * time.Second
@@ -297,10 +307,17 @@ func (s *session) handleSignal(f []byte) {
 			s.sendSignal(rtcSignal{Type: "bye", Reason: "unavailable"})
 			return
 		}
+		if reason := s.takeOffer(); reason != "" {
+			s.g.stats.rtcOffersRefused.Add(1)
+			s.g.log.Warn("rtc offer refused", "sub", s.claims.Sub, "addr", s.addr.String(), "err", reason)
+			s.sendSignal(rtcSignal{Type: "bye", Reason: reason})
+			return
+		}
 		// answering waits for the gathering (quick: host candidates on the mux)
 		s.wg.Add(1)
 		go func() {
 			defer s.wg.Done()
+			defer s.rtcAnswering.Store(false)
 			if err := s.answer(sig.SDP); err != nil {
 				s.g.log.Warn("rtc offer refused", "sub", s.claims.Sub, "addr", s.addr.String(), "err", err.Error())
 				s.sendSignal(rtcSignal{Type: "bye", Reason: "offer refused"})
@@ -318,6 +335,24 @@ func (s *session) handleSignal(f []byte) {
 			p.shutdown("client: "+sig.Reason, false)
 		}
 	}
+}
+
+// takeOffer counts an offer against the session's limits: "" if it is
+// taken, else the reason it is refused
+func (s *session) takeOffer() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	switch {
+	case s.rtcOffers >= rtcMaxOffers:
+		return "too many offers"
+	case s.rtcAnswering.Load() || (!s.rtcLastOffer.IsZero() && now.Sub(s.rtcLastOffer) < rtcOfferInterval):
+		return "offer too soon"
+	}
+	s.rtcOffers++
+	s.rtcLastOffer = now
+	s.rtcAnswering.Store(true)
+	return ""
 }
 
 func (s *session) answer(sdp string) error {

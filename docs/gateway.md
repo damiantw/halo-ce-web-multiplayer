@@ -84,13 +84,25 @@ gateway -> client   {"type":"answer","sdp":...}
   PING (`7 'k'`) every half second, which the gateway echoes. The gateway gives up on a channel it
   hears nothing from for 3 s, on a failed connection, or on a closed channel, and says `bye`.
   The next attempt is made on the next WebSocket connection.
+- **Offers are limited.** Each offer makes a peer connection (DTLS keys, an SCTP association), so a
+  session takes at most 5, one at a time and at least 2 s apart; the page makes one per WebSocket
+  connection. Others are answered `bye` (`"too many offers"`, `"offer too soon"`) and the datagrams stay
+  on (or go back to) the WebSocket; a new offer that is taken replaces the session's peer.
+- **Behind Docker (1:1 NAT).** Publish the one port on the host's public addresses
+  (`-p <public IPv4>:3478:3478/udp`, and the IPv6 one) and put those addresses in
+  `HALO_GATEWAY_RTC_PUBLIC_IPS`: the answer then carries them, not the container's address, and
+  Docker's DNAT delivers the browser's packets to the gateway unchanged (tested end to end: the gateway
+  and a server in a container on its own bridge network, a browser on the host connecting to the host's
+  address; `/workspace/rtc-e2e/docker-nat.sh`). With a different host port, set
+  `HALO_GATEWAY_RTC_PORT` to it.
 - **Congestion.** A frame waiting behind more than 256 KiB in a channel's send buffer is dropped,
   as a router would.
 - **Observability.** `webstats_publish` adds `net.transport` (`"rtc"` or `"ws"`) for the page's
   overlay; the page's console logs `[webnet] datagrams over WebRTC (N ms)` and
   `[webnet] WebRTC lost (reason); datagrams over the WebSocket`. The gateway logs `rtc open`
   (with `setup_ms`) and `rtc closed` (reason, frames), `GET /sessions` gives each session's
-  `Transport`, and `GET /metrics` `rtc_sessions`, `rtc_opened` and `rtc_fallbacks`.
+  `Transport`, and `GET /metrics` `rtc_sessions`, `rtc_opened`, `rtc_fallbacks` and
+  `rtc_offers_refused`.
 
 ## Join tokens
 
@@ -146,7 +158,8 @@ GET    /metrics                       counters
 Tests: `cd port/gateway && go test -race ./...` (frames, tokens, registry, buckets, bad tokens, address
 allocation and the client limit, discovery fan-out and hub broadcasts over real UDP, streams, limits, shutdown;
 WebRTC with a Pion client: the answer's candidates, datagrams and PING both ways over the channel, streams
-refused on it, and the fallbacks: a closed channel, a silent one, the page's `bye`, no WebRTC, a bad offer).
+refused on it, and the fallbacks: a closed channel, a silent one, the page's `bye`, no WebRTC, a bad offer;
+the offer limits).
 
 ## In the Laravel daemon container
 

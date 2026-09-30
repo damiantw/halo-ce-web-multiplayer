@@ -20,24 +20,29 @@ type session struct {
 	addr   netip.Addr
 	claims claims
 
-	out       chan []byte // frames to the client
-	ctx       context.Context
-	cancel    context.CancelFunc
-	closeMu   sync.Mutex
-	closed    bool
-	code      websocket.StatusCode
-	why       string
-	frames    *bucket
-	bytes     *bucket
-	mu        sync.Mutex
-	udp       map[uint16]*net.UDPConn
-	streams   map[uint32]*net.TCPConn
-	rtc       *rtcPeer // the WebRTC peer (rtc.go), nil without one; under mu
-	framesIn  atomic.Int64
-	framesOut atomic.Int64
-	dropped   atomic.Int64
-	lastIn    atomic.Int64 // unix nanoseconds of the last frame from the client, either transport
-	wg        sync.WaitGroup
+	out     chan []byte // frames to the client
+	ctx     context.Context
+	cancel  context.CancelFunc
+	closeMu sync.Mutex
+	closed  bool
+	code    websocket.StatusCode
+	why     string
+	frames  *bucket
+	bytes   *bucket
+	mu      sync.Mutex
+	udp     map[uint16]*net.UDPConn
+	streams map[uint32]*net.TCPConn
+	rtc     *rtcPeer // the WebRTC peer (rtc.go), nil without one; under mu
+	// the offers taken (rtc.go, takeOffer): how many, the last one's time
+	// (under mu), and whether one is being answered
+	rtcOffers    int
+	rtcLastOffer time.Time
+	rtcAnswering atomic.Bool
+	framesIn     atomic.Int64
+	framesOut    atomic.Int64
+	dropped      atomic.Int64
+	lastIn       atomic.Int64 // unix nanoseconds of the last frame from the client, either transport
+	wg           sync.WaitGroup
 }
 
 func newSession(g *gateway, ws *websocket.Conn, addr netip.Addr, c claims) *session {

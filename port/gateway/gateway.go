@@ -70,7 +70,7 @@ type gateway struct {
 	closing  atomic.Bool
 	stats    struct {
 		accepted, rejected, framesIn, framesOut, dropped atomic.Int64
-		rtcOpened, rtcFallbacks                          atomic.Int64
+		rtcOpened, rtcFallbacks, rtcOffersRefused        atomic.Int64
 	}
 }
 

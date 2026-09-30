@@ -305,3 +305,49 @@ func TestRTCTrafficKeepsSessionFromIdling(t *testing.T) {
 		}
 	}
 }
+
+// Offers are limited per session: one at a time, rtcOfferInterval apart,
+// rtcMaxOffers in all; the others get a bye and the session is unharmed.
+func TestRTCOfferLimits(t *testing.T) {
+	old := rtcOfferInterval
+	rtcOfferInterval = 300 * time.Millisecond
+	t.Cleanup(func() { rtcOfferInterval = old })
+	f := rtcFixture(t)
+	ws, _ := f.join(claims{Sub: "1"})
+	// the first connects
+	c := newRTCClient(t)
+	c.connect(ws)
+	waitTransport(t, f.g, "rtc")
+	// one straight after: too soon (the channel stays)
+	c2 := newRTCClient(t)
+	offer, _ := c2.pc.CreateOffer(nil)
+	c2.pc.SetLocalDescription(offer)
+	sendSig(t, ws, rtcSignal{Type: "offer", SDP: offer.SDP})
+	if bye := readSignal(t, ws); bye.Type != "bye" || bye.Reason != "offer too soon" {
+		t.Fatalf("want bye (offer too soon), got %+v", bye)
+	}
+	waitTransport(t, f.g, "rtc")
+	// then spaced out: taken up to the limit (each replaces the last)
+	for i := 2; i <= rtcMaxOffers; i++ {
+		time.Sleep(rtcOfferInterval + 50*time.Millisecond)
+		sendSig(t, ws, rtcSignal{Type: "offer", SDP: offer.SDP})
+		if sig := readSignal(t, ws); sig.Type != "answer" {
+			t.Fatalf("offer %d: want an answer, got %+v", i, sig)
+		}
+	}
+	time.Sleep(rtcOfferInterval + 50*time.Millisecond)
+	sendSig(t, ws, rtcSignal{Type: "offer", SDP: offer.SDP})
+	if bye := readSignal(t, ws); bye.Type != "bye" || bye.Reason != "too many offers" {
+		t.Fatalf("want bye (too many offers), got %+v", bye)
+	}
+	if n := f.g.stats.rtcOffersRefused.Load(); n != 2 {
+		t.Fatalf("offers refused %d, want 2", n)
+	}
+	// the session is unharmed
+	write(t, ws, []byte{framePing, 'x'})
+	for {
+		if fr := read(t, ws); fr[0] == framePing {
+			break
+		}
+	}
+}
