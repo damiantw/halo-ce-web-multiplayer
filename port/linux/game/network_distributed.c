@@ -353,6 +353,26 @@ void distributed_count_correction(
 	distributed_statistics.corrections++;
 }
 
+boolean distributed_real_valid(
+	real value)
+{
+	/* (NaN and the infinities less themselves are not 0) */
+	return value - value == 0.0f;
+}
+
+boolean distributed_point_valid(
+	real_point3d const *point,
+	real bound)
+{
+	return fabsf(point->x) <= bound && fabsf(point->y) <= bound && fabsf(point->z) <= bound;
+}
+
+boolean distributed_object_index_valid(
+	long object_index)
+{
+	return object_index != NONE && DATUM_INDEX_TO_IDENTIFIER(object_index) != 0;
+}
+
 void distributed_vector_pack(
 	real_vector3d const *vector,
 	real scale,
