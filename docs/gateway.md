@@ -119,7 +119,13 @@ allocation and the client limit, discovery fan-out and hub broadcasts over real 
    settings) to name the player and its
    machine; without it the profile's name or a random one is used. Add `HALO_WEB_JOIN=first` to join the
    first game found by itself (`port/linux/game/auto_join.c`): with a token limited to one server, that server.
-   The loader sets `window.haloFeatures.webJoin` so the page can tell builds that know the setting.
+   Add `HALO_WEB_PLAYER_COLOR=<0-17 or name>` (white, black, red, blue, gray/grey, yellow, green, pink,
+   purple, cyan, cobalt, orange, teal, sage, brown, tan, maroon, salmon: `profile_color_table`'s order) for the
+   player's armour colour in free-for-all games (`web_host.c web_player_color`, applied in
+   `player_ui_get_active_player_profile`; team games still colour by team). Add `HALO_WEB_EXIT_URL=<url>` for
+   where the page goes when the player leaves the game (below); `HALO_WEB_MENUS=1` brings the menus back.
+   The loader sets `window.haloFeatures` (`webJoin`, `playerColor`, `leave`) so the page can tell builds that
+   know the settings.
    `/maps/index.json` lists `[{name, size}]`, and `/maps/<name>.map` serves the files with Range support. For the
    multiplayer-only build it needs only `ui.map` and the multiplayer maps.
 5. **nginx**:
@@ -145,17 +151,31 @@ allocation and the client limit, discovery fan-out and hub broadcasts over real 
 
 `ninja web` defines `HALO_MULTIPLAYER_ONLY` (`tools/web_build.py`; `python3 configure.py --web-campaign`
 builds with the campaign). Everything is under `#ifdef`, so the byte-matching build and the native ports are
-unchanged.
+unchanged. The web multiplayer-only build is **multiplayer only, with no menus**: the site picks the name,
+colour and server, and the game only joins and plays.
 
+- **No main menu.** `main_screen_shell_load` (`ui_widget.c`) only initialises the file system on the first
+  load (no intro movie, no main menu, no menu music), and the auto-join (`auto_join.c`, forced to
+  `HALO_WEB_JOIN=first` with a 0.5 s settle) joins the game its token allows as soon as the lobby browser
+  sees it: the page goes from loading straight to the server's lobby.
+- **Leaving goes back to the site.** Every later return to the main menu (Quit in the pause menu, B in the
+  lobby, a lost connection, a refused join, an error) calls `web_leave` instead, as does finding no game
+  within 45 s. JS gets a cancelable `halo:leave` event on `window` with `detail = {reason: "left" |
+  "no_game", errorCode}` (`web_library.js web_leave_game`, once per page); without a handler that calls
+  `preventDefault()`, the loader goes to `HALO_WEB_EXIT_URL` (or shows "You left the game").
+- **No split screen, profiles or settings.** Only the first controller joins the lobby
+  (`netgame_join_player`) and only gamepad port 0 is reported (`xinput_sdl.c`); the profile and settings
+  screens are unreachable without the main menu. The pause menu has only Resume and Quit (its tag). The
+  developer console (`` ` ``) is left in.
 - The main menu's Campaign item and the multiplayer menu's Co-op item are not made
-  (`ui_widget.c ui_widget_multiplayer_only_hidden`); the main menu offers Multiplayer (focused) and Settings,
-  the multiplayer menu Split Screen, System Link and Game Types
-  (`/workspace/halo-data/shots/gateway_menu_mponly.png`, `gateway_menu_mponly_multiplayer.png`).
+  (`ui_widget.c ui_widget_multiplayer_only_hidden`), for `HALO_WEB_MENUS=1`.
 - `main_set_map_name` (the one way into a local game: the campaign menus, the `map_name` console command,
   command-line levels) refuses any map whose cache header is not a multiplayer scenario, as the dedicated
   server's rotation does, and logs `'levels\a10\a10' is not a multiplayer map: this build is multiplayer only`.
   System link games load their map through `network_game_create_game_objects`, unaffected.
 - So the page needs only `ui.map` plus the multiplayer maps.
+- The dedicated server reports each player's colour (`"color": "orange"`, or `null`) in its player rows and
+  `player_joined` / `player_left` events (`port/linux/README.md`).
 
 ## Maps on demand
 

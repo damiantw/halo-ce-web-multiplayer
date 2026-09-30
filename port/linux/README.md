@@ -507,6 +507,7 @@ Common objects:
   | `name` | string | The player name. |
   | `machine` | integer | The machine index. All players of one machine (split screen) have the same value. |
   | `controller` | integer | The local player of the machine (0 to 3). |
+  | `color` | string or null | The player's colour: `white`, `black`, `red`, `blue`, `gray`, `yellow`, `green`, `pink`, `purple`, `cyan`, `cobalt`, `orange`, `teal`, `sage`, `brown`, `tan`, `maroon` or `salmon` (the one the player asked for, else the one the server picked). Team games draw players in their team's colour instead. |
   | `team`, `team_name` | integer, string, or null | `0`/`"red"`, `1`/`"blue"`. `null` in games without teams. |
   | `connected` | boolean | `false`: the player left this game (the statistics remain). |
   | `machine_name` | string or null | The name of the machine (in the lobby list). |
@@ -525,7 +526,7 @@ Common objects:
 | `server_started` | Once, when the first lobby opens. | `name`, `protocol`, `distributed` (boolean: the distributed netcode), `rotation` (array of entries), `settings` `{countdown, minimum_players, max_players, postgame_seconds, empty_seconds, rehost_seconds, status_interval, exit_on_eof}`. |
 | `lobby` | The lobby opens, the player count changes, the countdown starts or stops, or the lobby map changes. | `reason` (`opened`, `players`, `countdown_started`, `countdown_stopped`, `map_changed`), entry fields, variant fields, `player_count`, `minimum_players`, `max_players`, `countdown` (the seconds that remain, or `null`), `players` (array). |
 | `game_started` | The map loaded and the game can score. | Entry fields, variant fields, `players` (array). |
-| `player_joined` | A player joins (lobby or game). | `player`, `name`, `machine`, `controller`, `team`, `team_name`, `machine_name`, `address`, `port`, `in_game` (boolean). |
+| `player_joined` | A player joins (lobby or game). | `player`, `name`, `machine`, `controller`, `color`, `team`, `team_name`, `machine_name`, `address`, `port`, `in_game` (boolean). |
 | `player_left` | A player leaves or is kicked. | The same fields as `player_joined`, without `in_game`, and `reason` (`left` or `kicked`). |
 | `score` | During a game, when a statistic or a score changes. At most once each second. | Entry fields, `time_elapsed` (seconds), `team_scores`, `players`. |
 | `status` | Each `server.status_interval` seconds, on SIGUSR1, and as the reply to `status` (then with `id`/`command`). | `state` (`starting`, `hosting`, `lobby`, `game`, `postgame`, `waiting`), `name`, `uptime` (seconds), `games_hosted`, `rotation`, `rotation_index` (the current game position in the rotation, or `null` if a command set the game), `next` (entry), `lobby` (object or `null`), `game` (object or `null`). |
@@ -610,13 +611,13 @@ Example session (`>` is stdin, `<` is stdout):
 < {"event":"starting","seq":0,"time":1790662000.101,"protocol":1,"pid":4242,"name":"Halo Dedicated","commands":true}
 < {"event":"server_started","seq":1,"time":1790662004.512,"name":"Halo Dedicated","protocol":1,"distributed":false,"rotation":[{"map":"bloodgulch","map_path":"levels\\test\\bloodgulch\\bloodgulch","gametype":"slayer"},{"map":"sidewinder","map_path":"levels\\test\\sidewinder\\sidewinder","gametype":"ctf"}],"settings":{"countdown":30,"minimum_players":1,"max_players":16,"postgame_seconds":15,"empty_seconds":10,"rehost_seconds":5,"status_interval":2,"exit_on_eof":false}}
 < {"event":"lobby","seq":2,"time":1790662004.513,"reason":"opened","map":"bloodgulch","map_path":"levels\\test\\bloodgulch\\bloodgulch","gametype":"slayer","variant":"Slayer","engine":"slayer","teams":false,"score_limit":25,"player_count":0,"minimum_players":1,"max_players":16,"countdown":null,"players":[]}
-< {"event":"player_joined","seq":3,"time":1790662010.020,"player":0,"name":"Chief","machine":1,"controller":0,"team":null,"team_name":null,"machine_name":"Xbox","address":"192.168.1.20","port":2302,"in_game":false}
+< {"event":"player_joined","seq":3,"time":1790662010.020,"player":0,"name":"Chief","machine":1,"controller":0,"color":"cobalt","team":null,"team_name":null,"machine_name":"Xbox","address":"192.168.1.20","port":2302,"in_game":false}
 > {"cmd":"change_map","id":"a1","map":"sidewinder","gametype":"ctf"}
 < {"event":"ack","seq":5,"time":1790662011.300,"id":"a1","command":"change_map","effect":"lobby","next":{"map":"sidewinder","map_path":"levels\\test\\sidewinder\\sidewinder","gametype":"ctf"}}
 < {"event":"lobby","seq":6,"time":1790662011.301,"reason":"map_changed","map":"sidewinder",...}
 > {"cmd":"kick","id":2,"player":0}
 < {"event":"ack","seq":9,"time":1790662020.000,"id":2,"command":"kick","machine":1,"machine_name":"Xbox","players":1}
-< {"event":"player_left","seq":10,"time":1790662020.000,"player":0,"name":"Chief","machine":1,"controller":0,"team":0,"team_name":"red","machine_name":"Xbox","address":"192.168.1.20","port":2302,"reason":"kicked"}
+< {"event":"player_left","seq":10,"time":1790662020.000,"player":0,"name":"Chief","machine":1,"controller":0,"color":"cobalt","team":0,"team_name":"red","machine_name":"Xbox","address":"192.168.1.20","port":2302,"reason":"kicked"}
 > status
 < {"event":"ack","seq":11,"time":1790662021.000,"id":null,"command":"status"}
 < {"event":"status","seq":12,"time":1790662021.000,"id":null,"command":"status","state":"lobby",...}
@@ -631,7 +632,7 @@ A game `status` (abbreviated):
  "game":{"ended":false,"map":"bloodgulch","map_path":"levels\\test\\bloodgulch\\bloodgulch","gametype":"team_slayer",
    "variant":"Team Slayer","engine":"slayer","teams":true,"score_limit":50,"time_elapsed":83.4,"time_remaining":null,
    "team_scores":[{"team":0,"name":"red","score":7},{"team":1,"name":"blue","score":5}],
-   "players":[{"player":0,"name":"Chief","machine":1,"controller":0,"team":0,"team_name":"red","connected":true,
+   "players":[{"player":0,"name":"Chief","machine":1,"controller":0,"color":"cobalt","team":0,"team_name":"red","connected":true,
      "machine_name":"Xbox","address":"192.168.1.20","port":2302,"ping_ms":null,"kills":7,"deaths":2,"assists":1,
      "suicides":0,"team_kills":0,"score":7,"score_text":"7"}]}}
 ```

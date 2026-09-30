@@ -4384,6 +4384,13 @@ static boolean netgame_join_player(
 	short value;
 
 	match_assert("c:\\halo\\SOURCE\\interface\\ui_widget_event_handler_functions.c", 1618, event);
+#if defined(HALO_WEB) && defined(HALO_MULTIPLAYER_ONLY)
+	/* one player a browser: no second controller joins the lobby (split
+	screen; the web build's platform layer has only port 0 anyway,
+	xinput_sdl.c) */
+	if (event->controller_index != 0)
+		return TRUE;
+#endif
 	client = global_network_game_client_get();
 	if (!client)
 		return TRUE;

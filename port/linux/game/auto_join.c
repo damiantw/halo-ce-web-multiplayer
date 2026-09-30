@@ -16,6 +16,16 @@ also forces team 2 and logs every player's position every second.
 
 Called from the main loop every frame (main.c), outside the dedicated
 server.
+
+The web build is only about the multiplayer (HALO_WEB with
+HALO_MULTIPLAYER_ONLY, web_multiplayer_only): there is no main menu (the
+main menu scenario loads without its menus, ui_widget.c
+main_screen_shell_load), the game joins by itself even without web.join,
+and leaving the game (the pause menu's Quit, B in the lobby, a lost
+connection, a refused join: anything that would go back to the main menu),
+or finding no game to join, leaves the page (web_leave: web_library.js,
+web_leave_game, a "halo:leave" event the site's page answers by going back
+to its home page). HALO_WEB_MENUS=1 brings the menus back, for development.
 */
 
 #include "cseries.h"
@@ -26,6 +36,7 @@ server.
 #include "networking/network_server_manager.h"
 #include "game/game.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 /* the platform layer's (port/linux/src/port_config.c) */
@@ -38,16 +49,65 @@ enum
 	_auto_join_first,
 };
 
+/* why the web build leaves (web_library.js, web_leave_game) */
+enum
+{
+	_web_leave_menu,
+	_web_leave_no_game,
+};
+
 static struct
 {
 	boolean checked;
 	short mode;
 	real menu_seconds;
 	boolean searching;
+	real searching_seconds;
 	boolean joined;
 	real joined_seconds;
 	boolean player_added;
 } auto_join;
+
+/* how long the web build looks for the game before giving up and leaving */
+#define WEB_SEARCH_SECONDS 45.0f
+
+/* whether the web build is the multiplayer-only one without menus */
+boolean web_multiplayer_only(
+	void)
+{
+#if defined(HALO_WEB) && defined(HALO_MULTIPLAYER_ONLY)
+	char const *menus = getenv("HALO_WEB_MENUS");
+
+	return !menus || !*menus || !strcmp(menus, "0") || !strcmp(menus, "false");
+#else
+	return FALSE;
+#endif
+}
+
+#if defined(HALO_WEB) && defined(HALO_MULTIPLAYER_ONLY)
+/* web_library.js */
+extern void web_leave_game(int reason, int error_code);
+#endif
+
+/* the web build leaves the page, once (reasons in web_library.js,
+web_leave_game); other builds carry on */
+void web_leave(
+	short reason,
+	short error_code)
+{
+#if defined(HALO_WEB) && defined(HALO_MULTIPLAYER_ONLY)
+	static boolean left;
+
+	if (!web_multiplayer_only() || left)
+		return;
+	left = TRUE;
+	platform_log("web: leaving the game (reason %d, error %d)", reason, error_code);
+	web_leave_game(reason, error_code);
+#else
+	(void)reason;
+	(void)error_code;
+#endif
+}
 
 static void auto_join_read_settings(
 	void)
@@ -59,6 +119,9 @@ static void auto_join_read_settings(
 		auto_join.mode = _auto_join_first;
 	else if (*setting)
 		platform_log("auto join: unknown web.join \"%s\" (\"first\" or empty)", setting);
+	/* (the web build has nothing else to do) */
+	if (web_multiplayer_only())
+		auto_join.mode = _auto_join_first;
 }
 
 /* whether web.join asks for a join (network_test.c's join mode then leaves
@@ -78,8 +141,8 @@ void auto_join_update(
 	if (!auto_join_enabled() || auto_join.player_added || !main_menu_loaded)
 		return;
 	auto_join.menu_seconds += seconds;
-	/* (the main menu settling first) */
-	if (auto_join.menu_seconds < 2.0f)
+	/* (the main menu settling first; without menus, only the scenario) */
+	if (auto_join.menu_seconds < (web_multiplayer_only() ? 0.5f : 2.0f))
 		return;
 
 	if (!auto_join.searching)
@@ -100,7 +163,13 @@ void auto_join_update(
 	}
 	else if (!auto_join.joined)
 	{
-		if (network_game_client_join_first_available_game())
+		auto_join.searching_seconds += seconds;
+		if (auto_join.searching_seconds >= WEB_SEARCH_SECONDS && web_multiplayer_only())
+		{
+			platform_log("auto join: no game found in %.0f seconds", WEB_SEARCH_SECONDS);
+			web_leave(_web_leave_no_game, NONE);
+		}
+		else if (network_game_client_join_first_available_game())
 		{
 			auto_join.joined = TRUE;
 			ui_widgets_close_all();
