@@ -87,6 +87,9 @@ jobs:
       - name: Dedicated server control test
         run: python3 tools/dedicated_control_test.py --binary build/linux/halo
 
+      - name: Rotation rules test
+        run: python3 tools/variant_overrides_test.py
+
       - name: Compile cache
         run: ccache --show-stats
 

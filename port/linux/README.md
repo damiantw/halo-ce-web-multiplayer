@@ -456,6 +456,38 @@ The code is in `game/dedicated_server.c` (the control
 channel: `src/dedicated_control.c`). The changes to the game are in
 `#ifdef HALO_LINUX` (refer to "Game source changes").
 
+#### Rotation entry rules
+
+A rotation entry can change the rules of its game type:
+`map:gametype+key=value+key=value`, for example
+`bloodgulch:slayer+score=25+lives=3+no_shields=1` or
+`ratrace:ctf+score=5+flag_time=60`. The changes apply to the built-in game
+type the entry names; the game type keeps its name. Values are whole
+numbers, or `true`/`false` (also `1`/`0`, `on`/`off`, `yes`/`no`) for the
+switches. An entry with an unknown key, a key of another game type, or a
+value out of range is left out of the rotation and reported as for a bad
+map (`rejected`). The events that describe an entry (`rotation`, `lobby`,
+`game_started`, `status`) have its changes in `rules` (`null` for none).
+
+| Keys | Game types | Values |
+| --- | --- | --- |
+| `score` | all | 1 to 999: the score to win |
+| `lives` | all | 0 to 99 (0: unlimited) |
+| `respawn`, `respawn_growth`, `suicide_penalty` | all | seconds: 0 to 300, 0 to 60, 0 to 60 |
+| `health` | all | 25 to 400: percent of the normal health |
+| `weapons` | all | 0 to 10: default, pistols, rifles, plasma, sniping, no sniping, rockets, shotguns, short range, human, no grenades |
+| `vehicles` | all | 0 to 4: default, none, warthogs, ghosts, tanks |
+| `goal_radar` | all | 0 motion tracker, 1 navpoints, 2 none |
+| `odd_man_out`, `radar`, `friend_indicators`, `infinite_grenades`, `no_shields`, `invisible`, `generic_equipment` | all | switches |
+| `assault`, `flag_must_reset`, `flag_at_home`, `flag_time` | ctf | switches; `flag_time` seconds, 0 to 600 |
+| `death_bonus`, `kill_penalty`, `kill_in_order` | slayer | switches |
+| `moving_hill` | king | switch |
+| `random_start`, `ball_speed`, `trait_with_ball`, `trait_without_ball`, `ball_type`, `balls` | oddball | switch; 0 slow, 1 normal, 2 fast; 0 none, 1 invisible, 2 extra damage, 3 damage resistant (both traits); 0 normal, 1 magic, 2 terminator; 1 to 16 |
+| `race_type`, `team_scoring` | race | 0 normal, 1 any order, 2 rally; 0 minimum, 1 maximum, 2 sum |
+
+The code is in `game/variant_overrides.c`; `tools/variant_overrides_test.py`
+tests it without game data.
+
 ### Dedicated server control
 
 A process that starts the server (for example a PHP supervisor that uses
