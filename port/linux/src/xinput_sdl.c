@@ -75,6 +75,13 @@ static BOOL reported_keyboard = FALSE;
 
 /* ---------- mouse */
 
+#ifdef HALO_WEB
+/* the player's settings from the site (port/web/src/web_host.c) */
+extern float web_mouse_sensitivity(void);
+extern int web_invert_look(void);
+extern int web_vibration_enabled(void);
+#endif
+
 static pthread_mutex_t mouse_lock = PTHREAD_MUTEX_INITIALIZER;
 static float mouse_pending_x, mouse_pending_y;
 static unsigned long mouse_polls_unconsumed = 0;
@@ -92,6 +99,11 @@ static float mouse_sensitivity(void)
 	if (sensitivity < 0.0f)
 	{
 		sensitivity = (float)config_real("input.mouse_sensitivity");
+#ifdef HALO_WEB
+		/* the one the player set on the site (port/web/src/web_host.c) */
+		if (web_mouse_sensitivity() > 0.0f)
+			sensitivity = web_mouse_sensitivity();
+#endif
 		if (sensitivity <= 0.0f)
 			sensitivity = 1.0f;
 	}
@@ -112,7 +124,14 @@ int halo_linux_mouse_look(short gamepad_index, float *yaw, float *pitch)
 	if (gamepad_index != 0)
 		return FALSE;
 	if (invert < 0)
+	{
 		invert = config_boolean("input.invert_mouse");
+#ifdef HALO_WEB
+		/* the site's invert look is for the mouse too */
+		if (web_invert_look() >= 0)
+			invert = web_invert_look();
+#endif
+	}
 	pthread_mutex_lock(&mouse_lock);
 	x = mouse_pending_x;
 	y = mouse_pending_y;
@@ -601,6 +620,11 @@ DWORD WINAPI XInputSetState(HANDLE device, PXINPUT_FEEDBACK feedback)
 	if (port < 0)
 		return ERROR_DEVICE_NOT_CONNECTED;
 	count = sdl_gamepads(gamepads);
+#ifdef HALO_WEB
+	/* the player turned the rumble off on the site */
+	if (!web_vibration_enabled())
+		return ERROR_SUCCESS;
+#endif
 	if (port < count)
 	{
 		/* the game refreshes the motors every frame; rumble a little longer

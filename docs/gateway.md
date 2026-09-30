@@ -198,8 +198,14 @@ the offer limits).
    player's armour colour in free-for-all games (`web_host.c web_player_color`, applied in
    `player_ui_get_active_player_profile`; team games still colour by team). Add `HALO_WEB_PLAYER_TEAM=red|blue` (else auto) to ask for a team in team games (the server honours it while the teams stay within one player: `port/linux/README.md`, "Teams"). Add `HALO_WEB_EXIT_URL=<url>` for
    where the page goes when the player leaves the game (below); `HALO_WEB_MENUS=1` brings the menus back.
-   The loader sets `window.haloFeatures` (`webJoin`, `playerColor`, `playerTeam`, `leave`) so the page can tell builds that
-   know the settings.
+   The player's input settings (`web_host.c`, each optional; out of range is ignored): `HALO_WEB_LOOK_SENSITIVITY=1-10`
+   (the controller's look speed as the profile's setting, default 3), `HALO_WEB_INVERT_LOOK=0|1` (sticks and mouse),
+   `HALO_WEB_STICK_DEADZONE=0-90` (percent of full deflection; the game's is about 27), `HALO_WEB_VIBRATION=0`
+   (no rumble) and `HALO_WEB_MOUSE_SENSITIVITY=0.1-10` (the mouse aim's multiplier).
+   The loader sets `window.haloFeatures` (`webJoin`, `playerColor`, `playerTeam`, `leave`, `inputSettings`,
+   `gamepadEvents`) so the page can tell builds that know the settings. It also puts the original Xbox controller
+   (Duke and Controller S, `045e:0202/0285/0287/0288/0289`) in the standard gamepad layout, and reports controllers
+   coming and going as a `halo:gamepad` event (`{connected, index, id, name, layout}`).
    `/maps/index.json` lists `[{name, size}]`, and `/maps/<name>.map` serves the files with Range support. For the
    multiplayer-only build it needs only `ui.map` and the multiplayer maps.
 5. **nginx**:

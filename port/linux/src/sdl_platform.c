@@ -231,6 +231,38 @@ static void platform_dedicated_check_data(void)
 }
 #endif
 
+#ifndef HALO_ANDROID
+/* The original Xbox controllers (the Duke, 045e:0202, and the Controller S,
+045e:0285/0287/0288/0289) through Linux's xpad driver: its buttons come in
+the order A, B, C (black), X, Y, Z (white), back, start and the stick
+clicks, with no shoulder buttons, so SDL's automatic mapping of them leaves
+black and white out (and with them the flashlight and the grenade switch).
+These mappings put white and black on the shoulders, where the controller
+code (xinput_sdl.c) expects them; the triggers are analog axes and the D-pad
+a hat. (Any version of the device: the GUIDs have none. Some distributions'
+SDL, Debian's for one, carry the same mappings for a few of these; SDL itself
+does not.) */
+static void platform_add_gamepad_mappings(void)
+{
+	static const char *const products[] = { "0202", "8502", "8702", "8802", "8902" };
+	unsigned int index;
+
+	for (index = 0; index < sizeof(products) / sizeof(products[0]); index++)
+	{
+		char mapping[512];
+
+		SDL_snprintf(mapping, sizeof(mapping),
+			"030000005e040000%s000000000000,Xbox Controller (original),"
+			"a:b0,b:b1,x:b3,y:b4,leftshoulder:b5,rightshoulder:b2,back:b6,start:b7,"
+			"leftstick:b8,rightstick:b9,dpup:h0.1,dpright:h0.2,dpdown:h0.4,dpleft:h0.8,"
+			"leftx:a0,lefty:a1,lefttrigger:a2,rightx:a3,righty:a4,righttrigger:a5,platform:Linux,",
+			products[index]);
+		if (SDL_AddGamepadMapping(mapping) < 0)
+			platform_log("SDL_AddGamepadMapping: %s", SDL_GetError());
+	}
+}
+#endif
+
 /* the dedicated server's start (shell_xbox.c's shell_platform_initialize),
 before the game's first map or device */
 int platform_dedicated_initialize(void)
@@ -290,6 +322,7 @@ BOOL platform_sdl_initialize(void)
 	}
 	platform_sdl_started = TRUE;
 #ifndef HALO_ANDROID
+	platform_add_gamepad_mappings();
 	/* found (or offered to the player, platform_offer_game_data) before the
 	game's window opens */
 	platform_data_root();

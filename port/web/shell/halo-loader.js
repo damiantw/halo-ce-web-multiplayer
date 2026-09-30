@@ -31,6 +31,13 @@
 //   HALO_WEB_PLAYER_TEAM=<team>    the team asked for in team games: red or
 //                                  blue (else auto); a port's server honours
 //                                  it while the teams stay within one player
+//   HALO_WEB_LOOK_SENSITIVITY=<n>  the controller's look speed, 1-10 (3)
+//   HALO_WEB_INVERT_LOOK=<0|1>     1: the vertical look (sticks and mouse)
+//                                  is inverted
+//   HALO_WEB_STICK_DEADZONE=<n>    the sticks' dead zone, 0-90 percent (27)
+//   HALO_WEB_VIBRATION=<0|1>       0: the controller does not rumble
+//   HALO_WEB_MOUSE_SENSITIVITY=<x> the mouse aim's multiplier, 0.1-10 (1)
+//                                  (port/web/src/web_host.c)
 //   HALO_WEB_EXIT_URL=<url>        where the page goes when the player
 //                                  leaves the game (default: stay)
 //   HALO_WEB_MENUS=1               the multiplayer-only build's menus back
@@ -40,8 +47,12 @@
 // (HALO_WEB_JOIN=first, port/linux/game/auto_join.c); playerColor,
 // HALO_WEB_PLAYER_COLOR; playerTeam, HALO_WEB_PLAYER_TEAM; leave, the "halo:leave" event: the build has no
 // main menu, it boots into the join and, when the player leaves the game,
-// asks the page to leave (web_library.js, web_leave_game).
-window.haloFeatures = Object.assign(window.haloFeatures || {}, { webJoin: true, playerColor: true, playerTeam: true, leave: true });
+// asks the page to leave (web_library.js, web_leave_game); inputSettings,
+// HALO_WEB_LOOK_SENSITIVITY, HALO_WEB_INVERT_LOOK, HALO_WEB_STICK_DEADZONE,
+// HALO_WEB_VIBRATION and HALO_WEB_MOUSE_SENSITIVITY; gamepadEvents, the
+// "halo:gamepad" event (below).
+window.haloFeatures = Object.assign(window.haloFeatures || {}, { webJoin: true, playerColor: true, playerTeam: true, leave: true,
+	inputSettings: true, gamepadEvents: true });
 (() => {
 	const params = new URLSearchParams(location.search);
 	const envParam = (name) => {
@@ -143,6 +154,131 @@ window.haloFeatures = Object.assign(window.haloFeatures || {}, { webJoin: true, 
 		}],
 		onAbort: (what) => print(`[web] abort: ${what}`),
 	};
+})();
+
+// Gamepads. SDL (its Emscripten joystick driver, on this thread) reads the
+// browser's Gamepad API; a pad the browser maps to the "standard" layout
+// needs nothing more. The original Xbox controllers (the Duke, 045e:0202,
+// and the Controller S, 045e:0285/0287/0288/0289) do: their buttons are A,
+// B, black, X, Y, white, back, start and the stick clicks, with no
+// shoulders. This puts them in the standard layout the game expects
+// (xinput_sdl.c: white and black on the shoulders):
+//   Chrome on Linux (xpad) reports them "standard" by the Xbox 360's order,
+//     which is wrong for a Duke: 2 is black, 3 X, 4 Y, 5 white, 10 the
+//     right stick click, 16 the left one;
+//   unmapped (Firefox on Linux, DirectInput drivers on Windows): the raw
+//     buttons above and the axes left X/Y, left trigger, right X/Y, right
+//     trigger (-1 at rest) and the D-pad as a hat (X, Y), or as buttons
+//     10-13 (left, right, up, down) after them.
+// Face buttons stay digital (xpad reports them so). Browsers show a pad only
+// after one of its buttons is pressed; the connection and disconnection
+// become a "halo:gamepad" event ({connected, index, id, name, layout:
+// "standard", "duke" or "unmapped"}; the site's game bridge passes it on)
+// and a short notice over the game.
+(() => {
+	const nativeGetGamepads = Navigator.prototype.getGamepads;
+	if (typeof nativeGetGamepads !== "function") return;
+	const DUKE_PRODUCTS = ["0202", "0285", "0287", "0288", "0289"];
+	// Chrome: "... (STANDARD GAMEPAD Vendor: 045e Product: 0289)" or
+	// "... (Vendor: 045e Product: 0289)"; Firefox: "45e-289-..." or "045e-0289-..."
+	const ids = (id) => {
+		let match = /Vendor: ([0-9a-f]{1,4}) Product: ([0-9a-f]{1,4})/i.exec(id);
+		if (!match) match = /^([0-9a-f]{1,4})-([0-9a-f]{1,4})-/i.exec(id);
+		return match ? [match[1].toLowerCase().padStart(4, "0"), match[2].toLowerCase().padStart(4, "0")] : [null, null];
+	};
+	const isDuke = (pad) => {
+		const [vendor, product] = ids(pad.id);
+		return vendor === "045e" && DUKE_PRODUCTS.includes(product);
+	};
+	const padName = (pad) => (pad.id || "Gamepad")
+		.replace(/\s*\((?:[^()]*STANDARD GAMEPAD[^()]*|Vendor: [0-9a-f]+ Product: [0-9a-f]+)\)\s*$/i, "")
+		.replace(/^[0-9a-f]{1,4}-[0-9a-f]{1,4}-/i, "").trim() || "Gamepad";
+	const button = (value, pressed) => ({ pressed: !!pressed, touched: !!pressed || value > 0, value });
+	const copy = (b) => (b ? button(typeof b === "object" ? b.value : b, typeof b === "object" ? b.pressed : b > 0.5) : button(0, false));
+	// a trigger axis rests at -1, but a browser reports 0 for an axis that has
+	// not moved yet: until one is seen at rest, only a push past 0 counts
+	const triggerRest = {};
+	const trigger = (pad, axis) => {
+		const value = pad.axes[axis] || 0;
+		const key = pad.index + ":" + axis;
+		if (value < -0.5) triggerRest[key] = true;
+		const pressure = triggerRest[key] ? (value + 1) / 2 : Math.max(0, value);
+		return button(pressure, pressure > 0.12);
+	};
+	const standardPad = (pad, buttons, axes) => ({
+		id: pad.id, index: pad.index, connected: pad.connected, timestamp: pad.timestamp,
+		mapping: "standard", axes, buttons, vibrationActuator: pad.vibrationActuator || null,
+		hapticActuators: pad.hapticActuators,
+	});
+	const remap = (pad) => {
+		if (!pad || !isDuke(pad)) return pad;
+		const b = pad.buttons || [];
+		const a = pad.axes || [];
+		if (pad.mapping === "standard") {
+			// the Xbox 360 order put on a Duke (Chrome, xpad)
+			const out = Array.from({ length: 17 }, (_, index) => copy(b[index]));
+			out[2] = copy(b[3]); out[3] = copy(b[4]); out[4] = copy(b[5]); out[5] = copy(b[2]);
+			out[10] = copy(b[16]); out[11] = copy(b[10]); out[16] = button(0, false);
+			return standardPad(pad, out, a.slice(0, 4));
+		}
+		if (b.length < 10 || a.length < 6) return pad;
+		const hatButtons = a.length < 8 && b.length >= 14;
+		const hatX = hatButtons ? 0 : a[6] || 0;
+		const hatY = hatButtons ? 0 : a[7] || 0;
+		const dpad = (index, down) => (hatButtons ? copy(b[index]) : button(down ? 1 : 0, down));
+		const out = [
+			copy(b[0]), copy(b[1]), copy(b[3]), copy(b[4]), copy(b[5]), copy(b[2]),
+			trigger(pad, 2), trigger(pad, 5), copy(b[6]), copy(b[7]), copy(b[8]), copy(b[9]),
+			dpad(12, hatY < -0.5), dpad(13, hatY > 0.5), dpad(10, hatX < -0.5), dpad(11, hatX > 0.5),
+			button(0, false),
+		];
+		return standardPad(pad, out, [a[0] || 0, a[1] || 0, a[3] || 0, a[4] || 0]);
+	};
+	Object.defineProperty(Navigator.prototype, "getGamepads", {
+		configurable: true, writable: true,
+		value: function getGamepads() {
+			const pads = nativeGetGamepads.call(this);
+			return pads ? Array.prototype.map.call(pads, remap) : pads;
+		},
+	});
+
+	const notice = document.createElement("div");
+	notice.id = "halo-gamepad-notice";
+	notice.hidden = true;
+	notice.setAttribute("role", "status");
+	notice.style.cssText = "position: fixed; left: 16px; top: 16px; z-index: 10; pointer-events: none; padding: 6px 12px;"
+		+ " border-radius: 4px; background: rgba(0, 0, 0, 0.75); color: #fff; font: 13px/1.3 system-ui, sans-serif; max-width: 60vw;";
+	let noticeTimer = 0;
+	const show = (text) => {
+		if (!notice.isConnected && document.body) document.body.appendChild(notice);
+		notice.textContent = text;
+		notice.hidden = false;
+		clearTimeout(noticeTimer);
+		noticeTimer = setTimeout(() => { notice.hidden = true; }, 5000);
+	};
+	window.haloGamepads = {};
+	const announce = (raw, connected) => {
+		if (!raw) return;
+		const layout = isDuke(raw) ? "duke" : raw.mapping === "standard" ? "standard" : "unmapped";
+		const detail = { connected, index: raw.index, id: raw.id, name: padName(raw), layout };
+		if (connected) window.haloGamepads[raw.index] = detail;
+		else delete window.haloGamepads[raw.index];
+		show(connected
+			? `🎮 ${detail.name} connected` + (layout === "duke" ? " (original Xbox layout)" : layout === "unmapped" ? " — no standard layout in this browser: some buttons may be wrong" : "")
+			: `🎮 ${detail.name} disconnected`);
+		window.dispatchEvent(new CustomEvent("halo:gamepad", { detail }));
+	};
+	// (capture phase on the window, before this script's halo.js: SDL takes
+	// the button and axis counts from the event's pad)
+	window.addEventListener("gamepadconnected", (event) => {
+		const raw = event.gamepad;
+		const mapped = remap(raw);
+		if (mapped !== raw) {
+			try { Object.defineProperty(event, "gamepad", { configurable: true, value: mapped }); } catch (error) { /* (kept) */ }
+		}
+		announce(raw, true);
+	}, true);
+	window.addEventListener("gamepaddisconnected", (event) => announce(event.gamepad, false), true);
 })();
 
 // Leaving: the game says the player left (web_library.js, web_leave_game).

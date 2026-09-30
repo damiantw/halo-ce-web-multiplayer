@@ -352,6 +352,28 @@ static const short ascii_to_key_code[NUMBER_OF_ASCII_CODES] =
 
 /* ---------- public code */
 
+/* the sticks' dead zone: the game's, or in the browser the one the player
+set on the site (HALO_WEB_STICK_DEADZONE, port/web/src/web_host.c) */
+#ifdef HALO_WEB
+static short stick_dead_range(
+	void)
+{
+	static int dead_range = -2;
+
+	if (dead_range == -2)
+	{
+		extern int web_stick_dead_zone(void);
+
+		dead_range = web_stick_dead_zone();
+		if (dead_range < 0)
+			dead_range = GAMEPAD_STICK_DEAD_RANGE;
+	}
+	return (short)dead_range;
+}
+#else
+#define stick_dead_range() GAMEPAD_STICK_DEAD_RANGE
+#endif
+
 short fix_dead_zone(
 	short value,
 	short dead_range)
@@ -977,16 +999,16 @@ static void input_get_device_states(
 
 				gamepad_state->sticks[_gamepad_stick_left].x = fix_dead_zone(
 					input_state.Gamepad.sThumbLX,
-					GAMEPAD_STICK_DEAD_RANGE);
+					stick_dead_range());
 				gamepad_state->sticks[_gamepad_stick_left].y = fix_dead_zone(
 					input_state.Gamepad.sThumbLY,
-					GAMEPAD_STICK_DEAD_RANGE);
+					stick_dead_range());
 				gamepad_state->sticks[_gamepad_stick_right].x = fix_dead_zone(
 					input_state.Gamepad.sThumbRX,
-					GAMEPAD_STICK_DEAD_RANGE);
+					stick_dead_range());
 				gamepad_state->sticks[_gamepad_stick_right].y = fix_dead_zone(
 					input_state.Gamepad.sThumbRY,
-					GAMEPAD_STICK_DEAD_RANGE);
+					stick_dead_range());
 			}
 			else
 			{

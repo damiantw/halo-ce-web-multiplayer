@@ -166,6 +166,10 @@ typedef char verify_input_abstraction_runtime_globals_size[
 
 static void set_default_game_input_preferences(
 	struct game_input_preferences *preferences);
+#ifdef HALO_WEB
+static void web_apply_input_settings(
+	struct game_input_preferences *preferences);
+#endif
 static boolean local_player_is_piloting_aircraft(
 	short controller_index);
 
@@ -196,6 +200,10 @@ void input_abstraction_initialize(
 	{
 		set_default_game_input_preferences(
 			&input_abstraction_globals.player_control_preferences[controller_index]);
+#ifdef HALO_WEB
+		web_apply_input_settings(
+			&input_abstraction_globals.player_control_preferences[controller_index]);
+#endif
 		input_abstraction_globals.controller_available[controller_index] =
 			input_has_gamepad((short)controller_index);
 	}
@@ -268,6 +276,10 @@ void input_abstraction_update_local_player_preferences(
 		&input_abstraction_globals.player_control_preferences[controller_index],
 		preferences,
 		sizeof(*preferences));
+#ifdef HALO_WEB
+	web_apply_input_settings(
+		&input_abstraction_globals.player_control_preferences[controller_index]);
+#endif
 
 	return;
 }
@@ -701,3 +713,28 @@ static void set_default_game_input_preferences(
 
 	return;
 }
+
+#ifdef HALO_WEB
+/* port: in the browser the player's look settings come from the site
+(HALO_WEB_LOOK_SENSITIVITY, HALO_WEB_INVERT_LOOK; port/web/src/web_host.c)
+and win over the defaults and the profile's: the look sensitivity gives the
+rates player_ui.c's tables give that profile setting (1-10, 3 by default) */
+static void web_apply_input_settings(
+	struct game_input_preferences *preferences)
+{
+	extern int web_look_sensitivity(void);
+	extern int web_invert_look(void);
+	int sensitivity = web_look_sensitivity();
+	int invert = web_invert_look();
+
+	if (sensitivity >= 1)
+	{
+		preferences->pitch_rate = 40.f + 10.f * (real)(sensitivity - 1);
+		preferences->yaw_rate = 80.f + 20.f * (real)(sensitivity - 1);
+	}
+	if (invert >= 0)
+		preferences->invert_look = invert ? TRUE : FALSE;
+
+	return;
+}
+#endif
