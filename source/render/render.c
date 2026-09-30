@@ -258,6 +258,10 @@ static void render_nonplayer_frame(
 	return;
 }
 
+#ifdef HALO_LINUX
+boolean web_lobby_screen_hidden(void);
+#endif
+
 void render_frame_pregame(
 	struct render_window const *window,
 	struct bitmap_data *bitmap)
@@ -283,9 +287,15 @@ void render_frame_pregame(
 	rasterizer_window_begin(&rasterizer_parameters);
 
 #ifdef HALO_LINUX
-	halo_screen_ui_offset(TRUE);
-	render_ui_widgets(0, &window->rasterizer_camera.viewport_bounds);
-	halo_screen_ui_offset(FALSE);
+	/* (the web build without menus draws no lobby screen while it joins a
+	game or loads the next one: only the loading bar, port/linux/game/
+	auto_join.c's web_lobby_screen_hidden; the widgets still run) */
+	if (!web_lobby_screen_hidden())
+	{
+		halo_screen_ui_offset(TRUE);
+		render_ui_widgets(0, &window->rasterizer_camera.viewport_bounds);
+		halo_screen_ui_offset(FALSE);
+	}
 #else
 	render_ui_widgets(0, &window->rasterizer_camera.viewport_bounds);
 #endif
