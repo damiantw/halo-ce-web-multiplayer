@@ -296,3 +296,42 @@ void auto_join_update(
 			platform_log("auto join: player added");
 	}
 }
+
+/* whether the lobby's screen is left undrawn (render.c's
+render_frame_pregame): the web build without menus never shows the SELECT
+TEAMS screen (the site picked the team, and the lobby has nothing to do)
+while the machine joins a game, waits in the lobby for the next map or
+starts loading it, which it would show for as long as the map downloads
+and loads between games (the scores, in the postgame state, stay). Only
+the drawing: the screen stays open and the game's states are as before
+(hiding them otherwise broke machines joining a game in progress). The
+page shows the download's progress (Module.setStatus), the game its
+loading bar. */
+boolean web_lobby_screen_hidden(
+	void)
+{
+#if defined(HALO_WEB) && defined(HALO_MULTIPLAYER_ONLY)
+	/* network_game_globals.c's enum network_game_client_state */
+	enum
+	{
+		_client_state_joining = 1,
+		_client_state_pregame = 2,
+		/* (told to load the game: until its map is loaded) */
+		_client_state_ingame = 3,
+	};
+	struct network_game_client *client;
+	short state;
+
+	if (!web_multiplayer_only() ||
+		game_connection() != _game_connection_network_client ||
+		(client = global_network_game_client_get()) == NULL ||
+		network_game_client_get_error(client))
+	{
+		return FALSE;
+	}
+	state = network_game_client_get_state(client, NULL);
+	return state == _client_state_joining || state == _client_state_pregame || state == _client_state_ingame;
+#else
+	return FALSE;
+#endif
+}
