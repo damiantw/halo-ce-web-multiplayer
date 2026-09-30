@@ -4666,7 +4666,7 @@ static void perform_filesystem_initialization(
 #if defined(HALO_WEB) && defined(HALO_MULTIPLAYER_ONLY)
 /* port/linux/game/auto_join.c's */
 boolean web_multiplayer_only(void);
-void web_leave(short reason, short error_code);
+void web_menu_requested(short error_code);
 #endif
 
 void main_screen_shell_load(
@@ -4680,7 +4680,8 @@ void main_screen_shell_load(
 	the main menu scenario loads without the intro movie, the menu or its
 	music, and the game joins the server the site's page picked by itself;
 	coming back here later (the pause menu's Quit, B in the lobby, a lost
-	connection or a refused join, with its error) leaves the page */
+	connection or a refused join, with its error) leaves the page, unless
+	the auto-join starts over (auto_join.c, web_menu_requested) */
 	if (web_multiplayer_only())
 	{
 		ui_widgets_close_all();
@@ -4691,7 +4692,7 @@ void main_screen_shell_load(
 		}
 		else
 		{
-			web_leave(0, widget_globals.main_menu_deferred_error_code);
+			web_menu_requested(widget_globals.main_menu_deferred_error_code);
 		}
 		widget_globals.main_menu_deferred_error_code = NONE;
 		if (!virtual_keyboard_initialize())

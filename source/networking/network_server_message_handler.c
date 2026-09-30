@@ -2037,6 +2037,42 @@ static boolean network_game_server_handle_message_client_join_game_request(
 			result = FALSE;
 		}
 	}
+#ifdef HALO_LINUX
+	/* a machine asking to join once the game has started (a distributed game
+	that has ended, network_game_server_accepts_late_joins, or its scores):
+	the game is closed, and the machine is told so rather than left waiting
+	for an answer that never comes (it is joining until its connection times
+	out, then back at the main menu); web.join joins again when the lobby
+	opens (auto_join.c) */
+	else if (!network_game_server_client_machine_is_joined_to_game(server, server_client_machine))
+	{
+		struct message_server_machine_rejected rejection;
+		struct network_message *reply;
+
+		rejection.reason = _rejection_code_game_is_closed;
+		network_event("refused a machine's join: the game has started or ended (the server is in state %d)",
+			network_game_server_get_state(server, NULL));
+		reply = create_network_game_message(
+			_message_server_machine_rejected,
+			&rejection,
+			sizeof(rejection));
+		if (reply)
+		{
+			word message_size = GET_MESSAGE_SIZE(reply->header);
+
+			if (!network_game_server_write(
+				network_game_server_get_client_connection(server_client_machine),
+				reply,
+				message_size,
+				NULL,
+				1))
+			{
+				network_event("network_game_server_write() failed while sending a rejection reply");
+			}
+		}
+		result = FALSE;
+	}
+#endif
 
 	return result;
 }
@@ -2084,8 +2120,7 @@ static boolean network_game_server_handle_message_client_add_player_request_preg
 #ifdef HALO_LINUX
 	/* a machine joining the game in progress: its players are added as in
 	game (network_game_server_start_late_joiner then starts it) */
-	else if (network_game_server_accepts_late_joins(server) &&
-		!network_game_server_client_machine_is_loaded(server, client_machine))
+	else if (network_game_server_takes_late_joiner(server, client_machine))
 	{
 		struct network_player player;
 		short packet_type = _message_client_add_player_request_pregame;
@@ -2176,8 +2211,7 @@ static boolean network_game_server_handle_message_client_settings_request(
 	/* (or a machine joining the game in progress, before it loads: its name,
 	which the game otherwise never learns) */
 	if (network_game_server_get_state(server, NULL) == _network_game_server_state_pregame ||
-		(network_game_server_accepts_late_joins(server) &&
-			!network_game_server_client_machine_is_loaded(server, client_machine)))
+		network_game_server_takes_late_joiner(server, client_machine))
 #else
 	if (network_game_server_get_state(server, NULL) == _network_game_server_state_pregame)
 #endif
@@ -2447,11 +2481,20 @@ static boolean network_game_server_handle_message_client_loaded(
 		}
 	}
 #ifdef HALO_LINUX
-	/* a machine that joined the game in progress has loaded it */
-	else if (network_game_server_accepts_late_joins(server) &&
-		!network_game_server_client_machine_is_loaded(server, client_machine))
+	/* a machine that joined the game in progress has loaded it (also as the
+	game ends: it then plays the end and the scores) */
+	else if (network_game_server_takes_late_joiner(server, client_machine))
 	{
 		network_game_server_late_joiner_loaded(server, client_machine);
+	}
+	/* (or one the game let go as it ended, or is about to, which loaded it
+	meanwhile: told, it leaves) */
+	else if (network_game_server_client_machine_let_go(server, client_machine) ||
+		(network_game_distributed() &&
+			network_game_server_get_state(server, NULL) == _network_game_server_state_ingame &&
+			game_engine_game_is_ending()))
+	{
+		network_event("ignoring a message_client_loaded message from a machine let go");
 	}
 #endif
 	else

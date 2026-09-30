@@ -6142,6 +6142,17 @@ boolean game_engine_allow_pause(
 	return game_engine_globals.postgame_state==0;
 }
 
+#ifdef HALO_LINUX
+/* the game has ended: its end (the 7 seconds before the scores) or its
+scores are showing (network_server_manager.c closes a distributed game to
+new machines from then) */
+boolean game_engine_game_is_ending(
+	void)
+{
+	return game_engine != NULL && game_engine_globals.postgame_state != 0;
+}
+#endif
+
 boolean game_engine_allow_dynamic_lighting(
 	void)
 {

@@ -3163,6 +3163,51 @@ boolean network_game_client_advertised_game_compatible(
 	return FALSE;
 }
 
+/* a game in progress that ended as this machine loaded it let it go
+(network_client_message_handler.c): the client is left, and auto_join.c
+joins again */
+static boolean network_game_client_let_go;
+
+void network_game_client_set_let_go(
+	void)
+{
+	network_game_client_let_go = TRUE;
+}
+
+boolean network_game_client_take_let_go(
+	void)
+{
+	boolean let_go = network_game_client_let_go;
+
+	network_game_client_let_go = FALSE;
+	return let_go;
+}
+
+/* auto_join.c's: what the client has of a game: 0 none (no client, or
+searching), 1 joining one, 2 in its lobby, 3 playing it or its scores */
+short network_game_client_join_progress(
+	void)
+{
+	struct network_game_client *client = global_network_game_client_get();
+
+	if (!client)
+		return 0;
+	switch (client->state)
+	{
+	case _network_game_client_state_joining:
+		return 1;
+	case _network_game_client_state_pregame:
+		return 2;
+	case _network_game_client_state_ingame:
+	case _network_game_client_state_postgame:
+		return 3;
+	default:
+		/* (searching: a join that starts is joining at once,
+		network_game_client_initiate_join_game) */
+		return 0;
+	}
+}
+
 boolean network_game_client_join_first_available_game(
 	void)
 {
