@@ -1,29 +1,46 @@
-# Halo: Combat Evolved: dedicated servers and multiplayer in the browser
+# Halo CE web multiplayer
 
-This repository is a fork of
+**Play it: [halo.damian.lol](https://halo.damian.lol)**. Halo: Combat Evolved
+multiplayer in the browser, against other browser players, on dedicated
+servers.
+
+This repository is the game side of that site:
+
+- a **WebAssembly client** that runs the game in the browser (WebGL 2);
+- a **headless Linux dedicated server** that hosts games from a rotation,
+  controlled over its pipes;
+- **halo-gateway**, a small Go daemon that carries the browsers' traffic
+  (WebSocket, with a WebRTC data channel for datagrams) to the dedicated servers.
+
+It is a fork of
 [cybersecurity/halo-ce-universal](https://github.com/cybersecurity/halo-ce-universal),
 the port of the Halo: Combat Evolved decompilation to Linux, Windows and
-Android. The decompilation is of the Xbox build 2342 (`cachebeta.exe`,
-SHA-256
+Android. That port starts from [bnunu/halo-1](https://github.com/bnunu/halo-1),
+a fork of [punpckhdq/halo](https://github.com/punpckhdq/halo), the
+decompilation of the Xbox build 2342 (`cachebeta.exe`, SHA-256
 `4cc87b45f721270392a96f1674ed2b5cd4a7bb4355faeab4531d1cf1884d9520`).
 
-<img width="1289" height="995" alt="The game on Linux" src="https://github.com/user-attachments/assets/0d3ad50f-f8b8-46cf-aef8-e3661da2a7d7" />
+**No game data is included or provided.** You need your own legitimately
+obtained copy of Halo: Combat Evolved for the Xbox. Refer to "Game data".
+Halo is a trademark of Microsoft; this project is not affiliated with or
+endorsed by Microsoft or Bungie.
 
-The original port starts from the decompilation of
-[bnunu/halo-1](https://github.com/bnunu/halo-1), a fork of
-[punpckhdq/halo](https://github.com/punpckhdq/halo).
+## How it differs from upstream
 
-## What this fork adds
-
-The original project is a port for players: a game that you download,
-point at a disc image and play, on a local network or over the internet.
-This fork adds what a service needs to **host** Halo multiplayer:
+The upstream project is a port for players: a game that you download, point
+at a disc image and play, on a local network or over the internet. This fork
+is for **hosting** Halo multiplayer as a service, with the browser as the client:
 
 | Part | What it is | Where |
 | --- | --- | --- |
 | **Dedicated server** | The Linux build, started headless: no window, GPU, audio or player of its own. It hosts system link games forever from a map and game type rotation, and a supervising process controls it through JSON over its pipes. | [port/linux/README.md, "Dedicated server"](port/linux/README.md#dedicated-server) |
 | **WebAssembly client** | The game compiled with Emscripten (`ninja web`) for the browser, WebGL 2. By default it is **multiplayer only, with no menus**: the page that embeds it picks the player's name, colour, team and server, and the game loads straight into that server's game (the dedicated server runs its rotation back to back, with no lobby countdown). | [docs/gateway.md](docs/gateway.md), [docs/wasm-spike.md](docs/wasm-spike.md) |
 | **Gateway** (`halo-gateway`) | A small Go daemon that runs next to the dedicated servers. A browser has no UDP or TCP sockets, so the web client's sockets are framed onto one WebSocket to the gateway, which owns the real sockets. The game's datagrams move to a WebRTC data channel (unordered, no retransmits, as UDP) when one can open, with the WebSocket as the fallback. Access is by short-lived signed join tokens. | [port/gateway](port/gateway), [docs/gateway.md](docs/gateway.md) |
+
+The fork uses upstream's distributed netcode (the lockstep netcode is
+removed, as upstream did) and takes upstream changes selectively; see
+[docs/upstream-lockstep-removal-plan.md](docs/upstream-lockstep-removal-plan.md)
+for an example of how a change is reviewed and ported.
 
 ## Supported builds
 
@@ -107,7 +124,8 @@ configuration, and the multiplayer-only build.
 
 ## Game data
 
-This repository does not include the game data. Use your own Xbox disc
+This repository does not include the game data, and none is provided
+anywhere by this project. Use your own Xbox disc
 image (`.xiso` or `.iso`) of Halo: Combat Evolved. All versions of the game
 operate. The maps of the European (PAL) version were made for a slower
 console; the port changes them to play as the North American (NTSC) maps
@@ -225,3 +243,26 @@ Xbox SDK is not free to distribute. The sources of that build are not
 changed. To use it again, set `SolutionConfig.matching` in
 `tools/project_x86.py`. You must also have the Xbox SDK in `xbox/` and
 `cachebeta.exe` in the root folder.
+
+## Credits
+
+- [punpckhdq/halo](https://github.com/punpckhdq/halo): the Halo: Combat
+  Evolved decompilation and its byte-matching build (CC0-1.0).
+- [bnunu/halo-1](https://github.com/bnunu/halo-1): the fork of the
+  decompilation that the port starts from (CC0-1.0).
+- [cybersecurity/halo-ce-universal](https://github.com/cybersecurity/halo-ce-universal):
+  the port to Linux, Windows and Android (Direct3D 8 on OpenGL, SDL3 input
+  and sound, the system link netcode), which this repository forks (CC0-1.0).
+- Everyone credited in those projects, and the third-party code in
+  [port/third_party](port/third_party) (each directory has its license).
+- Tools and libraries: [Emscripten](https://github.com/emscripten-core/emscripten),
+  [SDL](https://github.com/libsdl-org/SDL), [Ninja](https://ninja-build.org/),
+  [Pion WebRTC](https://github.com/pion/webrtc) and
+  [coder/websocket](https://github.com/coder/websocket) (the gateway).
+- The community multiplayer maps that [halo.damian.lol](https://halo.damian.lol)
+  hosts are credited on its [credits page](https://halo.damian.lol/credits).
+
+## License
+
+[CC0-1.0](LICENSE.md), as upstream. Third-party code keeps its own license
+(see each directory under `port/third_party`).

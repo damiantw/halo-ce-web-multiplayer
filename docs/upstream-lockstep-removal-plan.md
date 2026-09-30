@@ -1,6 +1,6 @@
 # Upstream "Remove the lockstep netcode" (cybersecurity/halo-ce-universal a3ed50c5) — review and plan
 
-Written 2026-09-30 for damiantw/halo-ce-universal (our fork) + laravel-halo (dedicated servers, Go gateway, WebRTC).
+Written 2026-09-30 for damiantw/halo-ce-web-multiplayer (our fork, then named damiantw/halo-ce-universal) + laravel-halo (dedicated servers, Go gateway, WebRTC).
 **Status (2026-09-30, the PR that adds this document):** option B, steps 1-3 in part:
 - a3ed50c5 (remove lockstep): cherry-picked (`-x`) onto our `#ifdef HALO_LINUX` tree. Upstream's changes
   go in the HALO_LINUX branches, and the Xbox (non-HALO_LINUX) branches keep the original code.
