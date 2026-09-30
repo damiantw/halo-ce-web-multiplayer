@@ -14,14 +14,14 @@ import (
 
 func TestRewriteCandidates(t *testing.T) {
 	r := &rtcServer{port: 40000, cfg: rtcConfig{Port: 3478, PublicIPs: []netip.Addr{
-		netip.MustParseAddr("64.176.197.12"), netip.MustParseAddr("2001:19f0:5:1c9:5400:6ff:fec4:6c76")}}}
+		netip.MustParseAddr("203.0.113.10"), netip.MustParseAddr("2001:db8::10")}}}
 	sdp := "v=0\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\na=mid:0\r\n" +
 		"a=candidate:1 1 udp 2130706431 172.18.0.3 40000 typ host\r\na=end-of-candidates\r\na=sctp-port:5000\r\n"
 	out := r.rewriteCandidates(sdp)
 	if strings.Contains(out, "172.18.0.3") {
 		t.Fatalf("private candidate kept:\n%s", out)
 	}
-	for _, want := range []string{"64.176.197.12 3478 typ host", "2001:19f0:5:1c9:5400:6ff:fec4:6c76 3478 typ host", "a=sctp-port:5000", "a=end-of-candidates"} {
+	for _, want := range []string{"203.0.113.10 3478 typ host", "2001:db8::10 3478 typ host", "a=sctp-port:5000", "a=end-of-candidates"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
 		}
