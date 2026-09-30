@@ -9,12 +9,19 @@ does (the automated host of network_test.c, without its player):
 
 - once the main menu has loaded it hosts a game with the rotation's first
   map and game type (server.rotation);
-- in the lobby the countdown (server.countdown seconds) starts whenever
-  server.minimum_players players are in, and is never left paused;
-- a game nobody is left in ends after server.empty_seconds;
-- server.postgame_seconds after the scores show, the lobby opens again with
-  the rotation's next map and game type (game_engine.c's postgame, which
-  would wait for the host to press a button);
+- without server.lobby (the default) the games follow one another without a
+  lobby: a game starts as soon as a player is in (no countdown, no minimum
+  number of players, a team game with one team only), and the players who
+  join a game in progress go straight into it (the distributed netcode's
+  late joins); with server.lobby the countdown (server.countdown seconds)
+  starts whenever server.minimum_players players are in the lobby, and is
+  never left paused;
+- a game nobody is left in ends after server.empty_seconds (and the server
+  then waits, idle, for the next player);
+- server.postgame_seconds after the scores show, the rotation's next map and
+  game type is set up (game_engine.c's postgame, which would wait for the
+  host to press a button): the next game starts at once when there are
+  players, else when the first one joins;
 - a game lost to a network failure or an abort (the server gone, back at the
   main menu) is hosted again after server.rehost_seconds;
 - SIGINT or SIGTERM tells the players and quits (sdl_platform.c's
@@ -202,6 +209,9 @@ static struct
 	the lobby takes the new one */
 	boolean reapply_next;
 
+	/* server.lobby: the lobby waits for minimum_players and counts down;
+	else the games start at once */
+	boolean lobby;
 	long minimum_players;
 	long maximum_players;
 	long countdown_milliseconds;
@@ -389,9 +399,18 @@ static void dedicated_log_rotation(
 {
 	short index;
 
-	platform_log("dedicated server: \"%s\", %ld to %ld players, %ld second countdown, %d game rotation:",
-		config_string("server.name"), dedicated.minimum_players, dedicated.maximum_players, (dedicated.countdown_milliseconds + 1) / 1000,
-		dedicated.rotation_count);
+	if (dedicated.lobby)
+	{
+		platform_log("dedicated server: \"%s\", %ld to %ld players, %ld second countdown, %d game rotation:",
+			config_string("server.name"), dedicated.minimum_players, dedicated.maximum_players,
+			(dedicated.countdown_milliseconds + 1) / 1000, dedicated.rotation_count);
+	}
+	else
+	{
+		platform_log("dedicated server: \"%s\", up to %ld players, games back to back (no lobby), %.0f seconds of "
+			"scores, %d game rotation:", config_string("server.name"), dedicated.maximum_players,
+			(double)dedicated.postgame_seconds, dedicated.rotation_count);
+	}
 	for (index = 0; index < dedicated.rotation_count; index++)
 	{
 		platform_log("dedicated server:   %d. %s (%s%s%s)", index + 1, dedicated.rotation[index].map_path,
@@ -440,6 +459,14 @@ static void dedicated_read_numbers(
 	/* (the 999 the original countdowns end on, so the last second shows) */
 	if (dedicated.countdown_milliseconds)
 		dedicated.countdown_milliseconds -= 1;
+	/* (no lobby: a game starts as soon as one player is in, the host's
+	immediate start) */
+	dedicated.lobby = config_boolean("server.lobby") != 0;
+	if (!dedicated.lobby)
+	{
+		dedicated.minimum_players = 1;
+		dedicated.countdown_milliseconds = 0;
+	}
 	dedicated.postgame_seconds = dedicated_seconds_setting("server.postgame_seconds", 0, 3600);
 	dedicated.empty_seconds = dedicated_seconds_setting("server.empty_seconds", 0, 86400);
 	dedicated.rehost_seconds = dedicated_seconds_setting("server.rehost_seconds", 1, 3600);
@@ -1202,6 +1229,7 @@ static void dedicated_write_settings(
 {
 	control_key("settings");
 	control_object_begin();
+	control_field_boolean("lobby", dedicated.lobby);
 	control_field_integer("countdown", (dedicated.countdown_milliseconds + 1) / 1000);
 	control_field_integer("minimum_players", dedicated.minimum_players);
 	control_field_integer("max_players", dedicated.maximum_players);
@@ -1435,8 +1463,9 @@ static boolean dedicated_reload(
 {
 	static char const *const names[] =
 	{
-		"server.rotation", "server.countdown", "server.minimum_players", "server.max_players", "server.postgame_seconds",
-		"server.empty_seconds", "server.rehost_seconds", "server.status_interval", "server.control_exit_on_eof",
+		"server.rotation", "server.lobby", "server.countdown", "server.minimum_players", "server.max_players",
+		"server.postgame_seconds", "server.empty_seconds", "server.rehost_seconds", "server.status_interval",
+		"server.control_exit_on_eof",
 	};
 	static struct dedicated_rotation_entry entries[MAXIMUM_ROTATION_ENTRIES];
 	boolean rotation_changed = FALSE;

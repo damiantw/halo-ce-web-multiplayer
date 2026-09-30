@@ -2488,6 +2488,33 @@ static boolean can_delete_item(
 	return result;
 }
 
+#ifdef HALO_WEB
+extern wchar_t const *halo_linux_button_key_name(short button);
+
+/* the word BACK (the back button) in a message, replaced by the keyboard's
+key for it while the player uses the keyboard; a gamepad keeps BACK */
+static void game_engine_web_name_back_key(
+	wchar_t *message,
+	long message_character_count)
+{
+	/* (the back button in the HUD's icon order) */
+	wchar_t const *key = halo_linux_button_key_name(13);
+	wchar_t *word;
+	wchar_t rest[128];
+
+	if (!key || !message || message_character_count <= 0)
+		return;
+	word = wcsstr(message, L"BACK");
+	if (!word)
+		return;
+	rest[0] = 0;
+	wcsncat(rest, word + 4, NUMBEROF(rest) - 1);
+	*word = 0;
+	wcsncat(message, key, message_character_count - 1 - wcslen(message));
+	wcsncat(message, rest, message_character_count - 1 - wcslen(message));
+}
+#endif
+
 static boolean multiplayer_message_internal(
 	long player_index,
 	long parameter1,
@@ -7918,6 +7945,13 @@ boolean game_engine_get_state_message(
 				NONE,
 				message,
 				message_character_count);
+#ifdef HALO_WEB
+			/* "Hold BACK for score" names the keyboard key for the back
+			button ("Hold F1 for score") while the player uses the keyboard
+			(port/linux/src/xinput_sdl.c) */
+			if (result)
+				game_engine_web_name_back_key(message, message_character_count);
+#endif
 		}
 		else if (player->state_message != NONE)
 		{

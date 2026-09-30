@@ -231,7 +231,9 @@ colour and server, and the game only joins and plays.
 - **No main menu.** `main_screen_shell_load` (`ui_widget.c`) only initialises the file system on the first
   load (no intro movie, no main menu, no menu music), and the auto-join (`auto_join.c`, forced to
   `HALO_WEB_JOIN=first` with a 0.5 s settle) joins the game its token allows as soon as the lobby browser
-  sees it: the page goes from loading straight to the server's lobby.
+  sees it: the page goes from loading straight to the server's pregame screen, which only shows while the map
+  loads: the dedicated servers start a game as soon as a player is in and run their rotation back to back
+  (`server.lobby = false`), and a machine that joins a game in progress goes into it.
 - **Leaving goes back to the site.** Every later return to the main menu (Quit in the pause menu, B in the
   lobby, a lost connection, a refused join, an error) calls `web_leave` instead, as does finding no game
   within 45 s. JS gets a cancelable `halo:leave` event on `window` with `detail = {reason: "left" |
