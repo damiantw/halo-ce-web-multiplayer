@@ -141,14 +141,15 @@ addToLibrary({
 	// web_frame_statistics: frame timing, webnet_stats' values, send errors),
 	// run on the page's main thread (the game's is a worker). They become
 	// Module.haloStats and a "halo:stats" event on the page, for the site's
-	// wrapper to show. Counters are totals: the page takes differences.
+	// wrapper to show. Counters are totals: the page takes differences. The
+	// 1% low is null right after a map loads (too few frames yet).
 	webstats_publish__proxy: "async",
 	webstats_publish: (values, count) => {
 		values >>>= 0;
 		const v = HEAPF64.slice(values >> 3, (values >> 3) + count);
 		const number = (x) => (Number.isFinite(x) ? x : null);
 		const stats = {
-			fps: v[0], frameMs: v[1], low1Fps: v[2], maxFrameMs: v[3], frames: v[4],
+			fps: v[0], frameMs: v[1], low1Fps: number(v[2]), maxFrameMs: v[3], frames: v[4],
 			net: { open: !!v[5], pingMs: number(v[6]), buffered: v[7], framesIn: v[8], framesOut: v[9],
 				bytesIn: v[10], bytesOut: v[11], dropped: v[12], waiting: v[13], closes: v[14],
 				sendErrors: v[15] },

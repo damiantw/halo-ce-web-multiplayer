@@ -22,6 +22,10 @@
 // Diagnostics, given with env= (the site's /play passes env= through):
 //   HALO_WEB_DPR=<n>   the device pixel ratio the game sees (1: a drawing
 //                      buffer of the canvas's CSS size on a Retina screen)
+// What this build understands, for the site's game bridge (which runs before
+// the game starts, after this script): webJoin, the web.join setting
+// (HALO_WEB_JOIN=first, port/linux/game/auto_join.c).
+window.haloFeatures = Object.assign(window.haloFeatures || {}, { webJoin: true });
 (() => {
 	const params = new URLSearchParams(location.search);
 	const envParam = (name) => {

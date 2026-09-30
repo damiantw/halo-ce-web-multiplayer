@@ -117,7 +117,9 @@ allocation and the client limit, discovery fan-out and hub broadcasts over real 
    `?env=HALO_WEB_GATEWAY=wss://<host>/gateway,HALO_WEB_TOKEN=<token>,HALO_WEB_ADDRESS=<address>,HALO_WEB_TOKEN_URL=/play/token`.
    Add `HALO_WEB_PLAYER_NAME=<name>` (URL-encoded UTF-8, up to 11 characters, no commas: they separate the
    settings) to name the player and its
-   machine; without it the profile's name or a random one is used.
+   machine; without it the profile's name or a random one is used. Add `HALO_WEB_JOIN=first` to join the
+   first game found by itself (`port/linux/game/auto_join.c`): with a token limited to one server, that server.
+   The loader sets `window.haloFeatures.webJoin` so the page can tell builds that know the setting.
    `/maps/index.json` lists `[{name, size}]`, and `/maps/<name>.map` serves the files with Range support. For the
    multiplayer-only build it needs only `ui.map` and the multiplayer maps.
 5. **nginx**:

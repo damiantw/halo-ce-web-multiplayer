@@ -12,7 +12,9 @@ Automated system link sessions for testing the netcode without the menus
   the system link list does.
 
 Once the game runs, every second each machine logs where every player's
-unit is, so the machines' views of the game can be compared.
+unit is, so the machines' views of the game can be compared
+(debug.network_log, HALO_NETWORK_LOG, logs that without a test: for a web
+client that joined with web.join, auto_join.c).
 
 Scripted play for the netcode's parts the bots' wandering does not reach:
 debug.network_test_kill (the host kills the last player every so often),
@@ -64,6 +66,9 @@ void network_distributed_item_statistics(long *creates, long *deletes, long *fai
 void network_damage_statistics(long *sent_reports, long *dealt_reports, long *rejected_reports, long *replayed_events);
 /* xinput_sdl.c's */
 void test_input_hold_action(int hold);
+/* auto_join.c's */
+boolean auto_join_enabled(void);
+int config_boolean(const char *name);
 
 enum
 {
@@ -76,6 +81,7 @@ static struct
 {
 	boolean checked;
 	short mode;
+	boolean log;
 	char map_name[64];
 	char variant_name[64];
 	real start_delay;
@@ -124,6 +130,7 @@ static void network_test_read_settings(
 	network_test.shoot_interval = (real)config_real("debug.network_test_shoot");
 	network_test.vehicle_time = (real)config_real("debug.network_test_vehicle");
 	network_test.pickup_time = (real)config_real("debug.network_test_pickup");
+	network_test.log = network_test.mode != _network_test_off || config_boolean("debug.network_log");
 	if (network_test.mode != _network_test_off)
 		platform_log("network test: %s", setting);
 }
@@ -468,7 +475,7 @@ void network_test_update(
 	}
 	if (!network_test.checked)
 		network_test_read_settings();
-	if (network_test.mode == _network_test_off)
+	if (!network_test.log)
 		return;
 
 	/* the game running: report */
@@ -570,7 +577,7 @@ void network_test_update(
 		}
 	}
 
-	if (!main_menu_loaded)
+	if (network_test.mode == _network_test_off || !main_menu_loaded)
 		return;
 	network_test.menu_seconds += seconds;
 	/* (the main menu settling first) */
@@ -617,6 +624,9 @@ void network_test_update(
 		}
 		break;
 	case _network_test_join:
+		/* web.join does the joining (auto_join.c) */
+		if (auto_join_enabled())
+			break;
 		if (!network_test.set_up)
 		{
 			network_test.set_up = TRUE;

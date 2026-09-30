@@ -656,6 +656,8 @@ typedef char screenshot_and_framerate_globals_size_assert[
 
 #ifdef HALO_LINUX
 void network_test_update(boolean main_menu_loaded, real seconds);
+/* joining without the menus (port/linux/game/auto_join.c, web.join) */
+void auto_join_update(boolean main_menu_loaded, real seconds);
 /* the headless dedicated server (port/linux/game/dedicated_server.c,
 port/linux/src/sdl_platform.c) */
 void dedicated_server_update(boolean main_menu_loaded, real seconds);
@@ -3312,7 +3314,10 @@ void main_loop(
 			if (halo_dedicated_server())
 				dedicated_server_update(main_globals.main_menu_scenario_loaded, main_globals.seconds_elapsed);
 			else
+			{
+				auto_join_update(main_globals.main_menu_scenario_loaded, main_globals.seconds_elapsed);
 				network_test_update(main_globals.main_menu_scenario_loaded, main_globals.seconds_elapsed);
+			}
 #endif
 			connection = main_globals.connection;
 			if (connection==_game_connection_network_client)

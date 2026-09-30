@@ -696,6 +696,9 @@ boolean game_load(
 #ifdef HALO_LINUX
 void network_distributed_new_game(void);
 void network_objects_placed(void);
+/* maps loaded so far: the web build's frame statistics (sdl_platform.c)
+start their 1% low over after each, leaving out the loading hitches */
+unsigned long game_new_map_count;
 #endif
 
 void game_initialize_for_new_map(
@@ -745,6 +748,7 @@ void game_initialize_for_new_map(
 	/* nothing of the distributed netcode's carried into the new game
 	(port/linux/game/network_distributed.c) */
 	network_distributed_new_game();
+	game_new_map_count++;
 #endif
 	game_statistics_start();
 	update_server_new();
