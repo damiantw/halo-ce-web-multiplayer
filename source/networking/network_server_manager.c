@@ -812,6 +812,11 @@ void get_unique_random_color(
 static boolean player_name_is_unique(
 	struct network_game_server *server,
 	wchar_t const *name);
+#ifdef HALO_LINUX
+static void number_player_name(
+	struct network_game_server *server,
+	struct network_player *player);
+#endif
 static void network_game_server_dump(
 	struct network_game_server *server);
 
@@ -1927,6 +1932,14 @@ boolean network_game_server_add_player_to_game(
 		if (!player->name[0])
 			get_unique_random_name(server, player);
 
+#ifdef HALO_LINUX
+		/* port: a name another player in the game has (two players chose the
+		same name on the site, or one rejoins before its old player is gone) is
+		numbered ("Name2"), not replaced by a random name, which a dedicated
+		server's game has none of (below): the original gives a random one */
+		if (!player_name_is_unique(server, player->name))
+			number_player_name(server, player);
+#endif
 		if (!player_name_is_unique(server, player->name))
 			get_unique_random_name(server, player);
 #ifdef HALO_LINUX
@@ -3686,31 +3699,7 @@ void get_unique_random_name(
 	/* every random name is taken: number this one ("Name2", "Name3", ...)
 	until it is unique */
 	if (duplicate_count != 0)
-	{
-		wchar_t base_name[NETWORK_PLAYER_NAME_LENGTH];
-		long number;
-
-		csmemcpy(base_name, player->name, sizeof(base_name));
-		for (number = 2; number < 1000 && !player_name_is_unique(server, player->name); number++)
-		{
-			wchar_t digits[4];
-			long digit_count = 0;
-			long base_length = (long)ustrlen(base_name);
-			long value;
-
-			for (value = number; value; value /= 10)
-			{
-				digits[digit_count++] = (wchar_t)(L'0' + value % 10);
-			}
-			base_length = MIN(base_length, NETWORK_PLAYER_NAME_LENGTH - 1 - digit_count);
-			csmemcpy(player->name, base_name, base_length * sizeof(wchar_t));
-			while (digit_count > 0)
-			{
-				player->name[base_length++] = digits[--digit_count];
-			}
-			player->name[base_length] = 0;
-		}
-	}
+		number_player_name(server, player);
 #endif
 
 	return;
@@ -3777,6 +3766,40 @@ static boolean player_name_is_unique(
 
 	return TRUE;
 }
+
+#ifdef HALO_LINUX
+/* numbers the player's name ("Name2", "Name3", ...) until no other player
+in the game has it, the name cut to make room for the number */
+static void number_player_name(
+	struct network_game_server *server,
+	struct network_player *player)
+{
+	wchar_t base_name[NETWORK_PLAYER_NAME_LENGTH];
+	long number;
+
+	csmemcpy(base_name, player->name, sizeof(base_name));
+	base_name[NETWORK_PLAYER_NAME_LENGTH - 1] = 0;
+	for (number = 2; number < 1000 && !player_name_is_unique(server, player->name); number++)
+	{
+		wchar_t digits[4];
+		long digit_count = 0;
+		long base_length = (long)ustrlen(base_name);
+		long value;
+
+		for (value = number; value; value /= 10)
+		{
+			digits[digit_count++] = (wchar_t)(L'0' + value % 10);
+		}
+		base_length = MIN(base_length, NETWORK_PLAYER_NAME_LENGTH - 1 - digit_count);
+		csmemcpy(player->name, base_name, base_length * sizeof(wchar_t));
+		while (digit_count > 0)
+		{
+			player->name[base_length++] = digits[--digit_count];
+		}
+		player->name[base_length] = 0;
+	}
+}
+#endif
 
 static short network_game_server_get_client_machine_count(
 	struct network_game_server *server)

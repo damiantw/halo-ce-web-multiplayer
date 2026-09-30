@@ -1721,6 +1721,16 @@ void main_load_last_solo_map(
 	char map_name[256];
 	boolean valid_map_name = FALSE;
 
+#ifdef HALO_MULTIPLAYER_ONLY
+	/* the multiplayer-only build has no campaign level to have ready at the
+	main menu (main_set_map_name refuses one, and said so in the log at every
+	return to the main menu, which the web client makes between games) */
+	if (main_globals.load_last_solo_level)
+	{
+		main_globals.load_last_solo_level = FALSE;
+		return;
+	}
+#endif
 	if (main_globals.load_last_solo_level && !bink_playback_active())
 	{
 		FILE *file;

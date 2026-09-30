@@ -742,8 +742,11 @@ static char const *dedicated_state_name(
 	}
 	if (network_game_server_dedicated_in_pregame(server))
 		return "lobby";
+	/* (a game that has ended, game_ended said so, shows its end for a few
+	seconds before the scores: the network game is still in game, but the
+	status says postgame, as the events did, not game again) */
 	if (network_game_server_dedicated_in_game(server))
-		return "game";
+		return dedicated.game_end_reported ? "postgame" : "game";
 	return "postgame";
 }
 
