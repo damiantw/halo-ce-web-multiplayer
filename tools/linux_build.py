@@ -114,8 +114,11 @@ def miniupnpc_sources() -> List[Path]:
 def updater_defines(release: bool) -> str:
     """the self-updater's build (port/linux/src/updater.c): its number, from
     HALO_BUILD_NUMBER (tools/ci_build.py gives it for builds of main; none
-    elsewhere, which never look for updates), and its configuration"""
-    number = os.environ.get("HALO_BUILD_NUMBER", "0")
+    elsewhere, which never look for updates), and its configuration.
+    This fork: always 0, so the updater, which looks for the original
+    repository's releases, is off in every build (HALO_ENABLE_UPDATER=1
+    restores the original behaviour)"""
+    number = os.environ.get("HALO_BUILD_NUMBER", "0") if os.environ.get("HALO_ENABLE_UPDATER") == "1" else "0"
     if not number.isdigit():
         number = "0"
     flavor = "release" if release else "debug"
