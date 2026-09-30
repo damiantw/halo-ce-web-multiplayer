@@ -214,11 +214,16 @@ static void network_test_log_players(
 
 		network_distributed_item_statistics(&creates, &deletes, &failures, &removed);
 		network_damage_statistics(&sent_reports, &dealt_reports, &rejected_reports, &replayed_events);
+		/* this machine's player, for its respawn countdown (none on a
+		dedicated host) */
+		long local_player_index = local_player_get_player_index(0);
+
 		platform_log("network test: tick %ld%s | items %ld (+%ld -%ld !%ld x%ld) | %s | sent %ld received %ld corrected %ld"
-			" | hits %ld dealt %ld rejected %ld replayed %ld",
+			" | hits %ld dealt %ld rejected %ld replayed %ld | respawn %ld",
 			game_time_get(), line, ground_items, creates, deletes, failures, removed,
 			game_engine_can_score() ? "playing" : "game over", sent, received, corrections,
-			sent_reports, dealt_reports, rejected_reports, replayed_events);
+			sent_reports, dealt_reports, rejected_reports, replayed_events,
+			local_player_index == NONE ? 0L : (long)player_get(local_player_index)->respawn_timer);
 	}
 }
 
