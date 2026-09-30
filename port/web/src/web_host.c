@@ -329,3 +329,74 @@ int web_player_team(void)
 		return 1;
 	return -1;
 }
+
+/* ---------- the player's input settings
+
+The site keeps these with the name and colour (the settings live on the
+site, not in the game's menus) and the page passes them as environment
+variables; each one unset, or out of range, leaves the game's default:
+
+	HALO_WEB_LOOK_SENSITIVITY  1-10, the controller's look speed, as the
+	                           profile's look sensitivity (the game's
+	                           default is 3; player_ui.c's rate tables)
+	HALO_WEB_INVERT_LOOK       1: the vertical look is inverted, for the
+	                           sticks and the mouse; 0: not
+	HALO_WEB_STICK_DEADZONE    0-90, the sticks' dead zone in percent of
+	                           full deflection (the game's is 9000 of
+	                           32767, about 27)
+	HALO_WEB_VIBRATION         0: the controller does not rumble
+	HALO_WEB_MOUSE_SENSITIVITY 0.1-10, the multiplier for the mouse aim
+	                           (the desktop builds' input.mouse_sensitivity)
+
+input_abstraction.c applies the look settings, input_xbox.c the dead zone
+and port/linux/src/xinput_sdl.c the mouse and the rumble. */
+static int web_setting_integer(const char *name, int minimum, int maximum)
+{
+	const char *text = getenv(name);
+	char *end;
+	long value;
+
+	if (!text || !*text)
+		return -1;
+	value = strtol(text, &end, 10);
+	return !*end && value >= minimum && value <= maximum ? (int)value : -1;
+}
+
+/* 1-10, else -1 */
+int web_look_sensitivity(void)
+{
+	return web_setting_integer("HALO_WEB_LOOK_SENSITIVITY", 1, 10);
+}
+
+/* 1 or 0, else -1 */
+int web_invert_look(void)
+{
+	return web_setting_integer("HALO_WEB_INVERT_LOOK", 0, 1);
+}
+
+/* the dead zone in stick units (0-32767 at full deflection), else -1 */
+int web_stick_dead_zone(void)
+{
+	int percent = web_setting_integer("HALO_WEB_STICK_DEADZONE", 0, 90);
+
+	return percent < 0 ? -1 : percent * 32767 / 100;
+}
+
+/* 0 when the player turned the rumble off, else 1 */
+int web_vibration_enabled(void)
+{
+	return web_setting_integer("HALO_WEB_VIBRATION", 0, 1) != 0;
+}
+
+/* the mouse aim's multiplier, else 0 */
+float web_mouse_sensitivity(void)
+{
+	const char *text = getenv("HALO_WEB_MOUSE_SENSITIVITY");
+	char *end;
+	double value;
+
+	if (!text || !*text)
+		return 0.0f;
+	value = strtod(text, &end);
+	return !*end && value >= 0.1 && value <= 10.0 ? (float)value : 0.0f;
+}
