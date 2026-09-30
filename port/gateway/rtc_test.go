@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/netip"
 	"strings"
@@ -272,6 +273,35 @@ func TestRTCBadOffer(t *testing.T) {
 	for {
 		if fr := read(t, ws); fr[0] == framePing {
 			break
+		}
+	}
+}
+
+// A client playing over the data channel sends nothing on the WebSocket;
+// that is not idle. Once the channel goes quiet too, the session is.
+func TestRTCTrafficKeepsSessionFromIdling(t *testing.T) {
+	f := newFixture(t, func(c *config) {
+		c.RTC = rtcConfig{Listen: "127.0.0.1:0", PublicIPs: []netip.Addr{netip.MustParseAddr("127.0.0.1")}}
+		c.IdleTimeout = 1500 * time.Millisecond
+	})
+	ws, _ := f.join(claims{Sub: "1"})
+	c := newRTCClient(t)
+	c.connect(ws)
+	waitTransport(t, f.g, "rtc")
+	for end := time.Now().Add(3 * time.Second); time.Now().Before(end); {
+		c.dc.Send([]byte{framePing, 'k'})
+		time.Sleep(250 * time.Millisecond)
+	}
+	waitTransport(t, f.g, "rtc")
+	// now silence on both: closed as idle
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	for {
+		if _, _, err := ws.Read(ctx); err != nil {
+			if websocket.CloseStatus(err) != websocket.StatusPolicyViolation {
+				t.Fatalf("want an idle close, got %v", err)
+			}
+			return
 		}
 	}
 }

@@ -36,6 +36,7 @@ type session struct {
 	framesIn  atomic.Int64
 	framesOut atomic.Int64
 	dropped   atomic.Int64
+	lastIn    atomic.Int64 // unix nanoseconds of the last frame from the client, either transport
 	wg        sync.WaitGroup
 }
 
@@ -114,19 +115,22 @@ func (s *session) run(parent context.Context) string {
 	s.wg.Add(1)
 	go s.writer()
 	s.sendReliable(encodeHello(s.addr))
+	// Idle is judged on frames from either transport: with a data channel
+	// open, a playing client can send nothing on the WebSocket for minutes.
+	// (A read deadline would not do: an expired read context closes the
+	// connection.) The read itself runs on a context of its own so that the
+	// close handshake can finish after s.ctx is cancelled.
+	s.lastIn.Store(time.Now().UnixNano())
+	go s.idleWatch()
 read:
 	for {
-		readCtx, cancel := context.WithTimeout(context.Background(), s.g.cfg.IdleTimeout)
-		typ, frame, err := s.ws.Read(readCtx)
-		cancel()
+		typ, frame, err := s.ws.Read(context.Background())
 		if err != nil {
 			switch {
 			case s.ctx.Err() != nil:
-				// closed from this side (shutdown, a write failure)
+				// closed from this side (shutdown, idle, a write failure)
 			case websocket.CloseStatus(err) != -1:
 				s.close(websocket.CloseStatus(err), "client closed")
-			case errors.Is(err, context.DeadlineExceeded):
-				s.close(websocket.StatusPolicyViolation, "idle")
 			case errors.Is(err, websocket.ErrMessageTooBig) || isTooBig(err):
 				s.close(websocket.StatusMessageTooBig, "frame too big")
 			default:
@@ -134,6 +138,7 @@ read:
 			}
 			break read
 		}
+		s.lastIn.Store(time.Now().UnixNano())
 		if typ != websocket.MessageBinary || len(frame) == 0 {
 			continue
 		}
@@ -145,11 +150,30 @@ read:
 	return why + " (" + code.String() + ")"
 }
 
+// idleWatch closes the session when the client has sent nothing, on the
+// WebSocket or the data channel, for IdleTimeout.
+func (s *session) idleWatch() {
+	tick := time.NewTicker(min(s.g.cfg.IdleTimeout/4, time.Second))
+	defer tick.Stop()
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-tick.C:
+			if time.Since(time.Unix(0, s.lastIn.Load())) > s.g.cfg.IdleTimeout {
+				s.close(websocket.StatusPolicyViolation, "idle")
+				return
+			}
+		}
+	}
+}
+
 // receive takes a frame from the WebSocket (via nil) or the data channel:
 // counted, limited by the session's buckets, then handled. The data channel
 // carries only datagrams and PING: streams need the WebSocket's order and
 // delivery.
 func (s *session) receive(frame []byte, via *rtcPeer) {
+	s.lastIn.Store(time.Now().UnixNano())
 	if via != nil && frame[0] != frameUDP && frame[0] != framePing {
 		return
 	}
