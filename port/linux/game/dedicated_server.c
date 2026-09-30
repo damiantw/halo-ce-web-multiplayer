@@ -1031,7 +1031,7 @@ static void dedicated_write_player(
 		control_field_null("address");
 		control_field_null("port");
 	}
-	if (row->connected && network_game_distributed() &&
+	if (row->connected &&
 		distributed_machine_round_trip_measured(row->machine_index, &round_trip))
 	{
 		control_field_integer("ping_ms", (long)(round_trip * 1000.0f / TICKS_PER_SECOND + 0.5f));
@@ -1247,7 +1247,8 @@ static void dedicated_emit_server_started(
 	control_begin("server_started");
 	control_field_string("name", config_string("server.name"));
 	control_field_integer("protocol", DEDICATED_CONTROL_PROTOCOL_VERSION);
-	control_field_boolean("distributed", network_game_distributed());
+	/* (always: the lockstep netcode is gone; kept for the protocol's readers) */
+	control_field_boolean("distributed", TRUE);
 	dedicated_write_rotation();
 	dedicated_write_settings();
 	control_end();

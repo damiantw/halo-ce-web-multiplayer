@@ -735,7 +735,7 @@ boolean update_client_dequeue(
 		0x1AF,
 		update_client_globals.initialized);
 #ifdef HALO_LINUX
-	if (game_connection() == _game_connection_network_client && network_game_distributed())
+	if (game_connection() == _game_connection_network_client)
 		return update_client_dequeue_distributed(actions);
 #endif
 	update = update_client_get_update(update_client_globals.next_update_number_to_dequeue);
@@ -805,12 +805,15 @@ boolean update_client_dequeue(
 	return TRUE;
 }
 
+#ifndef HALO_LINUX
+/* (the Xbox game's lockstep client; the port's netcode is distributed only) */
 long update_client_get_maximum_actions(
 	void)
 {
 	return update_client_globals.latest_update_number_received -
 		update_client_globals.next_update_number_to_dequeue + 1;
 }
+#endif
 
 long update_client_get_maximum_possible_server_time(
 	void)
@@ -871,7 +874,7 @@ void update_server_handle_client_update(
 #ifdef HALO_LINUX
 	/* (the distributed netcode takes another machine's players' input from
 	its own message, update_server_handle_distributed_input) */
-	if (game_connection() == _game_connection_network_server && network_game_distributed() &&
+	if (game_connection() == _game_connection_network_server &&
 		!update_server_machine_is_local(machine_index))
 	{
 		return;

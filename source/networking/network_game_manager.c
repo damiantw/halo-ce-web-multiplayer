@@ -194,9 +194,11 @@ typedef char network_game_size_assert[
 
 /* ---------- prototypes */
 
+#ifndef HALO_LINUX
 static long compare_network_players(
 	struct network_player *p1,
 	struct network_player *p2);
+#endif
 
 /* ---------- globals */
 
@@ -418,8 +420,8 @@ boolean network_game_add_player(
 			{
 				new_player_index = NONE;
 #ifdef HALO_LINUX
-				/* (the distributed netcode's: the host's slot, as it chose it) */
-				if (network_game_distributed() && player->player_list_index != NONE)
+				/* (the host's slot, as it chose it) */
+				if (player->player_list_index != NONE)
 				{
 					if (VALID_INDEX(player->player_list_index, NETWORK_GAME_PLAYER_SLOTS) &&
 						game->players[player->player_list_index].player_list_index == NONE)
@@ -434,7 +436,7 @@ boolean network_game_add_player(
 					if (game->players[player_index].player_list_index == NONE
 #ifdef HALO_LINUX
 						/* (not the slot of a player who left the game in progress) */
-						&& !(network_game_distributed() && network_game_player_slot_held(player_index))
+						&& !network_game_player_slot_held(player_index)
 #endif
 						)
 					{
@@ -519,9 +521,9 @@ boolean network_game_spawn_player(
 
 	controller_index = network_game_player_is_local(player) ? player->controller_index : NONE;
 #ifdef HALO_LINUX
-	/* (the distributed netcode's: the datum at the player's slot, with the
-	identifier datum_new would give it) */
-	if (network_game_distributed() && VALID_INDEX(player->player_list_index, NETWORK_GAME_PLAYER_SLOTS))
+	/* (the datum at the player's slot, with the identifier datum_new would
+	give it) */
+	if (VALID_INDEX(player->player_list_index, NETWORK_GAME_PLAYER_SLOTS))
 	{
 		player_index = player_new(player->machine_index,
 			((long)(word)player_data->next_identifier << 16) | player->player_list_index, controller_index, player);
@@ -787,30 +789,29 @@ boolean network_game_create_game_objects(
 		game_initialize_for_new_map();
 
 #ifdef HALO_LINUX
-		/* (the distributed netcode's players stay in their slots, which are
-		their datums: network_game_spawn_player) */
-		if (!network_game_distributed())
-#endif
+		/* (the players stay in their slots, which are their datums:
+		network_game_spawn_player) */
+#else
 		qsort(
 			game->players,
 			NETWORK_GAME_PLAYER_SLOTS,
 			sizeof(struct network_player),
 			(int(__cdecl *)(const void *, const void *))compare_network_players);
 
+#endif
 		for (player_index = 0; player_index < NETWORK_GAME_PLAYER_SLOTS; player_index++)
 		{
 			if (!network_player_is_valid(&game->players[player_index]))
 			{
 #ifdef HALO_LINUX
-				/* (unsorted, the slots of players who left are among them) */
-				if (network_game_distributed())
-					continue;
-#endif
+				/* (the slots of players who left are among them) */
+				continue;
+#else
 				break;
+#endif
 			}
 #ifdef HALO_LINUX
-			if (network_game_distributed())
-				game->players[player_index].player_list_index = (char)player_index;
+			game->players[player_index].player_list_index = (char)player_index;
 #endif
 
 			if (!network_game_spawn_player(&game->players[player_index]))
@@ -830,6 +831,7 @@ boolean network_game_create_game_objects(
 
 /* ---------- private code */
 
+#ifndef HALO_LINUX
 static long compare_network_players(
 	struct network_player *p1,
 	struct network_player *p2)
@@ -864,3 +866,4 @@ static long compare_network_players(
 
 	return result;
 }
+#endif
