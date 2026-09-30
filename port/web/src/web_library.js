@@ -343,7 +343,7 @@ addToLibrary({
 	},
 
 	// web_mouse_capture: the game wants the mouse for aiming (1) or lets go
-	// of it (0; menus, F12) (sdl_platform.c, platform_mouse_capture). On the
+	// of it (0) (sdl_platform.c, platform_mouse_capture). On the
 	// page's main thread: a "halo:mouse-capture" event for halo-loader.js,
 	// which locks the pointer on the next click on the canvas.
 	web_mouse_capture__proxy: "async",

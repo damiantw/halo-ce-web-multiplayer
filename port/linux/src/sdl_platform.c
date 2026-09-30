@@ -626,7 +626,7 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 	platform_event_thread = SDL_GetCurrentThreadID();
 	platform_log("OpenGL %s on %s", (const char *)glGetString(GL_VERSION), (const char *)glGetString(GL_RENDERER));
 	/* the web build (which also defines HALO_ANDROID) has no menu pointer:
-	the mouse aims, in the menus too, until F12 or the browser (Esc) lets go */
+	the mouse aims, in the menus too, until the browser (Esc) lets go */
 #if !defined(HALO_ANDROID) || defined(HALO_WEB)
 	platform_mouse_capture(TRUE);
 #endif
@@ -780,7 +780,7 @@ void platform_mouse_capture(BOOL capture)
 	focus yet, not at all), so it cannot lock the mouse. The page
 	(halo-loader.js) locks the canvas on a click instead, while the game
 	wants the mouse (web_library.js, web_mouse_capture: a
-	"halo:mouse-capture" event), and unlocks it when the game lets go (F12).
+	"halo:mouse-capture" event), and unlocks it when the game lets go.
 	Once the canvas is locked, SDL's pointerlockchange handler sees it and
 	its motion events carry movementX/Y as xrel, which is what the aim
 	reads. */
@@ -1077,12 +1077,16 @@ void platform_pump_events(void)
 					keys_pressed[event.key.scancode] = 1;
 			}
 			queue_keystroke(&event.key);
-			/* F12 releases or recaptures the mouse */
+#ifndef HALO_WEB
+			/* F12 releases or recaptures the mouse (not on the web: there the
+			browser's Esc releases it and a click on the game recaptures it,
+			and F12 is left to the browser) */
 			if (event.key.down && !event.key.repeat && event.key.scancode == SDL_SCANCODE_F12)
 			{
 				input_state.mouse_released = !input_state.mouse_released;
 				platform_mouse_capture(!input_state.mouse_released && !input_state.ui_pointer);
 			}
+#endif
 #ifndef HALO_ANDROID
 			/* F11 switches between fullscreen and the window (SDL keeps the
 			window's size and place while fullscreen) */

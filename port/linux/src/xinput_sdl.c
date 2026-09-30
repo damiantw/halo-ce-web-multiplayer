@@ -15,7 +15,8 @@ Keyboard and mouse (port 0):
 	Q                white               X                black
 	left ctrl, C     left stick click    Z, middle button right stick click
 	escape           start               F1               back
-	F12              release or recapture the mouse
+	F12              release or recapture the mouse (not on the web: Esc
+	                 releases it there, a click recaptures it)
 
 In the menus the mouse is free and drives a pointer instead
 (port/linux/include/halo_ui_pointer.h, source/interface/ui_widget.c): its
