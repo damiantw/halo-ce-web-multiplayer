@@ -165,8 +165,15 @@ def compile_command():
 	return shlex.split(commands[-1])
 
 
+# configure.py --compiler-launcher (CI: ccache) puts the launcher before the
+# compiler in build.ninja's commands; the test calls the compiler itself
+LAUNCHERS = ("ccache", "sccache", "distcc")
+
+
 def main():
 	command = compile_command()
+	if os.path.basename(command[0]) in LAUNCHERS:
+		command = command[1:]
 	compiler = command[0]
 	with tempfile.TemporaryDirectory() as directory:
 		driver = os.path.join(directory, "driver.c")
