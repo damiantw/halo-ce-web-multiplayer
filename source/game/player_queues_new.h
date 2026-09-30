@@ -46,8 +46,10 @@ void update_client_queue_push(
 	void);
 boolean update_client_dequeue(
 	struct player_action *actions);
+#ifndef HALO_LINUX
 long update_client_get_maximum_actions(
 	void);
+#endif
 long update_client_get_maximum_possible_server_time(
 	void);
 void update_client_local_ticks(

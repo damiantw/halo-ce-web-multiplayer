@@ -44,11 +44,13 @@ void network_game_server_pause_countdown(
 	boolean pause_countdown);
 void network_game_generate_join_game_token(
 	byte *join_token);
+#ifndef HALO_LINUX
 long network_game_server_get_oldest_client_update_received(
 	struct network_game_server *server);
 void network_game_server_stalled_on_client(
 	struct network_game_server *server,
 	boolean stalled);
+#endif
 void network_game_server_update_ticks(
 	struct network_game_server *server,
 	short tick_count);

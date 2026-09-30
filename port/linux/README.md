@@ -178,7 +178,6 @@ the setting for one start of the game. It has priority over the file.
 | `game.language` | `""` | `HALO_LANGUAGE` | The language of the menus: `ja`, `de`, `fr`, `es` or `it`. Empty: English. |
 | `paths.data` | `""` | `HALO_DATA_ROOT` | The data root. Refer to "Start the game". |
 | `paths.saves` | `""` | `HALO_SAVE_ROOT` | The save root. Refer to "Files and folders". |
-| `network.netcode` | `"distributed"` | `HALO_NETCODE` | `"distributed"`: each machine moves its own player at once, and the host makes the decisions (refer to `NETCODE.md`). `"lockstep"`: as on the Xbox. The host's setting applies: a machine that joins a game uses the netcode of the host. |
 | `network.address` | `""` | `HALO_NET_ADDRESS` | The IPv4 address of this machine for system link. Refer to "Play on one computer". |
 | `network.broadcast` | `""` | `HALO_NET_BROADCAST` | IPv4 addresses, with commas between them, that get the broadcasts of the game. Empty: 255.255.255.255. |
 | `network.online` | `true` | `HALO_NET_ONLINE` | `true`: internet play. `false`: system link on the local network only. |
@@ -300,9 +299,10 @@ These are the differences from the Xbox:
   The other machines are also in the game.
 - In free-for-all games, each player is a team.
 
-Linux, Windows and Android machines can play in the same game. With the
-netcode `"lockstep"`, each machine must calculate the same floating-point
-results. Thus all the ports:
+Linux, Windows and Android machines can play in the same game. Each machine
+simulates the players from the same inputs, and the host does not correct
+all of the game. Thus each machine must calculate the same floating-point
+results, and all the ports:
 
 - Compile without fused multiply-add (`-ffp-contract=off`).
 - Use the math functions of musl (`port/include/halo_math.h`,
@@ -329,8 +329,8 @@ interface.
 ### Test with many machines
 
 `tools/system_link_bots.py` adds simple machines to a game. Each machine has
-one player. The machines obey the system link protocol and send input, but
-they do not calculate the game.
+one player. The machines obey the system link protocol, but they do not
+calculate the game or move their players.
 
 1. Start a game on the host.
 2. Enter `python tools/system_link_bots.py --host 127.0.0.200 --machines 127 --start`.
@@ -374,10 +374,9 @@ The server:
    who joins goes to the smaller team, and the teams are evened out between
    games.
 3. Plays the game. If all the players go, the game stops after
-   `server.empty_seconds`. With the netcode `"distributed"`, the game
-   continues when the other players go and one player (or one team) is
-   left, because players can join a game in progress. (Halo ends the game
-   then: with the netcode `"lockstep"` the server keeps that rule.)
+   `server.empty_seconds`. The game continues when the other players go
+   and one player (or one team) is left, because players can join a game
+   in progress. (Halo ends the game then.)
 4. Shows the scores for `server.postgame_seconds`, then sets up the next
    entry of the rotation. Without `server.lobby`, the next game starts as
    soon as the machines have loaded its map (or when the first player joins,
@@ -461,8 +460,8 @@ The dedicated server also:
 - Does not open the telnet console of the game.
 - Draws nothing: the main loop does not render or present frames.
 
-The other settings, for example `network.address`, `network.broadcast` and
-`network.netcode`, apply as usual. To run more than one server on one
+The other settings, for example `network.address` and `network.broadcast`,
+apply as usual. To run more than one server on one
 computer, give each server a different `network.address` (refer to "Play on
 one computer").
 
@@ -585,7 +584,7 @@ Common objects:
   | `connected` | boolean | `false`: the player left this game (the statistics remain). |
   | `machine_name` | string or null | The name of the machine (in the lobby list). |
   | `address`, `port` | string, integer, or null | The IPv4 address and UDP port of the machine. `null` for the machine of the server. |
-  | `ping_ms` | integer or null | The round trip in milliseconds. Only with `network.netcode = "distributed"`. The original netcode does not measure it, so it is `null`. |
+  | `ping_ms` | integer or null | The round trip in milliseconds. `null` until the round trip has been measured. |
   | `kills`, `deaths`, `assists`, `suicides`, `team_kills`, `score` | integer | In a game only (not in the lobby). `score` is the score of the gametype (kills, flag captures, seconds with the ball or on the hill, laps). |
   | `score_text` | string | The score as the scoreboard shows it (for example `"1:05"` for time scores). In a game only. |
   | `won` | boolean or null | In `game_ended` only. `null`: a tie. |
@@ -596,7 +595,7 @@ Common objects:
 | Event | When | Fields |
 | --- | --- | --- |
 | `starting` | First, when the process starts. | `protocol` (1), `pid`, `name`, `commands` (boolean: the server reads commands). |
-| `server_started` | Once, when the first lobby opens. | `name`, `protocol`, `distributed` (boolean: the distributed netcode), `rotation` (array of entries), `settings` `{lobby, countdown, minimum_players, max_players, postgame_seconds, empty_seconds, rehost_seconds, status_interval, exit_on_eof}`. |
+| `server_started` | Once, when the first lobby opens. | `name`, `protocol`, `distributed` (boolean: always `true` now that the lockstep netcode is gone), `rotation` (array of entries), `settings` `{lobby, countdown, minimum_players, max_players, postgame_seconds, empty_seconds, rehost_seconds, status_interval, exit_on_eof}`. |
 | `lobby` | The lobby opens, the player count changes, the countdown starts or stops, or the lobby map changes. | `reason` (`opened`, `players`, `countdown_started`, `countdown_stopped`, `map_changed`), entry fields, variant fields, `player_count`, `minimum_players`, `max_players`, `countdown` (the seconds that remain, or `null`), `players` (array). |
 | `game_started` | The map loaded and the game can score. | Entry fields, variant fields, `players` (array). |
 | `player_joined` | A player joins (lobby or game). | `player`, `name`, `machine`, `controller`, `color`, `team`, `team_name`, `machine_name`, `address`, `port`, `in_game` (boolean). |

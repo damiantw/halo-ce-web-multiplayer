@@ -502,7 +502,9 @@ enum
 	MAXIMUM_MACHINE_NAME_LENGTH = 32,
 	NUMBER_OF_MULTIPLAYER_TEAMS = 2,
 	NETWORK_GAME_PLAYER_QUIT_DELAY = 33,
+#ifndef HALO_LINUX
 	NETWORK_GAME_CLIENT_STALL_TIMEOUT = 2000,
+#endif
 #ifdef HALO_LINUX
 	/* the time the other machines have to load the map once the first has
 	finished, allowing for many machines of mixed speed */
@@ -1290,6 +1292,8 @@ void network_game_server_open_game(
 	return;
 }
 
+/* (the Xbox game closes a game when it starts; the port's stay open for
+late joiners, and close once they have ended: network_game_server_close_ended_game) */
 void network_game_server_close_game(
 	struct network_game_server *server)
 {
@@ -1980,10 +1984,9 @@ boolean network_game_server_add_player_to_game(
 			get_unique_random_color(server, player);
 
 #ifdef HALO_LINUX
-		/* (the host chooses the player's slot, which in the distributed
-		netcode's games is its datum on every machine: network_game_add_player) */
-		if (network_game_distributed())
-			player->player_list_index = NONE;
+		/* (the host chooses the player's slot, which is its datum on every
+		machine: network_game_add_player) */
+		player->player_list_index = NONE;
 #endif
 		success = network_game_add_player(&server->game, player);
 		if (success == TRUE)
@@ -2033,22 +2036,26 @@ void network_game_server_update_ticks(
 				update_server_next_update();
 				update_server_build_server_update(NONE, &update, &update_number);
 
-				game_update.update_number = update_number;
-				game_update.random_seed = get_random_seed();
-				game_update.game_time = game_time_get();
-				game_update.player_count = update.player_count;
 #ifdef HALO_LINUX
 				/* (the distributed netcode relays the actions unreliably, each
 				tick's buttons with the next ticks', network_distributed.c: this
 				update only keeps the clients' count of the host's ticks) */
-				if (network_game_distributed())
-					game_update.player_count = 0;
-#endif
+				csmemset(&game_update, 0, sizeof(game_update));
+				game_update.update_number = update_number;
+				game_update.random_seed = get_random_seed();
+				game_update.game_time = game_time_get();
+				game_update.player_count = 0;
+#else
+				game_update.update_number = update_number;
+				game_update.random_seed = get_random_seed();
+				game_update.game_time = game_time_get();
+				game_update.player_count = update.player_count;
 
 				csmemcpy(
 					game_update.player_updates,
 					update.player_updates,
 					update.player_count * PLAYER_UPDATE_SIZE);
+#endif
 
 				message = create_network_game_message(
 					_message_server_game_update,
@@ -2147,7 +2154,7 @@ which a machine in the pregame would refuse. */
 boolean network_game_server_accepts_late_joins(
 	struct network_game_server *server)
 {
-	return network_game_distributed() && server->state == _network_game_server_state_ingame &&
+	return server->state == _network_game_server_state_ingame &&
 		network_game_server_game_is_open(server) && !game_engine_game_is_ending();
 }
 
@@ -2171,7 +2178,7 @@ static void network_game_server_close_ended_game(
 	struct network_message *message;
 	long client_machine_index;
 
-	if (!network_game_distributed() || !network_game_server_game_is_open(server) ||
+	if (!network_game_server_game_is_open(server) ||
 		!game_engine_game_is_ending())
 	{
 		return;
@@ -2282,7 +2289,7 @@ boolean network_game_server_takes_late_joiner(
 	struct network_game_server *server,
 	struct network_game_server_client_machine *machine)
 {
-	return network_game_distributed() && server->state == _network_game_server_state_ingame &&
+	return server->state == _network_game_server_state_ingame &&
 		!game_engine_game_is_ending() &&
 		!TEST_FLAG(machine->flags, _network_client_machine_level_loaded_bit) &&
 		!network_game_server_client_machine_let_go(server, machine);
@@ -2374,7 +2381,7 @@ static void network_game_server_keep_late_joiners_alive(
 	struct message_server_pregame_keep_alive message_packet = { 0 };
 	long client_machine_index;
 
-	if (!network_game_distributed() || now - server->time_of_last_keep_alive <= 5UL * MILLISECONDS_PER_SECOND)
+	if (now - server->time_of_last_keep_alive <= 5UL * MILLISECONDS_PER_SECOND)
 		return;
 	server->time_of_last_keep_alive = now;
 	for (client_machine_index = 0; client_machine_index < MAXIMUM_NETWORK_MACHINE_COUNT; client_machine_index++)
@@ -2614,15 +2621,14 @@ boolean server_needs_more_teams(
 	boolean needs_more_teams = FALSE;
 
 #ifdef HALO_LINUX
-	/* a dedicated server of the distributed netcode starts a team game with
+	/* a dedicated server starts a team game with
 	players on one team only (port/linux/game/dedicated_server.c): a lone
 	player would otherwise wait in the lobby until someone takes the other
 	team. Its game goes on with one team (game_engine_should_end_game) and
 	the others join it in progress; the teams stay balanced as players join
 	(network_game_server_pick_team) and between games
-	(network_game_server_rebalance_teams). (With the netcode "lockstep" a
-	game with one team would end at once, as on the Xbox.) */
-	if (halo_dedicated_server() && network_game_distributed())
+	(network_game_server_rebalance_teams). */
+	if (halo_dedicated_server())
 		return FALSE;
 #endif
 	if (server->game.variant.universal_variant.teams)
@@ -2900,6 +2906,7 @@ struct network_game_server_client_machine *network_game_server_get_client_machin
 	return client_machine;
 }
 
+#ifndef HALO_LINUX
 long network_game_server_get_oldest_client_update_received(
 	struct network_game_server *server)
 {
@@ -2922,6 +2929,7 @@ long network_game_server_get_oldest_client_update_received(
 
 	return oldest_update;
 }
+#endif
 
 boolean network_game_server_game_can_start(
 	struct network_game_server *server)
@@ -3475,6 +3483,7 @@ static void network_game_server_dump(
 	return;
 }
 
+#ifndef HALO_LINUX
 void network_game_server_stalled_on_client(
 	struct network_game_server *server,
 	boolean stalled)
@@ -3557,6 +3566,7 @@ void network_game_server_stalled_on_client(
 
 	return;
 }
+#endif
 
 void network_game_server_update_countdown(
 	struct network_game_server *server,
@@ -4236,11 +4246,11 @@ static boolean network_game_server_idle_pregame_tasks(
 				server->countdown_state.paused == FALSE)
 			{
 #ifdef HALO_LINUX
-				/* (the distributed netcode's games stay open: a machine may join
-				one in progress, network_game_server_start_late_joiner) */
-				if (!network_game_distributed())
-#endif
+				/* (the game stays open: a machine may join it in progress,
+				network_game_server_start_late_joiner) */
+#else
 				network_game_server_close_game(server);
+#endif
 				if ((success = network_game_server_start_network_game(server)) != TRUE)
 					network_event("network_game_server_start_network_game() failed");
 			}

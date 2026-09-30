@@ -224,3 +224,36 @@ def test_build_graph_without_port_has_no_linux_target(tmp_path, monkeypatch):
     ninja = Path("build.ninja").read_text(encoding="utf-8")
     assert "linux_cc" not in ninja
     assert "build linux:" not in ninja
+
+
+# ---------- HALO_LINUX (this fork's port code is in #ifdef HALO_LINUX blocks)
+
+
+REPO = Path(__file__).resolve().parent.parent
+
+
+def test_prefixes_define_halo_linux():
+    # upstream removed the define (4adc3a87); without it every #ifdef
+    # HALO_LINUX block of this fork would compile out silently
+    for prefix in ("port/linux/include/halo_linux_prefix.h", "port/windows/include/halo_windows_prefix.h"):
+        text = (REPO / prefix).read_text(encoding="latin-1")
+        assert re.search(r"^#define HALO_LINUX 1$", text, re.M), prefix
+
+
+def test_builds_force_include_the_prefix():
+    for build in ("tools/linux_build.py", "tools/web_build.py", "tools/android_build.py"):
+        assert '"halo_linux_prefix.h"' in (REPO / build).read_text(), build
+
+
+def test_cseries_refuses_a_build_without_halo_linux(tmp_path):
+    compiler = shutil.which("clang")
+    if not compiler:
+        pytest.skip("no clang")
+    source = write(tmp_path / "unit.c", '#include "cseries.h"\nint unit;\n')
+    base = [compiler, "--target=i686-linux-gnu", "-m32", "-fsyntax-only", "-fms-extensions",
+            "-Iport/linux/include", "-Isource/cseries", "-Isource", "-idirafter", "port/include/xdk"]
+    without = subprocess.run(base + [str(source)], cwd=REPO, capture_output=True, text=True)
+    assert without.returncode != 0 and "HALO_LINUX is not defined" in without.stderr
+    guard_only = write(tmp_path / "guard.c", "#include \"halo_linux_prefix.h\"\n#ifndef HALO_LINUX\n#error no\n#endif\n")
+    with_prefix = subprocess.run(base + [str(guard_only)], cwd=REPO, capture_output=True, text=True)
+    assert with_prefix.returncode == 0, with_prefix.stderr

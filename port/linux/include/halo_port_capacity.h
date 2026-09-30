@@ -6,9 +6,9 @@ session limits in halo_port_limits.h, which includes this file. Game sources
 use these values only under #ifdef HALO_LINUX, so the byte-matching MSVC build
 keeps the Xbox sizes (given in parentheses below).
 
-Every machine in a session must be built with the same values: the game is
-simulated in lockstep on every machine, and a pool that runs full changes the
-simulation (an object or a deterministic effect is not created).
+Every machine in a session must be built with the same values: every machine
+simulates the game, and a pool that runs full changes the simulation (an
+object or a deterministic effect is not created).
 */
 
 #ifndef __HALO_PORT_CAPACITY_H

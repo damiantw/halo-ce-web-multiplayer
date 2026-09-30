@@ -72,8 +72,6 @@ symbols in this file:
 #include "game.h"
 #include "player_queues_new.h"
 #ifdef HALO_LINUX
-/* network_game_globals.c's */
-boolean network_game_distributed(void);
 /* port/linux/game/network_distributed.c's */
 void network_distributed_tick(void);
 #endif
@@ -129,9 +127,11 @@ struct game_time_globals_struct
 
 extern void *game_state_malloc(char const *, char const *, long);
 struct network_game_server;
+#ifndef HALO_LINUX
 extern struct network_game_server *global_network_game_server_get(void);
 extern long network_game_server_get_oldest_client_update_received(struct network_game_server *server);
 extern void network_game_server_stalled_on_client(struct network_game_server *server, boolean stalled);
+#endif
 extern void network_game_server_update_ticks(struct network_game_server *server, long ticks);
 /* ---------- globals */
 
@@ -512,17 +512,16 @@ void game_time_update(
 				discard_leftover_time = FALSE;
 				goto calculate_elapsed_ticks;
 			case _game_connection_network_client:
+#ifndef HALO_LINUX
 				connection = TICKS_PER_SECOND;
 				break;
+#endif
 			case _game_connection_network_server:
 #ifdef HALO_LINUX
-				/* distributed netcode: the host waits for nobody */
-				if (network_game_distributed())
-				{
-					connection = TICKS_PER_SECOND;
-					break;
-				}
-#endif
+				/* (the distributed netcode: every machine ticks on its own
+				clock, and the host waits for nobody) */
+				connection = TICKS_PER_SECOND;
+#else
 				{
 					struct network_game_server *server = global_network_game_server_get();
 					long oldest_client_update = network_game_server_get_oldest_client_update_received(server);
@@ -555,6 +554,7 @@ void game_time_update(
 						connection = 1;
 					}
 				}
+#endif
 				break;
 			case _game_connection_local:
 				connection = 7;
@@ -583,13 +583,8 @@ void game_time_update(
 			match_assert("c:\\halo\\SOURCE\\game\\game_time.c", 306,
 				game_time_globals->leftover_dt>=0.f && game_time_globals->leftover_dt<100.f);
 
-			/* (distributed netcode: a client ticks on its own clock, with its
-			own input and the latest the host relayed) */
-			if (game_connection() == _game_connection_network_client
-#ifdef HALO_LINUX
-				&& !network_game_distributed()
-#endif
-				)
+#ifndef HALO_LINUX
+			if (game_connection() == _game_connection_network_client)
 			{
 				long maximum_actions = update_client_get_maximum_actions();
 				if (ticks_elapsed > maximum_actions)
@@ -603,6 +598,7 @@ void game_time_update(
 				if (ticks_elapsed > maximum_actions)
 					ticks_elapsed = maximum_actions;
 			}
+#endif
 
 			if (ticks_elapsed > 0)
 			{
@@ -628,10 +624,15 @@ void game_time_update(
 					break;
 				}
 
-				maximum_possible_server_time = update_client_get_maximum_possible_server_time();
 #ifdef HALO_LINUX
-				if (game_connection() == _game_connection_network_client && network_game_distributed())
+				/* (a client of the distributed netcode ticks on its own clock,
+				with its own input and the latest the host relayed) */
+				if (game_connection() == _game_connection_network_client)
 					maximum_possible_server_time = final_local_time;
+				else
+					maximum_possible_server_time = update_client_get_maximum_possible_server_time();
+#else
+				maximum_possible_server_time = update_client_get_maximum_possible_server_time();
 #endif
 				if (maximum_possible_server_time > game_time_globals->server_time)
 				{

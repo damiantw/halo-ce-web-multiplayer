@@ -728,6 +728,14 @@ void game_initialize_for_new_map(
 	players_initialize_for_new_map();
 	scenario_initialize_for_new_map();
 	objects_initialize_for_new_map();
+#ifdef HALO_LINUX
+	/* nothing of the distributed netcode's carried into the new game
+	(port/linux/game/network_distributed.c), before anything of the map
+	makes an object: a client makes the map's objects, and the game type's
+	(the flags of capture the flag, game_engine_initialize_for_new_map), at
+	the host's indices, not its own objects' of the last game's */
+	network_distributed_new_game();
+#endif
 	render_initialize_for_new_map();
 	structures_initialize_for_new_map();
 	breakable_surfaces_initialize_for_new_map();
@@ -745,9 +753,6 @@ void game_initialize_for_new_map(
 	point_physics_initialize_for_new_map();
 	game_engine_initialize_for_new_map();
 #ifdef HALO_LINUX
-	/* nothing of the distributed netcode's carried into the new game
-	(port/linux/game/network_distributed.c) */
-	network_distributed_new_game();
 	game_new_map_count++;
 #endif
 	game_statistics_start();

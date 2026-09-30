@@ -204,7 +204,7 @@ The workflow publishes no releases. Windows and Android are not built.
   raises the Xbox's limits to 128 players on up to 128 machines; a
   dedicated server's games take up to 16 players (`server.max_players`).
 - Browser and native clients can play in the same game.
-- The default netcode is new: each machine moves its own player at once,
+- The netcode is new: each machine moves its own player at once,
   and the host makes the decisions for the game. Refer to
   [port/linux/NETCODE.md](port/linux/NETCODE.md).
 - Players can join a game in progress; a dedicated server keeps the game

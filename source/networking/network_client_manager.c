@@ -1729,13 +1729,16 @@ boolean network_game_client_handle_game_update(
 	struct network_game_client *client,
 	struct message_server_game_update *message_packet)
 {
+#ifndef HALO_LINUX
 	struct server_update update;
 
+#endif
 	match_assert(
 		"c:\\halo\\SOURCE\\networking\\network_client_manager.c",
 		0x40D,
 		client && message_packet);
 
+#ifndef HALO_LINUX
 	if (message_packet->local_player_count < client->game.player_count)
 	{
 		csmemset(
@@ -1745,14 +1748,14 @@ boolean network_game_client_handle_game_update(
 				sizeof(struct player_action));
 		message_packet->local_player_count = client->game.player_count;
 	}
+#endif
 
 #ifdef HALO_LINUX
-	/* (the distributed netcode's machines keep their own clocks: a machine
-	that joined the game in progress takes up the host's count where it is) */
-	if (network_game_distributed() && message_packet->update_number != client->next_update_number)
-	{
-		client->next_update_number = message_packet->update_number;
-	}
+	/* (every machine ticks on its own clock with the inputs the host relays,
+	network_distributed.c: the host's game update carries no actions, and
+	keeps only the count of updates, which a machine that joined the game in
+	progress takes up where it is) */
+	client->next_update_number = message_packet->update_number;
 	/* (a game in progress past 16 bits of ticks: the host's whole time, if
 	it is ahead; never back, which the host would take for old messages) */
 	if (network_game_client_late_join_clock_pending)
@@ -1764,7 +1767,7 @@ boolean network_game_client_handle_game_update(
 			network_event("the game in progress is at game tick #%ld", message_packet->game_time);
 		}
 	}
-#endif
+#else
 	if (message_packet->update_number != client->next_update_number)
 	{
 		network_event(
@@ -1773,13 +1776,7 @@ boolean network_game_client_handle_game_update(
 			message_packet->update_number);
 		network_game_client_game_out_of_sync(client);
 	}
-	else if (!global_network_game_server_get()
-#ifdef HALO_LINUX
-		/* (the distributed netcode's machines simulate on their own clocks,
-		so the host's seed at a tick says nothing about a client's) */
-		&& !network_game_distributed()
-#endif
-		)
+	else if (!global_network_game_server_get())
 	{
 		if (game_time_get() == message_packet->update_number &&
 			message_packet->game_time != game_time_get())
@@ -1821,16 +1818,8 @@ boolean network_game_client_handle_game_update(
 		message_packet->player_actions,
 		update.local_player_count * sizeof(struct player_action));
 
-#ifdef HALO_LINUX
-	/* port: the distributed netcode's client plays on its own clock with the
-	inputs the host relays (network_distributed.c, update_client_dequeue);
-	the host's game update carries no actions and only keeps the count of
-	updates. There is nothing to queue, and its queue follows this machine's
-	ticks rather than the host's update numbers, so queueing it failed (and
-	logged "failed to get an update") on every tick. */
-	if (!network_game_distributed())
-#endif
 	update_client_handle_server_update(&update, message_packet->update_number);
+#endif
 
 	client->next_update_number++;
 	client->last_update_time = system_milliseconds();
@@ -1909,7 +1898,7 @@ boolean network_game_client_game_has_started(
 #ifdef HALO_LINUX
 					/* (a game in progress: the host's time when it said to start,
 					and the ticks this machine spent loading it) */
-					if (network_game_distributed() && network_game_client_late_join_time > 0)
+					if (network_game_client_late_join_time > 0)
 					{
 						unsigned long elapsed = system_milliseconds() - loading_started;
 						/* (no longer than a minute: a stalled clock counts nothing) */
@@ -3126,9 +3115,10 @@ the system link list does (network_game_join_game_from_server_list) */
 void platform_show_message(char const *title, char const *message);
 
 /* whether this client can join the advertised game: its host's network
-version is this machine's (HALO_PORT_NETWORK_VERSION). If so this machine
-plays the host's netcode from now on; if not the player is told (when tell)
-which of the two is the newer, and nothing is joined. */
+version is this machine's (HALO_PORT_NETWORK_VERSION), and it plays the
+distributed netcode (a host of this version built before the lockstep
+netcode was removed may play that). If not the player is told why (when
+tell), and nothing is joined. */
 boolean network_game_client_advertised_game_compatible(
 	struct network_game_client *client,
 	struct network_advertised_game const *game,
@@ -3145,14 +3135,18 @@ boolean network_game_client_advertised_game_compatible(
 	theirs = network_game_client_advertised_versions[game_index].version;
 	distributed = (network_game_client_advertised_versions[game_index].flags &
 		HALO_PORT_ADVERTISED_DISTRIBUTED_FLAG) != 0;
-	if (theirs == ours)
+	if (theirs == ours && distributed)
 	{
-		network_event("joining a host of network version %u, with the %s netcode", theirs,
-			distributed ? "distributed" : "lockstep");
-		network_game_follow_host_netcode(distributed);
+		network_event("joining a host of network version %u", theirs);
 		return TRUE;
 	}
-	if (theirs > ours)
+	if (theirs == ours)
+	{
+		csprintf(message,
+			"The host is using the lockstep network code, which this version no longer has.\n\n"
+			"Ask the host to update the game.");
+	}
+	else if (theirs > ours)
 	{
 		csprintf(message,
 			"The host is using a newer version of the network code than you.\n\n"
@@ -3170,7 +3164,8 @@ boolean network_game_client_advertised_game_compatible(
 	}
 	if (tell)
 	{
-		network_event("not joining a host of network version %u (this machine's is %u)", theirs, ours);
+		network_event("not joining a host of network version %u%s (this machine's is %u)", theirs,
+			distributed ? "" : " with the lockstep netcode", ours);
 		platform_show_message("Halo: cannot join this game", message);
 	}
 	return FALSE;
@@ -3264,7 +3259,8 @@ boolean network_game_client_join_first_available_game(
 }
 
 /* ... and puts this machine's players on a team (a team game needs both
-teams), as the pregame screen's team choice does */
+teams), as the pregame screen's team choice does; NONE: the other team from
+another machine's player */
 boolean network_game_client_set_team(
 	char team_index)
 {
@@ -3274,6 +3270,15 @@ boolean network_game_client_set_team(
 
 	if (!client || client->state != _network_game_client_state_pregame)
 		return FALSE;
+	for (player_index = 0; player_index < MAXIMUM_NUMBER_OF_PLAYERS && team_index == NONE; player_index++)
+	{
+		struct network_player const *player = &client->game.players[player_index];
+
+		if (network_player_is_valid(player) && player->machine_index != (char)client->machine_index)
+			team_index = player->team_index == 1 ? 0 : 1;
+	}
+	if (team_index == NONE)
+		team_index = 1;
 	for (player_index = 0; player_index < MAXIMUM_NUMBER_OF_PLAYERS; player_index++)
 	{
 		struct network_player player = client->game.players[player_index];

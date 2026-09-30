@@ -6,6 +6,17 @@ CSERIES.H
 #define __CSERIES_H
 #pragma once
 
+/* This fork keeps its port changes in #ifdef HALO_LINUX blocks, which
+port/linux/include/halo_linux_prefix.h (and the Windows port's prefix)
+defines for every native and web build. Upstream removed the define
+(cybersecurity/halo-ce-universal 4adc3a87): a merge that takes that without
+unwrapping the blocks would compile every one of them out, silently. Only
+the original Xbox build (MSVC) goes without it; tools/test_linux_port.py
+checks the prefixes still define it. */
+#if !defined(HALO_LINUX) && !defined(_MSC_VER)
+#error "HALO_LINUX is not defined: this fork's port code (#ifdef HALO_LINUX) would compile out"
+#endif
+
 #define _USE_MATH_DEFINES
 
 #include <StdDef.h>
