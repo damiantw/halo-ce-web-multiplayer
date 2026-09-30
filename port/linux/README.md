@@ -207,6 +207,11 @@ Mesa. To stop this, set the environment variable `mesa_glthread=false`.
 
 ## Updates
 
+In this fork the self-updater is off in every build: it looks for the
+original repository's releases, so no build gets a build number
+(`tools/linux_build.py`) and none looks for updates. The rest of this
+section describes the original repository's builds.
+
 The builds from GitHub Actions (refer to the main [README](../../README.md#download))
 can update themselves. At start-up, the game asks GitHub for the latest
 release. The game does not wait for the answer. If the latest release is not

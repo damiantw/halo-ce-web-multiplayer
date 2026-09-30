@@ -17,14 +17,30 @@ The original port starts from the decompilation of
 
 The original project is a port for players: a game that you download,
 point at a disc image and play, on a local network or over the internet.
-This fork keeps that game, and adds what a service needs to **host**
-Halo multiplayer:
+This fork adds what a service needs to **host** Halo multiplayer:
 
 | Part | What it is | Where |
 | --- | --- | --- |
 | **Dedicated server** | The Linux build, started headless: no window, GPU, audio or player of its own. It hosts system link games forever from a map and game type rotation, and a supervising process controls it through JSON over its pipes. | [port/linux/README.md, "Dedicated server"](port/linux/README.md#dedicated-server) |
 | **WebAssembly client** | The game compiled with Emscripten (`ninja web`) for the browser, WebGL 2. By default it is **multiplayer only, with no menus**: the page that embeds it picks the player's name, colour, team and server, and the game loads straight into that server's lobby. | [docs/gateway.md](docs/gateway.md), [docs/wasm-spike.md](docs/wasm-spike.md) |
 | **Gateway** (`halo-gateway`) | A small Go daemon that runs next to the dedicated servers. A browser has no UDP or TCP sockets, so the web client's sockets are framed onto one WebSocket to the gateway, which owns the real sockets. The game's datagrams move to a WebRTC data channel (unordered, no retransmits, as UDP) when one can open, with the WebSocket as the fallback. Access is by short-lived signed join tokens. | [port/gateway](port/gateway), [docs/gateway.md](docs/gateway.md) |
+
+## Supported builds
+
+This fork builds and supports only:
+
+- the **dedicated server**: `ninja linux`, a release build, started with
+  `HALO_DEDICATED=1`;
+- the **web client**: `ninja web` (multiplayer only);
+- the **gateway**: `go build ./port/gateway`.
+
+The Windows and Android code comes from the original repository. It stays in
+the tree, so that changes from the original repository merge cleanly, but
+this fork does not build, test or publish it. The Linux build also starts as
+a normal windowed (or `debug.hidden_window`) game, which the end-to-end tests
+use as a native client; it is for development and testing, not a product.
+The self-updater of the native game is off in every build (it looks for the
+original repository's releases).
 
 The fork also changes the game where multiplayer with a dedicated server
 needs it: joining games in progress and after a game's end, team balance
@@ -82,9 +98,8 @@ its own; it runs these pieces and glues them together:
    goes to `HALO_WEB_EXIT_URL`, so the site can take the player back to its
    server list.
 
-Native players (Linux, Windows and Android builds of this repository) can
-join the same dedicated servers over system link or the internet, next to
-the browser players.
+A native Linux client (for development and tests) can join the same
+dedicated servers over system link, next to the browser players.
 
 [docs/gateway.md](docs/gateway.md) has the details: addressing, the frame
 format, WebRTC, the gateway's settings, an example reverse proxy
@@ -98,10 +113,8 @@ operate. The maps of the European (PAL) version were made for a slower
 console; the port changes them to play as the North American (NTSC) maps
 do, so the two versions can play together.
 
-- **Native game:** at the first start, the game asks for the disc image and
-  extracts the `maps/` folder (next to the executable on Linux and Windows,
-  in the app's data folder on Android; refer to
-  [port/android/README.md](port/android/README.md)).
+- **Native Linux client (development):** at the first start, the game asks
+  for the disc image and extracts the `maps/` folder next to the executable.
 - **Dedicated server:** needs a `maps/` folder in its data root
   (`HALO_DATA_ROOT`) with `ui.map` and the maps of its rotation. It needs no
   display, GPU or audio device.
@@ -120,13 +133,11 @@ the game uses. Refer to [port/include/xdk](port/include/xdk/README.md).
 
 | Target | Result | Instructions |
 | --- | --- | --- |
-| `ninja linux` | `build/linux/halo`: the game, and the dedicated server (32-bit x86, OpenGL 4.5, SDL3) | [port/linux/README.md](port/linux/README.md) |
-| `ninja windows` (on Windows) | `build/windows/halo.exe` and `SDL3.dll` (32-bit x86, OpenGL 4.5, SDL3) | [port/windows/README.md](port/windows/README.md) |
-| `ninja android_apk` | `port/android/app/build/outputs/apk/debug/app-debug.apk` (arm64, OpenGL ES 3, SDL3) | [port/android/README.md](port/android/README.md) |
+| `ninja linux` | `build/linux/halo`: the dedicated server, and the native client for development and tests (32-bit x86, OpenGL 4.5, SDL3) | [port/linux/README.md](port/linux/README.md) |
 | `ninja web` | `build/web/halo.js` and `halo.wasm` (wasm32, WebGL 2, SDL3). Needs [Emscripten](https://emscripten.org/) (`source emsdk_env.sh` first). | [docs/wasm-spike.md](docs/wasm-spike.md), [docs/gateway.md](docs/gateway.md) |
 
-If you enter `ninja` without a target, ninja builds the game for the
-computer that you use.
+The `windows` and `android_apk` targets of the original repository are
+still defined, but this fork does not build or maintain them.
 
 The gateway is a separate Go program:
 `go build ./port/gateway` (a static binary; tests:
@@ -146,55 +157,53 @@ Give these options to `configure.py`:
 | --- | --- |
 | (none) | A debug build. A failed assertion stops the game. |
 | `--release` | A release build. The game does not examine assertions, as in the retail game. |
-| `--portable` | The Linux and Windows builds operate on all x86-64 processors. Use this option for builds that you give to other persons or deploy to servers. |
+| `--portable` | The Linux build operates on all x86-64 processors. Use this option for builds that you deploy to servers. |
 | `--web-campaign` | `ninja web` with the campaign and the menus, instead of the multiplayer-only build. |
 | `--lto=thin`, `--lto=off` | Less link-time optimization. The link is faster. |
 | `--pgo=off` | No profile-guided optimization. |
 | `--pgo=train` | Records a new optimization profile. Refer to "Optimization profiles". |
 
-Without `--portable`, the Linux and Windows builds use all the instructions
-of the processor that builds them (`-march=native`). Such a build does not
-always start on a different computer.
+Without `--portable`, the Linux build uses all the instructions of the
+processor that builds it (`-march=native`). Such a build does not always
+start on a different computer.
 
-`tools/ci_build.py` makes the same native builds as GitHub Actions, for
-example `python tools/ci_build.py linux release`.
+The dedicated server is deployed as
+`python configure.py --portable --release --pgo=off` then `ninja linux`,
+and the web client as `python configure.py --pgo=off` then `ninja web`, as
+in CI.
 
 ### Optimization profiles
 
-The native builds use profiles of the game to optimize the code:
-`pgo/halo_linux.profdata` for Linux and Android, and
-`pgo/halo_windows.profdata` for Windows. The profiles need clang 22 or
-later; with an older clang, the builds do not use them.
+The Linux build can use a profile of the game to optimize the code
+(`pgo/halo_linux.profdata`, inherited from the original repository). The
+profile needs clang 22 or later; with an older clang, the build does not use
+it. The deployment and CI build with `--pgo=off`.
 
 To record a new profile, delete the profile, enter
-`python configure.py --pgo=train`, then `ninja linux` or `ninja windows`.
-The build then plays the main menu and the first minute of each campaign
-level (approximately 15 minutes). The game data must be in `assets/`.
+`python configure.py --pgo=train`, then `ninja linux`. The build then plays
+the main menu and the first minute of each campaign level (approximately 15
+minutes). The game data must be in `assets/`.
 
-## Builds from GitHub Actions
+## Continuous integration
 
-GitHub Actions builds the native ports (Linux, Windows and Android, debug
-and release) for each pushed commit. Each build of `main` that passes on all
-three platforms is published on this repository's
-[Releases](../../releases) page, which keeps the last five. The web client
-and the gateway are not built by the workflow; build them with `ninja web`
-and `go build` as above.
+GitHub Actions ([.github/workflows/build.yml](.github/workflows/build.yml))
+checks each pull request and each push to `main`:
 
-Use the release build to play or to host. The debug build stops at the
-first failed assertion and writes it to the log; use it to find and report
-problems.
+- **server:** `ninja linux` (release, portable, as deployed; Debian, clang
+  19), then `tools/test_linux_port.py` and the dedicated server's control
+  test (`tools/dedicated_control_test.py`), which need no game data;
+- **web:** `ninja web` with Emscripten 6.0.10 (the build is kept for three
+  days as the `halo-web` artifact);
+- **gateway:** `go vet`, `go test -race` and `go build` in `port/gateway`.
 
-The self-updater of the native game (refer to "Updates" in
-[port/linux/README.md](port/linux/README.md#updates)) still looks for
-releases of the original repository. Turn it off (`update.auto = false`)
-for builds of this fork; the dedicated server never updates itself.
+The workflow publishes no releases. Windows and Android are not built.
 
 ## Multiplayer
 
 - System link games on a local network or over the internet. The port
   raises the Xbox's limits to 128 players on up to 128 machines; a
   dedicated server's games take up to 16 players (`server.max_players`).
-- Linux, Windows, Android and browser clients can play in the same game.
+- Browser and native clients can play in the same game.
 - The default netcode is new: each machine moves its own player at once,
   and the host makes the decisions for the game. Refer to
   [port/linux/NETCODE.md](port/linux/NETCODE.md).
