@@ -311,3 +311,21 @@ int web_player_color(void)
 	}
 	return -1;
 }
+
+/* the team the player asked for on the site (HALO_WEB_PLAYER_TEAM: red or 0,
+blue or 1; anything else, or none, is "auto"): 0 or 1, else -1. The join
+request carries it (network_client_manager.c, network_game_client_add_player)
+and a port's server honours it while the teams stay within one player of
+each other (network_server_manager.c, network_game_server_pick_team). */
+int web_player_team(void)
+{
+	const char *text = getenv("HALO_WEB_PLAYER_TEAM");
+
+	if (!text || !*text)
+		return -1;
+	if (!strcasecmp(text, "red") || !strcmp(text, "0"))
+		return 0;
+	if (!strcasecmp(text, "blue") || !strcmp(text, "1"))
+		return 1;
+	return -1;
+}

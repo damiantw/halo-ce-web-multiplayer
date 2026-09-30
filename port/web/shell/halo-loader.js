@@ -28,6 +28,9 @@
 //                                  (white, black, red, blue, gray, yellow,
 //                                  green, pink, purple, cyan, cobalt, orange,
 //                                  teal, sage, brown, tan, maroon, salmon)
+//   HALO_WEB_PLAYER_TEAM=<team>    the team asked for in team games: red or
+//                                  blue (else auto); a port's server honours
+//                                  it while the teams stay within one player
 //   HALO_WEB_EXIT_URL=<url>        where the page goes when the player
 //                                  leaves the game (default: stay)
 //   HALO_WEB_MENUS=1               the multiplayer-only build's menus back
@@ -35,10 +38,10 @@
 // What this build understands, for the site's game bridge (which runs before
 // the game starts, after this script): webJoin, the web.join setting
 // (HALO_WEB_JOIN=first, port/linux/game/auto_join.c); playerColor,
-// HALO_WEB_PLAYER_COLOR; leave, the "halo:leave" event: the build has no
+// HALO_WEB_PLAYER_COLOR; playerTeam, HALO_WEB_PLAYER_TEAM; leave, the "halo:leave" event: the build has no
 // main menu, it boots into the join and, when the player leaves the game,
 // asks the page to leave (web_library.js, web_leave_game).
-window.haloFeatures = Object.assign(window.haloFeatures || {}, { webJoin: true, playerColor: true, leave: true });
+window.haloFeatures = Object.assign(window.haloFeatures || {}, { webJoin: true, playerColor: true, playerTeam: true, leave: true });
 (() => {
 	const params = new URLSearchParams(location.search);
 	const envParam = (name) => {

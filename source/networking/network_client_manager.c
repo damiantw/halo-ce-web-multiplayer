@@ -1635,6 +1635,19 @@ boolean network_game_client_add_player(
 	player.primary_color_index = profile.primary_color_index;
 	player.icon_index = NONE;
 	player.team_index = NONE;
+#ifdef HALO_WEB
+	/* the team picked on the site (HALO_WEB_PLAYER_TEAM, web_host.c), else
+	NONE: the server picks. The original servers overwrite it anyway; a
+	port's honours it while the teams stay even
+	(network_server_manager.c, network_game_server_pick_team) */
+	{
+		extern int web_player_team(void);
+		int team = web_player_team();
+
+		if (team >= 0)
+			player.team_index = (char)team;
+	}
+#endif
 	player.player_list_index = NONE;
 
 	network_event(

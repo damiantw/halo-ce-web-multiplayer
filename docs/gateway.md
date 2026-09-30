@@ -196,9 +196,9 @@ the offer limits).
    Add `HALO_WEB_PLAYER_COLOR=<0-17 or name>` (white, black, red, blue, gray/grey, yellow, green, pink,
    purple, cyan, cobalt, orange, teal, sage, brown, tan, maroon, salmon: `profile_color_table`'s order) for the
    player's armour colour in free-for-all games (`web_host.c web_player_color`, applied in
-   `player_ui_get_active_player_profile`; team games still colour by team). Add `HALO_WEB_EXIT_URL=<url>` for
+   `player_ui_get_active_player_profile`; team games still colour by team). Add `HALO_WEB_PLAYER_TEAM=red|blue` (else auto) to ask for a team in team games (the server honours it while the teams stay within one player: `port/linux/README.md`, "Teams"). Add `HALO_WEB_EXIT_URL=<url>` for
    where the page goes when the player leaves the game (below); `HALO_WEB_MENUS=1` brings the menus back.
-   The loader sets `window.haloFeatures` (`webJoin`, `playerColor`, `leave`) so the page can tell builds that
+   The loader sets `window.haloFeatures` (`webJoin`, `playerColor`, `playerTeam`, `leave`) so the page can tell builds that
    know the settings.
    `/maps/index.json` lists `[{name, size}]`, and `/maps/<name>.map` serves the files with Range support. For the
    multiplayer-only build it needs only `ui.map` and the multiplayer maps.
