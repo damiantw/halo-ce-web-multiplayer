@@ -195,6 +195,9 @@ void players_initialize_for_new_map(
 
 long *machine_get_player_list(
 	long machine_index);
+/* port: the player (its datum index) is no longer any machine's */
+void machine_remove_player(
+	long player_index);
 
 long player_new(
 	long machine_index,

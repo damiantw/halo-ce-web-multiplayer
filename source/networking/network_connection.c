@@ -245,6 +245,9 @@ enum
 	RELIABLE_MESSAGE_MAXIMUM_SIZE = 2048,
 #endif
 	MAXIMUM_RESERVED_NETWORK_PORT = 1023,
+	/* datagrams that could not be read (too large, or empty) skipped in a
+	frame before the rest wait for the next */
+	MAXIMUM_SKIPPED_DATAGRAMS_PER_IDLE = 64,
 	_transport_type_udp = 0x11,
 	_transport_type_tcp,
 	_connection_closed_bit = 4,
@@ -340,6 +343,8 @@ static boolean network_connection_write_reliable(
 	void const *message,
 	word buffer_size);
 static boolean network_connection_flush_reliable(
+	struct network_connection *connection);
+static void network_connection_flush_reliable_last(
 	struct network_connection *connection);
 static long network_connection_datagram_size(
 	byte const *datagram);
@@ -518,6 +523,7 @@ boolean network_connection_connect(
 
 	if (connection->reliable_endpoint)
 	{
+		connection->reliable_address_valid = FALSE;
 		if (process_reference)
 		{
 			result = connect_endpoint_async(connection->reliable_endpoint, remote_address, process_reference);
@@ -541,6 +547,20 @@ boolean network_connection_connect(
 					transport_error_to_string(result));
 				return FALSE;
 			}
+			/* port: connect_endpoint leaves the stream blocking; a write the
+			host is not taking waits in the outgoing queue instead
+			(network_connection_write_reliable), and reads go on until the
+			stream has no more (network_connection_idle_client_reliable_endpoint) */
+			if (set_endpoint_blocking(connection->reliable_endpoint, FALSE) != _transport_error_none)
+			{
+				error(2, "could not make the reliable endpoint non-blocking");
+				return FALSE;
+			}
+			/* (the host's address, which every message read from the stream
+			is from, found once) */
+			connection->reliable_address_valid = get_endpoint_address(
+				connection->reliable_endpoint,
+				&connection->reliable_address) == _transport_error_none;
 		}
 	}
 
@@ -715,8 +735,8 @@ void network_connection_delete(
 			connection);
 		if (connection->reliable_outgoing_queue)
 		{
-			/* (what the peer will take now of what waits: its last messages) */
-			network_connection_flush_reliable(connection);
+			/* (what the peer will take of what waits: its last messages) */
+			network_connection_flush_reliable_last(connection);
 			circular_queue_delete(connection->reliable_outgoing_queue);
 		}
 		if (connection->reliable_endpoint)
@@ -977,7 +997,13 @@ static struct network_connection *network_connection_create_client_from_endpoint
 		TRUE,
 		"c:\\halo\\SOURCE\\networking\\network_connection.c",
 		0x347);
-	if (connection)
+	/* port: the endpoint deleted with a connection not made (as it is when
+	its queue is not) */
+	if (!connection)
+	{
+		delete_transport_endpoint(reliable_endpoint);
+	}
+	else
 	{
 		connection->flags = FLAG(_connection_create_serverside_client_bit);
 		connection->reliable_endpoint = reliable_endpoint;
@@ -1023,7 +1049,13 @@ static boolean network_connection_idle_client_reliable_endpoint(
 		connection->reliable_incoming_queue);
 
 	free_space = circular_queue_free_space(connection->reliable_incoming_queue);
-	while (success && endpoint_readable(connection->reliable_endpoint, 0) && free_space > 0)
+	/* (port: a connected stream that does not block is read until it has no
+	more, without a select() before each read) */
+	while (success &&
+		free_space > 0 &&
+		(((boolean)endpoint_connected(connection->reliable_endpoint) &&
+			!endpoint_blocking(connection->reliable_endpoint)) ||
+			endpoint_readable(connection->reliable_endpoint, 0)))
 	{
 		long bytes_read;
 
@@ -1316,10 +1348,10 @@ static boolean network_client_reliable_connection_read(
 				0x394,
 				!TEST_FLAG(header, 0),
 				"encryption should not be active");
-			if (source_address && get_endpoint_address(connection->reliable_endpoint, source_address))
+			if (source_address)
 			{
-				memset(source_address, 0, sizeof(*source_address));
-				source_address->address_length = IPV4_ADDRESS_LENGTH;
+				/* (the peer's, found when the stream connected) */
+				network_connection_get_address(connection, source_address, NULL);
 			}
 			*buffer_size = message_size;
 			success = TRUE;
@@ -1428,8 +1460,31 @@ boolean network_connection_disconnect(
 		{
 			network_connection_idle_client_reliable_endpoint(connection);
 		}
-		network_connection_flush_reliable(connection);
+		network_connection_flush_reliable_last(connection);
+	}
+	/* (port: and a stream that was lost, whose socket stays until then; the
+	next connection makes a new one) */
+	if (connection->reliable_endpoint &&
+		(connection->flags & (FLAG(_connection_create_clientside_client_bit) | FLAG(_connection_create_serverside_client_bit))))
+	{
+		/* (blocking again first, as connect_endpoint expects of the
+		endpoint: it keeps a non-blocking one's new socket blocking, and
+		waits on its connect() without its own timeout) */
+		if (!endpoint_blocking(connection->reliable_endpoint))
+		{
+			set_endpoint_blocking(connection->reliable_endpoint, TRUE);
+		}
 		disconnect_endpoint(connection->reliable_endpoint);
+	}
+	connection->reliable_address_valid = FALSE;
+	/* (and the connection is open again, with nothing of the last one:
+	port) */
+	SET_FLAG(connection->flags, _connection_closed_bit, FALSE);
+	SET_FLAG(connection->flags, _connection_going_stale_bit, FALSE);
+	connection->last_keep_alive_time = system_milliseconds();
+	if (connection->unreliable_incoming_queue)
+	{
+		circular_queue_reset(connection->unreliable_incoming_queue);
 	}
 	/* (the next stream starts afresh) */
 	if (connection->reliable_outgoing_queue)
@@ -1500,34 +1555,35 @@ static boolean network_connection_idle_server_reliable_endpoint(
 			{
 				if (endpoint == connection->connection.reliable_endpoint)
 				{
+					/* port: a client's place in the list (a client whose
+					stream failed is out of the set, and in the list until the
+					game closes it): with none free, one more is refused, not
+					accepted and let go with its socket */
+					long free_index;
+
+					for (free_index = 0;
+						free_index < NETWORK_CONNECTION_MAXIMUM_CLIENTS && connection->client_list[free_index];
+						free_index++);
 					if (connection->allow_client_connections &&
+						free_index < NETWORK_CONNECTION_MAXIMUM_CLIENTS &&
 						count_endpoints_in_set(connection->endpoint_set) < NETWORK_CONNECTION_MAXIMUM_CLIENTS + 1)
 					{
 						struct transport_endpoint *accepted_endpoint = accept_endpoint(endpoint);
 						struct network_connection *client_connection = NULL;
 
 						if (accepted_endpoint &&
-							set_endpoint_blocking(accepted_endpoint, FALSE) == _transport_error_none)
+							set_endpoint_blocking(accepted_endpoint, FALSE) != _transport_error_none)
 						{
-							client_connection = network_connection_create_client_from_endpoint(accepted_endpoint);
+							delete_transport_endpoint(accepted_endpoint);
+							accepted_endpoint = NULL;
 						}
+						/* (which deletes the endpoint if it fails) */
+						if (accepted_endpoint)
+							client_connection = network_connection_create_client_from_endpoint(accepted_endpoint);
 						if (client_connection)
 						{
-							long client_index;
-
-							for (client_index = 0; client_index < NETWORK_CONNECTION_MAXIMUM_CLIENTS; client_index++)
-							{
-								if (!connection->client_list[client_index])
-								{
-									*new_client_connection = client_connection;
-									connection->client_list[client_index] = client_connection;
-									break;
-								}
-							}
-							if (client_index >= NETWORK_CONNECTION_MAXIMUM_CLIENTS)
-							{
-								error(_error_silent, "error adding new client");
-							}
+							*new_client_connection = client_connection;
+							connection->client_list[free_index] = client_connection;
 						}
 						else
 						{
@@ -1705,6 +1761,9 @@ boolean network_connection_idle(
 	if (success && connection->unreliable_endpoint)
 	{
 		long free_space = circular_queue_free_space(connection->unreliable_incoming_queue);
+		/* port: the datagrams that could not be read, skipped (one too large,
+		or empty, which anyone may send), up to this many a frame */
+		long skipped = 0;
 
 		while (success &&
 			free_space >= DATAGRAM_MAXIMUM_SIZE + sizeof(unsigned long))
@@ -1751,6 +1810,11 @@ boolean network_connection_idle(
 				"endpoint read buffer overflowed");
 			if (buffer_size <= 0)
 			{
+				if ((buffer_size == 0 || buffer_size == _transport_error_endpoint_io) &&
+					++skipped < MAXIMUM_SKIPPED_DATAGRAMS_PER_IDLE)
+				{
+					continue;
+				}
 				return success;
 			}
 
@@ -1910,6 +1974,27 @@ static boolean network_connection_flush_reliable(
 	}
 
 	return TRUE;
+}
+
+/* port: what waits, sent before the stream closes (its last messages: a
+player removed, a machine leaving), for as long as the peer takes it up to
+half a second (the stream is not blocking: a peer that reads nothing does
+not hold the game) */
+static void network_connection_flush_reliable_last(
+	struct network_connection *connection)
+{
+	unsigned long start_time = system_milliseconds();
+
+	/* (and not at all for a peer that has taken nothing lately: gone, its
+	connection dropped for it) */
+	while (connection->reliable_outgoing_queue && circular_queue_size(connection->reliable_outgoing_queue) > 0 &&
+		network_connection_flush_reliable(connection) &&
+		circular_queue_size(connection->reliable_outgoing_queue) > 0 &&
+		system_milliseconds() - start_time < 500 &&
+		system_milliseconds() - connection->reliable_outgoing_time < 100)
+	{
+		Sleep(5);
+	}
 }
 
 /* the length a received datagram's header (in network byte order) says */

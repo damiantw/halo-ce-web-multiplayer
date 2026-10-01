@@ -814,6 +814,8 @@ static boolean add_advertised_game(
 	struct message_server_game_advertise *advertisement);
 static boolean network_game_client_process_incoming_messages(
 	struct network_game_client *client);
+static boolean network_game_client_process_last_messages(
+	struct network_game_client *client);
 static void network_game_client_update_precache_status(
 	struct network_game_client *client);
 static boolean network_game_client_map_name_is_valid(
@@ -842,6 +844,13 @@ static boolean network_game_client_late_join_clock_pending;
 /* whether the automated tests' join has told the player why a host cannot
 be joined (network_game_client_join_first_available_game) */
 static boolean network_game_client_incompatibility_told;
+
+/* when each controller last asked the host for its player in the pregame
+(network_game_client_add_player): the pregame screen asks every frame, and
+is answered once every half second. A removal asked for since lets the next
+ask go at once, so that a quick join again is not taken for a repeat. */
+static unsigned long network_game_client_add_player_request_times[MAXIMUM_NUMBER_OF_LOCAL_PLAYERS];
+static boolean network_game_client_add_player_requested[MAXIMUM_NUMBER_OF_LOCAL_PLAYERS];
 
 /* each advertised game's host's network version and netcode, by its place
 in the client's available_games (HALO_PORT_NETWORK_VERSION) */
@@ -1344,6 +1353,13 @@ boolean network_game_client_request_remove_player(
 		"requesting a player removal (controller index #%d)",
 		player->controller_index);
 
+	/* (the controller's next join goes at once: network_game_client_add_player) */
+	if (player->controller_index >= 0 &&
+		player->controller_index < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS)
+	{
+		network_game_client_add_player_requested[player->controller_index] = FALSE;
+	}
+
 	switch (client->state)
 	{
 	case _network_game_client_state_searching:
@@ -1452,12 +1468,15 @@ boolean network_game_client_add_player(
 	refused and logged each repeat) */
 	if (client->state == _network_game_client_state_pregame)
 	{
-		static unsigned long last_request_times[MAXIMUM_NUMBER_OF_LOCAL_PLAYERS];
 		unsigned long now = system_milliseconds();
 
-		if (now - last_request_times[local_player_index] < 500)
+		if (network_game_client_add_player_requested[local_player_index] &&
+			now - network_game_client_add_player_request_times[local_player_index] < 500)
+		{
 			return TRUE;
-		last_request_times[local_player_index] = now;
+		}
+		network_game_client_add_player_requested[local_player_index] = TRUE;
+		network_game_client_add_player_request_times[local_player_index] = now;
 	}
 
 	player_ui_get_active_player_profile(local_player_index, &profile);
@@ -1601,6 +1620,21 @@ boolean network_game_client_handle_game_update(
 			game_time_set_distributed(message_packet->game_time);
 			network_event("the game in progress is at game tick #%ld", message_packet->game_time);
 		}
+	}
+	/* port: and whenever the host's time is more than a second ahead: the
+	clock catches up no more than a second (game_time_update), so a stall
+	longer than that (the app in the background, a hitch) left this machine
+	behind the host for the rest of the game. The host's time is when it
+	sent the update, before this machine's by the way there, so a clock in
+	step is never moved; one behind is, at the next update (once a second at
+	least) */
+	else if (message_packet->game_time > game_time_get() + TICKS_PER_SECOND)
+	{
+		network_event(
+			"the host's clock is %ld ticks ahead of this machine's; taking its game tick #%ld",
+			message_packet->game_time - game_time_get(),
+			message_packet->game_time);
+		game_time_set_distributed(message_packet->game_time);
 	}
 #else
 	if (message_packet->update_number != client->next_update_number)
@@ -1814,6 +1848,10 @@ boolean network_game_client_remove_player(
 					reason,
 					game_time_get());
 				player_datum->quit_out_of_game_time = reason;
+				/* (and is no longer its machine's: a machine that joins the
+				game in progress at its index fills the list afresh,
+				players.c) */
+				machine_remove_player(player_index);
 			}
 
 			for (network_player_index = 0;
@@ -2074,6 +2112,9 @@ boolean network_game_client_initiate_join_game(
 
 	if (success == TRUE)
 	{
+		/* port: the join's wait counted from the connection made, not from
+		before a connect that took seconds (idle_joining) */
+		network_connection_keep_alive(client->connection);
 		client->state = _network_game_client_state_joining;
 		network_event(
 			"attempting to connect to game @ %s",
@@ -2224,8 +2265,10 @@ void network_game_client_reset(
 	client->machine_index = NONE;
 	client->state = _network_game_client_state_searching;
 
+	/* (port: or one that was lost, whose socket stays until it is torn down) */
 	if (teardown_connection && client->connection &&
-		(boolean)network_connection_connected(client->connection))
+		((boolean)network_connection_connected(client->connection) ||
+			!network_connection_active(client->connection)))
 	{
 		if (network_connection_disconnect(client->connection))
 		{
@@ -2253,6 +2296,7 @@ void network_game_client_reset(
 	network_game_client_late_join_time = 0;
 	network_game_client_late_join_clock_pending = FALSE;
 	network_game_client_incompatibility_told = FALSE;
+	csmemset(network_game_client_add_player_requested, 0, sizeof(network_game_client_add_player_requested));
 
 	return;
 }
@@ -2341,6 +2385,15 @@ void network_game_client_rejected_by_game(
 		"unable to join game: reason= #%d/%s",
 		rejection_code,
 		reason);
+	/* port: the join went to the pregame screen at once (and a machine
+	refused a game in progress, network_game_server_refuse_late_joiner, is in
+	it): with no game behind it, it is left for the main menu, which says
+	why, rather than sitting in a lobby that will never start */
+	display_error_when_main_menu_loaded(
+		rejection_code == _rejection_code_game_is_full || rejection_code == _rejection_code_game_is_closed ?
+			_error_network_join_game_closed :
+			_error_network_failed_to_join_game);
+	network_game_abort();
 	network_game_client_reset(client, TRUE);
 
 	return;
@@ -2539,6 +2592,25 @@ static boolean network_game_client_process_incoming_messages(
 	}
 
 	return success;
+}
+
+/* port: the messages the connection has queued when it has just failed or
+closed: the host's last before it closed the connection (a rejection, which
+it follows with the close) came with the close, and the queue holds only
+whole messages. TRUE when they took the client out of its state (a
+rejection, network_game_client_rejected_by_game, which says why and ends the
+game): the connection's failure is then no failure of the client's. */
+static boolean network_game_client_process_last_messages(
+	struct network_game_client *client)
+{
+	short state = client->state;
+
+	if (!network_game_client_process_incoming_messages(client))
+	{
+		network_event("network_game_client_process_incoming_messages() failed after the connection failed");
+	}
+
+	return client->state != state;
 }
 
 static void network_game_client_update_precache_status(
@@ -2794,6 +2866,7 @@ static boolean network_game_client_idle_joining(
 		else
 		{
 			network_event("network_connection_idle() failed in network_game_client_idle_joining()");
+			success = network_game_client_process_last_messages(client);
 		}
 	}
 
@@ -2815,6 +2888,10 @@ static boolean network_game_client_idle_pregame(
 			if (!(success = network_connection_idle(client->connection, 15000, NULL)))
 			{
 				network_event("network_connection_idle() failed in network_game_client_idle_pregame()");
+				if (network_game_client_process_last_messages(client))
+				{
+					return TRUE;
+				}
 			}
 			else if (!(success = network_game_client_process_incoming_messages(client)))
 			{
@@ -2824,6 +2901,10 @@ static boolean network_game_client_idle_pregame(
 		else
 		{
 			success = FALSE;
+			if (network_game_client_process_last_messages(client))
+			{
+				return TRUE;
+			}
 		}
 	}
 
@@ -2844,6 +2925,11 @@ static boolean network_game_client_idle_ingame(
 	struct network_game_client *client)
 {
 	boolean success = TRUE;
+	/* port: until the host's first update the host may still be loading the
+	map (its main thread, which sends nothing meanwhile), as long as it waits
+	for the other machines to load (network_server_manager.c's
+	NETWORK_GAME_SERVER_MAXIMUM_WAIT_TIME_FOR_LEVEL_LOADING) */
+	boolean started = network_game_client_server_has_started_game(client);
 
 	if (!network_connection_active(client->connection) ||
 		!network_connection_connected(client->connection))
@@ -2862,7 +2948,7 @@ static boolean network_game_client_idle_ingame(
 			network_event("network connection went down (idle in game)!");
 			success = FALSE;
 		}
-		else if (connection_stale && !client->connection_silent)
+		else if (connection_stale && !client->connection_silent && started)
 		{
 			short local_player_index;
 
@@ -2885,7 +2971,7 @@ static boolean network_game_client_idle_ingame(
 
 	if (success == TRUE)
 	{
-		success = network_connection_idle(client->connection, 15000, NULL);
+		success = network_connection_idle(client->connection, started ? 15000 : 75000, NULL);
 
 		if (success)
 		{
@@ -2923,6 +3009,10 @@ static boolean network_game_client_idle_postgame(
 		if (!(success = network_connection_idle(client->connection, 15000, NULL)))
 		{
 			network_event("network_connection_idle() failed in network_game_client_idle_postgame()");
+			if (network_game_client_process_last_messages(client))
+			{
+				return TRUE;
+			}
 		}
 		else if (!(success = network_game_client_process_incoming_messages(client)))
 		{

@@ -155,7 +155,7 @@ GET    /servers                       {"gulch": "127.0.1.1", ...}
 PUT    /servers/{id}  {"address": "127.0.1.N"}
 DELETE /servers/{id}
 GET    /sessions                      address, sub, servers, frames, drops per session
-GET    /metrics                       counters
+GET    /metrics                       counters (bytes_in / bytes_out: frame bytes from and to the clients)
 ```
 
 Tests: `cd port/gateway && go test -race ./...` (frames, tokens, registry, buckets, bad tokens, address

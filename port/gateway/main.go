@@ -153,6 +153,7 @@ func controlHandler(g *gateway) http.Handler {
 		writeJSON(w, map[string]int64{
 			"sessions": int64(len(sessions)), "accepted": g.stats.accepted.Load(), "rejected": g.stats.rejected.Load(),
 			"frames_in": g.stats.framesIn.Load(), "frames_out": g.stats.framesOut.Load(), "dropped": g.stats.dropped.Load(),
+			"bytes_in": g.stats.bytesIn.Load(), "bytes_out": g.stats.bytesOut.Load(),
 			"rtc_sessions": rtc, "rtc_opened": g.stats.rtcOpened.Load(), "rtc_fallbacks": g.stats.rtcFallbacks.Load(),
 			"rtc_offers_refused": g.stats.rtcOffersRefused.Load(),
 		})
