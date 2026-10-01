@@ -64,6 +64,7 @@ symbols in this file:
 
 #include "cseries.h"
 #include "data.h"
+#include "errors.h"
 
 /* ---------- constants */
 
