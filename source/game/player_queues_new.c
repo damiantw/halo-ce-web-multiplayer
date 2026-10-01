@@ -302,6 +302,19 @@ static struct
 	unsigned short control_flags[DISTRIBUTED_INPUT_HISTORY];
 } update_client_local_inputs[MAXIMUM_LOCAL_PLAYERS];
 
+/* The native builds draw several frames per 30 Hz tick
+(port/linux/game/render_interpolation.c) and build an action every frame, and
+only the last one before a tick reaches it: a button pressed and released
+between two ticks, or a press seen only on its first frame (zoom, grenade
+and weapon switches), would be lost. Every control held on any frame since
+the last tick stays held until a tick has run, and the trigger stays as far
+down as it went (weapons with an analog rate of fire read that, not the
+flag). */
+static unsigned long update_client_pending_control_flags[MAXIMUM_LOCAL_PLAYERS];
+static real update_client_pending_primary_triggers[MAXIMUM_LOCAL_PLAYERS];
+static long update_client_pending_game_time = NONE;
+
+
 #endif
 
 static struct update_server_globals update_server_globals = { 0 };
@@ -585,7 +598,13 @@ void update_client_start(
 	/* (as the host's, update_server_start: the host's update numbers and
 	this machine's game time start again with the game) */
 	csmemset(update_client_relayed_actions, 0, sizeof(update_client_relayed_actions));
+	/* (and the buttons the next input message sends only where they differ
+	from the tick after, upstream's delta input: from nothing held, as are
+	the controls held since the last tick of the game before) */
 	csmemset(update_client_local_inputs, 0, sizeof(update_client_local_inputs));
+	csmemset(update_client_pending_control_flags, 0, sizeof(update_client_pending_control_flags));
+	csmemset(update_client_pending_primary_triggers, 0, sizeof(update_client_pending_primary_triggers));
+	update_client_pending_game_time = NONE;
 #endif
 	data_iterator_new(&iterator, player_data);
 	while (data_iterator_next(&iterator))
@@ -614,20 +633,6 @@ void update_client_add_player(
 	return;
 }
 
-#ifdef HALO_LINUX
-/* The native builds draw several frames per 30 Hz tick
-(port/linux/game/render_interpolation.c) and build an action every frame, and
-only the last one before a tick reaches it: a button pressed and released
-between two ticks, or a press seen only on its first frame (zoom, grenade
-and weapon switches), would be lost. Every control held on any frame since
-the last tick stays held until a tick has run, and the trigger stays as far
-down as it went (weapons with an analog rate of fire read that, not the
-flag). */
-static unsigned long update_client_pending_control_flags[MAXIMUM_LOCAL_PLAYERS];
-static real update_client_pending_primary_triggers[MAXIMUM_LOCAL_PLAYERS];
-static long update_client_pending_game_time = NONE;
-
-#endif
 void update_client_queue(
 	struct player_action const *action)
 {
