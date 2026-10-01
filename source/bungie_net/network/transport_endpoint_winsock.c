@@ -1253,6 +1253,9 @@ short connect_endpoint(
 					{
 						error = WSAEINPROGRESS;
 						closesocket(ep->socket);
+						/* port: closed here, not again when the endpoint is (its
+						number may be another socket's by then) */
+						ep->socket = INVALID_SOCKET;
 						break;
 					}
 				}

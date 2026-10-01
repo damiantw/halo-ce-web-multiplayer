@@ -774,7 +774,7 @@ long game_engine_slayer_write_network_state(
 	return sizeof(state);
 }
 
-void game_engine_slayer_read_network_state(
+boolean game_engine_slayer_read_network_state(
 	byte const *buffer,
 	long size,
 	boolean first)
@@ -784,7 +784,7 @@ void game_engine_slayer_read_network_state(
 	struct player_datum *player;
 
 	if (size != (long)sizeof(state))
-		return;
+		return FALSE;
 	csmemcpy(&state, buffer, sizeof(state));
 	slayer_globals = state.globals;
 	data_iterator_new(&iterator, player_data);
@@ -808,5 +808,6 @@ void game_engine_slayer_read_network_state(
 		if (!first && target != NONE)
 			game_show_score_extended(iterator.datum_index, _slayer_message_new_target, target);
 	}
+	return TRUE;
 }
 #endif
