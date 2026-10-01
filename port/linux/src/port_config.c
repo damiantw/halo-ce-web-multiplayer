@@ -194,6 +194,25 @@ static const struct config_setting config_settings[] =
 		_platform_desktop,
 		"Seconds between the dedicated server's status events on its control\n"
 		"channel (1-3600); 0 writes them only when asked." },
+	{ "server.speed_hack", _config_string, "\"log\"", "HALO_SERVER_SPEED_HACK", _environment_value, _platform_all,
+		"What the host does about a client whose game runs faster than the host's\n"
+		"(a speed hack; port/linux/NETCODE.md, \"Speed hacks\"): \"off\";\n"
+		"\"log\" logs it, and a dedicated server writes a speed_hack control event;\n"
+		"\"refuse\" also ignores its players' predictions while it runs fast;\n"
+		"\"kick\" also kicks it after server.speed_hack_seconds. No bans." },
+	{ "server.speed_hack_rate", _config_real, "1.1", "HALO_SERVER_SPEED_HACK_RATE", _environment_value,
+		_platform_all,
+		"How many times as fast as the host's a client's game runs, over 2 seconds,\n"
+		"to count as fast (at least 1.01)." },
+	{ "server.speed_hack_ahead_ticks", _config_integer, "15", "HALO_SERVER_SPEED_HACK_AHEAD", _environment_value,
+		_platform_all,
+		"How many ticks (30 a second) a fast client's game also has to gain past\n"
+		"its usual lead on the host's (1-3000): one catching up after a stall\n"
+		"only gets its usual lead back." },
+	{ "server.speed_hack_seconds", _config_integer, "10", "HALO_SERVER_SPEED_HACK_SECONDS", _environment_value,
+		_platform_all,
+		"Seconds a client's game runs fast without a break before server.speed_hack\n"
+		"\"kick\" kicks it (2-600)." },
 	{ "server.control", _config_boolean, "true", "HALO_SERVER_CONTROL", _environment_value, _platform_desktop,
 		"The dedicated server's control channel for the process that started it\n"
 		"(port/linux/README.md, \"Dedicated server control\"): JSON events on\n"

@@ -1832,6 +1832,91 @@ static void dedicated_command_kick(
 	dedicated_update_players(server);
 }
 
+/* the distributed netcode's speed-hack check (network_distributed.c,
+server.speed_hack): a "speed_hack" event on the control channel for each
+finding, with the machine's address (the gateway's address for a browser,
+which the site maps to the account: an account's ban is the site's, not
+this server's), its players, how fast its game ran and what was done
+("logged", "predictions_refused" or "kicked") */
+void dedicated_server_speed_hack(
+	long machine_index,
+	double rate,
+	long ahead_ticks,
+	long seconds,
+	char const *action)
+{
+	struct network_game_server *server = global_network_game_server_get();
+	wchar_t machine_name[32] = { 0 };
+	unsigned long address = 0;
+	word port = 0;
+	char text[32];
+	short index;
+
+	if (!halo_dedicated_server() || !server)
+		return;
+	network_game_server_dedicated_machine(server, machine_index, machine_name, &address, &port);
+	dedicated_collect_players(server);
+	control_begin("speed_hack");
+	control_field_integer("machine", machine_index);
+	control_field_utf16("machine_name", (unsigned short const *)machine_name, NUMBEROF(machine_name));
+	if (address)
+	{
+		dedicated_format_address(address, text, sizeof(text));
+		control_field_string("address", text);
+	}
+	else
+	{
+		control_field_null("address");
+	}
+	control_key("players");
+	control_array_begin();
+	for (index = 0; index < dedicated_row_count; index++)
+	{
+		if (!dedicated_rows[index].connected || dedicated_rows[index].machine_index != machine_index)
+			continue;
+		control_object_begin();
+		control_field_integer("player", dedicated_rows[index].slot);
+		control_field_utf16("name", (unsigned short const *)dedicated_rows[index].name,
+			NUMBEROF(dedicated_rows[index].name));
+		control_object_end();
+	}
+	control_array_end();
+	control_field_real("rate", rate, 2);
+	control_field_integer("ahead_ticks", ahead_ticks);
+	control_field_integer("seconds", seconds);
+	control_field_string("action", action);
+	control_end();
+}
+
+/* the speed-hack check's kick (server.speed_hack = "kick"): as the control
+channel's kick command does it, its players' player_left events (reason
+"kicked") after; TRUE when the machine was removed */
+boolean dedicated_server_kick_machine(
+	long machine_index)
+{
+	struct network_game_server *server = global_network_game_server_get();
+	wchar_t machine_name[32];
+	unsigned long address;
+	word port;
+
+	if (!halo_dedicated_server() || !server || dedicated.state != _dedicated_running ||
+		machine_index == network_game_client_get_local_machine_index() ||
+		machine_index < 0 || machine_index >= DEDICATED_MACHINE_SLOTS ||
+		!network_game_server_dedicated_machine(server, machine_index, machine_name, &address, &port))
+	{
+		return FALSE;
+	}
+	dedicated.kicked[machine_index] = TRUE;
+	if (!network_game_server_dedicated_remove_machine(server, machine_index))
+	{
+		dedicated.kicked[machine_index] = FALSE;
+		return FALSE;
+	}
+	platform_log("dedicated server: kicked machine %ld (speed hack)", machine_index);
+	dedicated_update_players(server);
+	return TRUE;
+}
+
 static void dedicated_command_help(
 	struct control_command const *command)
 {

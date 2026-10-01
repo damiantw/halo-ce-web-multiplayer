@@ -56,6 +56,9 @@ enum
 	_distributed_message_relayed_actions,
 	/* the unreliable messages of a tick to one machine, in one datagram */
 	_distributed_message_batch,
+	/* the host's text to every client, which shows it on its console (a
+	player kicked for a speed hack: network_distributed.c) (reliable) */
+	_distributed_message_notice,
 
 	NUMBER_OF_DISTRIBUTED_MESSAGES
 };

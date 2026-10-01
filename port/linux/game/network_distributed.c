@@ -69,6 +69,18 @@ machine (their datum identifiers need not be).
 
 #include <limits.h>
 #include <math.h>
+#include <stdio.h>
+#include <string.h>
+
+/* port_config.c's, cseries_windows.c's, console.c's, dedicated_server.c's */
+double config_real(const char *name);
+long config_integer(const char *name);
+const char *config_string(const char *name);
+void console_warning(const char *format, ...);
+void dedicated_server_speed_hack(long machine_index, double rate, long ahead_ticks, long seconds, char const *action);
+boolean dedicated_server_kick_machine(long machine_index);
+static void distributed_read_speed_hack_settings(void);
+static void distributed_reset_client_clock(long machine_index);
 
 /* network_game_globals.c's and network_server_message_handler.c's */
 boolean network_distributed_client_send(void *message, word size);
@@ -1110,6 +1122,7 @@ static boolean distributed_machine_loaded(
 	csmemset(distributed_viewers[machine_index], 0, sizeof(distributed_viewers[machine_index]));
 	for (player_index = 0; player_index < MAXIMUM_TRACKED_PLAYERS; player_index++)
 		distributed_seen[machine_index][player_index] = FALSE;
+	distributed_reset_client_clock(machine_index);
 	return TRUE;
 }
 
@@ -2984,6 +2997,13 @@ void network_distributed_new_game(
 	distributed_host_time = NONE;
 	distributed_statistics_due = FALSE;
 	distributed_pickup_count = 0;
+	{
+		long machine_index;
+
+		for (machine_index = 0; machine_index < HALO_PORT_MAXIMUM_NETWORK_MACHINES; machine_index++)
+			distributed_reset_client_clock(machine_index);
+	}
+	distributed_read_speed_hack_settings();
 	network_objects_new_game();
 	network_damage_new_game();
 }
@@ -3078,6 +3098,255 @@ static boolean distributed_message_stale(
 	return FALSE;
 }
 
+/* ---------- speed hacks (upstream c5fcfbd4, adapted) */
+
+/* the host: a client's game run faster than real time (a speed hack, which
+speeds up the machine's own clock: nothing on it can tell), found by its
+ticks, which its messages are stamped with, against the host's. A client's
+tick less the host's, at the least delayed of its messages (the most of it
+in a window of the host's ticks), is steady: its clock starts at the host's
+time (from the host's first game update) and runs on real time, so the
+difference is what it was when the client began, give or take a tick of
+jitter. A client fast in a window has that difference grow faster than the
+host's ticks by server.speed_hack_rate; it counts as a speed hack once,
+over the fast windows in a row, it has gone server.speed_hack_ahead_ticks
+past the most it ever reached in a window that was not fast: a browser's tab
+that was in the background or throttled only catches up to its usual
+difference (at most a second's ticks each frame), or to the host's tick
+(taking the host's time, when more than a second behind), never past the
+more of those, and a host
+that stalled steps every client's up once, which the next window that is not
+fast takes as the usual. What is done is server.speed_hack's: "off", "log"
+(the default: logged, and a "speed_hack" event on a dedicated server's
+control channel), "refuse" (and the machine's players' predictions not taken
+while it runs fast) or "kick" (and the machine kicked after
+server.speed_hack_seconds of it, as the control channel's kick does). No ban
+is kept here: behind the web gateway a machine's address is the gateway's
+for a browser session, which the site maps to the account it bans (the
+event carries it). */
+#define CLIENT_CLOCK_WINDOW_TICKS (2 * TICKS_PER_SECOND)
+/* the longest notice's text (_distributed_message_notice) */
+#define MAXIMUM_NOTICE_LENGTH 160
+
+enum
+{
+	_speed_hack_off,
+	_speed_hack_log,
+	_speed_hack_refuse,
+	_speed_hack_kick,
+};
+
+/* server.speed_hack and its thresholds, read as each game starts */
+static struct
+{
+	short action;
+	real fast_rate;
+	long ahead_ticks;
+	short fast_windows;
+} distributed_speed_hack;
+
+/* the host: each client machine's clock, measured: the host's tick its
+window began at (NONE: none begun); the most of its tick less the host's in
+the window, and in the window before; the most in a window that was not
+fast (NONE: no window yet); how many windows in a row it went fast past
+that, and whether the last did */
+static struct distributed_client_clock
+{
+	long window_time;
+	long window_ahead;
+	long last_ahead;
+	long usual_ahead;
+	short fast_windows;
+	boolean fast;
+} distributed_client_clocks[HALO_PORT_MAXIMUM_NETWORK_MACHINES];
+
+static void distributed_read_speed_hack_settings(
+	void)
+{
+	char const *action = config_string("server.speed_hack");
+	long seconds = config_integer("server.speed_hack_seconds");
+
+	if (action && !strcmp(action, "off"))
+		distributed_speed_hack.action = _speed_hack_off;
+	else if (action && !strcmp(action, "refuse"))
+		distributed_speed_hack.action = _speed_hack_refuse;
+	else if (action && !strcmp(action, "kick"))
+		distributed_speed_hack.action = _speed_hack_kick;
+	else
+		distributed_speed_hack.action = _speed_hack_log;
+	distributed_speed_hack.fast_rate = (real)config_real("server.speed_hack_rate");
+	if (!(distributed_speed_hack.fast_rate >= 1.01f))
+		distributed_speed_hack.fast_rate = 1.01f;
+	distributed_speed_hack.ahead_ticks = PIN(config_integer("server.speed_hack_ahead_ticks"), 1, 3000);
+	seconds = PIN(seconds, 2, 600);
+	distributed_speed_hack.fast_windows = (short)((seconds * TICKS_PER_SECOND + CLIENT_CLOCK_WINDOW_TICKS - 1) /
+		CLIENT_CLOCK_WINDOW_TICKS);
+}
+
+static void distributed_reset_client_clock(
+	long machine_index)
+{
+	csmemset(&distributed_client_clocks[machine_index], 0, sizeof(distributed_client_clocks[machine_index]));
+	distributed_client_clocks[machine_index].window_time = NONE;
+	distributed_client_clocks[machine_index].usual_ahead = NONE;
+}
+
+/* (the host) a text shown on every machine's console: its own, and every
+client's (_distributed_message_notice) */
+static void distributed_send_notice(
+	char const *text)
+{
+	struct
+	{
+		struct distributed_message_header header;
+		char text[MAXIMUM_NOTICE_LENGTH];
+	} message;
+	long length = csstrlen(text);
+
+	if (length > MAXIMUM_NOTICE_LENGTH - 1)
+		length = MAXIMUM_NOTICE_LENGTH - 1;
+	csmemset(&message, 0, sizeof(message));
+	csmemcpy(message.text, text, length);
+	console_warning("%s", message.text);
+	error(_error_log, "%s", message.text);
+	distributed_send(&message, _distributed_message_notice, 0, (word)(sizeof(message.header) + length + 1),
+		_distributed_to_clients_reliably);
+}
+
+/* (the host) the names of a client machine's players, in ASCII, for a
+notice ("?" for what is not ASCII) */
+static void distributed_machine_player_names(
+	long machine_index,
+	char *names,
+	long size)
+{
+	struct data_iterator iterator;
+	struct player_datum *player;
+	long length = 0;
+
+	names[0] = 0;
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+	{
+		short index;
+
+		if (distributed_player_machine((short)DATUM_INDEX_TO_ABSOLUTE_INDEX(iterator.datum_index)) != machine_index)
+			continue;
+		if (length && length + 2 < size)
+		{
+			names[length++] = ',';
+			names[length++] = ' ';
+		}
+		for (index = 0; index < (short)NUMBEROF(player->name) && player->name[index] && length + 1 < size; index++)
+			names[length++] = player->name[index] >= 32 && player->name[index] < 127 ? (char)player->name[index] : '?';
+		names[length] = 0;
+	}
+	if (!length)
+		snprintf(names, size, "machine #%ld", machine_index);
+}
+
+/* (the host) a client machine's tick, which one of its messages is stamped
+with: its clock measured, each window, against the host's (above) */
+static void distributed_note_client_clock(
+	long machine_index,
+	long tick)
+{
+	struct distributed_client_clock *clock;
+	long now = game_time_get();
+	long elapsed;
+	long ahead = tick - now;
+
+	if (distributed_speed_hack.action == _speed_hack_off ||
+		machine_index < 0 || machine_index >= HALO_PORT_MAXIMUM_NETWORK_MACHINES)
+	{
+		return;
+	}
+	clock = &distributed_client_clocks[machine_index];
+	if (clock->window_time == NONE || now < clock->window_time)
+	{
+		clock->window_time = now;
+		clock->window_ahead = ahead;
+		return;
+	}
+	if (ahead > clock->window_ahead)
+		clock->window_ahead = ahead;
+	elapsed = now - clock->window_time;
+	if (elapsed < CLIENT_CLOCK_WINDOW_TICKS)
+		return;
+	if (clock->usual_ahead == NONE)
+	{
+		/* (the first window: what is usual) */
+		clock->usual_ahead = clock->window_ahead;
+	}
+	else
+	{
+		real rate = 1.0f + (real)(clock->window_ahead - clock->last_ahead) / (real)elapsed;
+		/* (past the usual, or past the host's own tick for a client that
+		was behind it: one that catches up by taking the host's time, when
+		it is more than a second behind, network_client_manager.c, lands
+		behind the host's tick, as the host sent it before) */
+		long past = clock->window_ahead - MAX(clock->usual_ahead, 0);
+		long seconds;
+
+		if (rate <= distributed_speed_hack.fast_rate)
+		{
+			/* (not fast: its difference now the usual, if more, as after a
+			host's stall) */
+			if (clock->window_ahead > clock->usual_ahead)
+				clock->usual_ahead = clock->window_ahead;
+			clock->fast = FALSE;
+			clock->fast_windows = 0;
+		}
+		else if (past > distributed_speed_hack.ahead_ticks)
+		{
+			clock->fast = TRUE;
+			clock->fast_windows++;
+			seconds = clock->fast_windows * CLIENT_CLOCK_WINDOW_TICKS / TICKS_PER_SECOND;
+			if (distributed_speed_hack.action == _speed_hack_kick &&
+				clock->fast_windows >= distributed_speed_hack.fast_windows)
+			{
+				char names[64];
+				char text[MAXIMUM_NOTICE_LENGTH];
+
+				error(_error_log, "machine #%ld's game ran %.2f times as fast as this host's for %ld seconds "
+					"(%ld ticks past its usual): kicked", machine_index, rate, seconds, past);
+				distributed_machine_player_names(machine_index, names, sizeof(names));
+				dedicated_server_speed_hack(machine_index, rate, past, seconds, "kicked");
+				if (dedicated_server_kick_machine(machine_index))
+				{
+					snprintf(text, sizeof(text), "%s kicked by the host: their game ran %.2f times as fast (a speed hack)",
+						names, rate);
+					distributed_send_notice(text);
+				}
+				distributed_reset_client_clock(machine_index);
+				return;
+			}
+			else if (clock->fast_windows == 1 || clock->fast_windows % 5 == 0)
+			{
+				char const *action = distributed_speed_hack.action == _speed_hack_log ? "logged" : "predictions_refused";
+
+				error(_error_log, "machine #%ld's game runs %.2f times as fast as this host's (%ld ticks past its "
+					"usual, %ld seconds): %s", machine_index, rate, past, seconds,
+					distributed_speed_hack.action == _speed_hack_log ? "logged only" : "its players' predictions refused");
+				dedicated_server_speed_hack(machine_index, rate, past, seconds, action);
+			}
+		}
+	}
+	clock->last_ahead = clock->window_ahead;
+	clock->window_time = now;
+	clock->window_ahead = ahead;
+}
+
+/* whether a client machine's players' predictions are refused for its game
+running fast (server.speed_hack "refuse" or "kick") */
+static boolean distributed_machine_clock_refused(
+	long machine_index)
+{
+	return distributed_speed_hack.action >= _speed_hack_refuse &&
+		machine_index >= 0 && machine_index < HALO_PORT_MAXIMUM_NETWORK_MACHINES &&
+		distributed_client_clocks[machine_index].fast;
+}
+
 /* a message of the distributed kind; machine_index is the sender's on the
 host, NONE on a client */
 void network_distributed_handle_message(
@@ -3132,6 +3401,7 @@ void network_distributed_handle_message(
 	case _distributed_message_relayed_actions: entry_size = DISTRIBUTED_RELAYED_ACTION_MINIMUM_SIZE; break;
 	case _distributed_message_game_state:
 	case _distributed_message_objects_synchronized:
+	case _distributed_message_notice:
 	case _distributed_message_client_ready: entry_size = 0; break;
 	case _distributed_message_damage_events:
 	case _distributed_message_hit_reports: entry_size = network_damage_entry_size(header.type); break;
@@ -3163,6 +3433,18 @@ void network_distributed_handle_message(
 		if (distributed_host_time == NONE || header.game_time > distributed_host_time)
 			distributed_host_time = header.game_time;
 		break;
+	}
+	/* (the host: a client's clock, by its messages' ticks; and its players'
+	predictions not taken while its game runs fast, server.speed_hack) */
+	if (machine_index != NONE && game_connection() == _game_connection_network_server)
+	{
+		distributed_note_client_clock(machine_index, header.game_time);
+		if ((header.type == _distributed_message_player_prediction ||
+				header.type == _distributed_message_vehicle_prediction) &&
+			distributed_machine_clock_refused(machine_index))
+		{
+			return;
+		}
 	}
 	if (distributed_message_stale(machine_index, &header))
 		return;
@@ -3237,6 +3519,28 @@ void network_distributed_handle_message(
 	case _distributed_message_relayed_actions:
 		distributed_handle_actions((byte const *)entries, (byte const *)message + size, header.count);
 		break;
+	case _distributed_message_notice:
+	{
+		/* the host's text, on the console: printable, and ended */
+		char text[MAXIMUM_NOTICE_LENGTH];
+		long length = size - sizeof(header);
+		long index;
+
+		if (length > MAXIMUM_NOTICE_LENGTH - 1)
+			length = MAXIMUM_NOTICE_LENGTH - 1;
+		if (length < 0)
+			length = 0;
+		csmemcpy(text, entries, length);
+		text[length] = 0;
+		for (index = 0; index < length && text[index]; index++)
+		{
+			if (text[index] < 32 || text[index] > 126)
+				text[index] = '?';
+		}
+		console_warning("%s", text);
+		error(_error_log, "the host: %s", text);
+		break;
+	}
 	case _distributed_message_pickups:
 	{
 		/* what the host says this machine's players picked up */
