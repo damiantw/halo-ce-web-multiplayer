@@ -197,6 +197,13 @@ void game_time_end(
 }
 
 #ifdef HALO_LINUX
+/* port: the frame's elapsed time left out of the clock once, after a client
+took the host's time (game_time_set_distributed): that time passed before the
+host's time arrived, which already has it, and counted again it put the
+client ahead of the host by a frame (most of a second on a slow browser
+tab, which the host's speed-hack check took for a fast clock) */
+static boolean game_time_discard_frame = FALSE;
+
 void game_time_set_distributed(
 	long time)
 {
@@ -205,6 +212,7 @@ void game_time_set_distributed(
 	game_time_globals->local_time = time;
 	game_time_globals->server_time = time;
 	game_time_globals->leftover_dt = 0.f;
+	game_time_discard_frame = TRUE;
 
 	return;
 }
@@ -606,6 +614,13 @@ void game_time_update(
 
 		calculate_elapsed_ticks:
 			game_time = time_delta_sec + game_time_globals->leftover_dt;
+#ifdef HALO_LINUX
+			if (game_time_discard_frame)
+			{
+				game_time_discard_frame = FALSE;
+				game_time = 0.f;
+			}
+#endif
 			ticks_elapsed_real = (real)floor(game_time*ticks_per_second);
 			ticks_elapsed = (long)(ticks_elapsed_real <= (real)SOME_LARGE_NUMBER_OF_TICKS ?
 				ticks_elapsed_real : (real)SOME_LARGE_NUMBER_OF_TICKS);
