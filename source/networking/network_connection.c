@@ -1331,6 +1331,14 @@ static boolean network_client_reliable_connection_read(
 				*buffer_size);
 			close_connection = TRUE;
 		}
+		/* port: a message marked encrypted, which the game never sends
+		(anyone may: the assert below halted a debug build); the peer
+		dropped, as for the other bad messages above */
+		else if (TEST_FLAG(header, 0))
+		{
+			error(_error_silent, "got a message marked encrypted; closing the connection");
+			close_connection = TRUE;
+		}
 		else if (message_size <= circular_queue_size(connection->reliable_incoming_queue) &&
 			circular_queue_dequeue_data(connection->reliable_incoming_queue, message, message_size, TRUE))
 		{
