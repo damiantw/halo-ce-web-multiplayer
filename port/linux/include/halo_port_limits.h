@@ -66,7 +66,12 @@ is newer (network_client_manager.c). A host advertises it, with its netcode,
 in its game's advertisement's reserved bytes (network_server_message_handler.c),
 which hosts built before there was a version send as zeros: version 0.
 Raise it with any change to what the machines send each other. */
-#define HALO_PORT_NETWORK_VERSION 4
+#define HALO_PORT_NETWORK_VERSION 5
+/* milliseconds a reliable stream's peer may read nothing of what waits for
+it before it is dropped (network_connection.c): long, so that a web client
+whose tab stalls is not dropped (no join, silence or late-joiner timeouts
+either: docs/upstream-netcode-harden-plan.md) */
+#define HALO_PORT_RELIABLE_WRITE_TIMEOUT 60000
 /* ... the advertisement's reserved bytes: the version (a little-endian word),
 then flags */
 #define HALO_PORT_ADVERTISED_VERSION_OFFSET 0
