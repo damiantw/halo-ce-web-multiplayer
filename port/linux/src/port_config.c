@@ -82,6 +82,10 @@ static const struct config_setting config_settings[] =
 	{ "display.interpolation", _config_boolean, "true", "HALO_INTERPOLATION", _environment_value, _platform_all,
 		"Draw a frame for every display refresh, blending between the game's 30\n"
 		"ticks a second; false keeps the original 30 frames a second." },
+	{ "display.high_res_hud", _config_boolean, "true", "HALO_HIGH_RES_HUD", _environment_value, _platform_all,
+		"Draw the HUD's health, shield and ammo meters, ammo counter and their\n"
+		"panels from the high-res assets (8x the maps' bitmaps); false draws the\n"
+		"maps' own bitmaps." },
 
 	{ "audio.enabled", _config_boolean, "true", "HALO_NO_AUDIO", _environment_set_is_false, _platform_all,
 		"Play sound." },

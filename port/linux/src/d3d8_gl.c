@@ -2050,37 +2050,48 @@ static GLenum address_mode(DWORD mode)
 	}
 }
 
-static void sampler_parameters(GLuint sampler, const DWORD *state, DWORD min_filter, DWORD mip_filter);
+static void sampler_parameters(GLuint sampler, const DWORD *state, DWORD min_filter, DWORD mip_filter,
+	DWORD mag_filter, DWORD lod_bias, DWORD maximum_mip_level);
 
-static void configure_sampler(int stage, BOOL mipmapped)
+/* the sampler state a stage's texture is drawn with. hires: a high-res HUD
+texture (hud_hires.h), drawn smaller than it is, so filtered and from its mip
+levels whatever the game asks: the HUD's meters are point sampled for one
+player, to keep the Xbox bitmaps' texels sharp */
+static void sampler_inputs(int stage, BOOL mipmapped, BOOL hires, DWORD inputs[11])
 {
-	/* the texture stage state each sampler was last configured from */
-	static DWORD configured[D3DTSS_MAXSTAGES][10];
-	static BOOL configured_valid[D3DTSS_MAXSTAGES];
-	GLuint sampler = device.samplers[stage];
 	DWORD *state = D3D__TextureState[stage];
-	DWORD min_filter = state[D3DTSS_MINFILTER];
-	DWORD mip_filter = mipmapped ? state[D3DTSS_MIPFILTER] : D3DTEXF_NONE;
-	DWORD inputs[10];
 
-	inputs[0] = min_filter;
-	inputs[1] = mip_filter;
-	inputs[2] = state[D3DTSS_MAGFILTER];
+	inputs[0] = hires ? D3DTEXF_LINEAR : state[D3DTSS_MINFILTER];
+	inputs[1] = hires ? D3DTEXF_LINEAR : mipmapped ? state[D3DTSS_MIPFILTER] : D3DTEXF_NONE;
+	inputs[2] = hires ? D3DTEXF_LINEAR : state[D3DTSS_MAGFILTER];
 	inputs[3] = state[D3DTSS_ADDRESSU];
 	inputs[4] = state[D3DTSS_ADDRESSV];
 	inputs[5] = state[D3DTSS_ADDRESSW];
-	inputs[6] = state[D3DTSS_MIPMAPLODBIAS];
-	inputs[7] = state[D3DTSS_MAXMIPLEVEL];
+	inputs[6] = hires ? 0 : state[D3DTSS_MIPMAPLODBIAS];
+	inputs[7] = hires ? 0 : state[D3DTSS_MAXMIPLEVEL];
 	inputs[8] = state[D3DTSS_MAXANISOTROPY];
 	inputs[9] = state[D3DTSS_BORDERCOLOR];
+	inputs[10] = hires;
+}
+
+static void configure_sampler(int stage, BOOL mipmapped, BOOL hires)
+{
+	/* the texture stage state each sampler was last configured from */
+	static DWORD configured[D3DTSS_MAXSTAGES][11];
+	static BOOL configured_valid[D3DTSS_MAXSTAGES];
+	GLuint sampler = device.samplers[stage];
+	DWORD inputs[11];
+
+	sampler_inputs(stage, mipmapped, hires, inputs);
 	if (configured_valid[stage] && !memcmp(configured[stage], inputs, sizeof(inputs)))
 		return;
 	memcpy(configured[stage], inputs, sizeof(inputs));
 	configured_valid[stage] = TRUE;
-	sampler_parameters(sampler, state, min_filter, mip_filter);
+	sampler_parameters(sampler, D3D__TextureState[stage], inputs[0], inputs[1], inputs[2], inputs[6], inputs[7]);
 }
 
-static void sampler_parameters(GLuint sampler, const DWORD *state, DWORD min_filter, DWORD mip_filter)
+static void sampler_parameters(GLuint sampler, const DWORD *state, DWORD min_filter, DWORD mip_filter,
+	DWORD mag_filter, DWORD lod_bias, DWORD maximum_mip_level)
 {
 	GLenum minification;
 	float border[4];
@@ -2092,14 +2103,15 @@ static void sampler_parameters(GLuint sampler, const DWORD *state, DWORD min_fil
 		minification = mip_filter == D3DTEXF_NONE ? GL_LINEAR :
 			mip_filter == D3DTEXF_POINT ? GL_LINEAR_MIPMAP_NEAREST : GL_LINEAR_MIPMAP_LINEAR;
 	glSamplerParameteri(sampler, GL_TEXTURE_MIN_FILTER, (GLint)minification);
-	glSamplerParameteri(sampler, GL_TEXTURE_MAG_FILTER, state[D3DTSS_MAGFILTER] == D3DTEXF_POINT ? GL_NEAREST : GL_LINEAR);
+	glSamplerParameteri(sampler, GL_TEXTURE_MAG_FILTER, mag_filter == D3DTEXF_POINT ? GL_NEAREST : GL_LINEAR);
 	glSamplerParameteri(sampler, GL_TEXTURE_WRAP_S, (GLint)address_mode(state[D3DTSS_ADDRESSU]));
 	glSamplerParameteri(sampler, GL_TEXTURE_WRAP_T, (GLint)address_mode(state[D3DTSS_ADDRESSV]));
 	glSamplerParameteri(sampler, GL_TEXTURE_WRAP_R, (GLint)address_mode(state[D3DTSS_ADDRESSW]));
 #ifdef HALO_ANDROID
 	/* ES has no sampler LOD bias; the pixel shader applies it
 	(texture_lod_bias) */
-	glSamplerParameterf(sampler, GL_TEXTURE_MIN_LOD, (float)state[D3DTSS_MAXMIPLEVEL]);
+	(void)lod_bias;
+	glSamplerParameterf(sampler, GL_TEXTURE_MIN_LOD, (float)maximum_mip_level);
 	if (xgpu_capabilities.anisotropy)
 		glSamplerParameterf(sampler, GL_TEXTURE_MAX_ANISOTROPY_EXT,
 			(min_filter == D3DTEXF_ANISOTROPIC && state[D3DTSS_MAXANISOTROPY] > 1) ? (float)state[D3DTSS_MAXANISOTROPY] : 1.0f);
@@ -2109,8 +2121,8 @@ static void sampler_parameters(GLuint sampler, const DWORD *state, DWORD min_fil
 		glSamplerParameterfv(sampler, GL_TEXTURE_BORDER_COLOR, border);
 	}
 #else
-	glSamplerParameterf(sampler, GL_TEXTURE_LOD_BIAS, dword_to_float(state[D3DTSS_MIPMAPLODBIAS]));
-	glSamplerParameterf(sampler, GL_TEXTURE_MIN_LOD, (float)state[D3DTSS_MAXMIPLEVEL]);
+	glSamplerParameterf(sampler, GL_TEXTURE_LOD_BIAS, dword_to_float(lod_bias));
+	glSamplerParameterf(sampler, GL_TEXTURE_MIN_LOD, (float)maximum_mip_level);
 	glSamplerParameterf(sampler, GL_TEXTURE_MAX_ANISOTROPY,
 		(min_filter == D3DTEXF_ANISOTROPIC && state[D3DTSS_MAXANISOTROPY] > 1) ? (float)state[D3DTSS_MAXANISOTROPY] : 1.0f);
 	color_to_vec4(state[D3DTSS_BORDERCOLOR], border);
@@ -2126,38 +2138,27 @@ its state changes; the game switches between a handful of states many times
 a frame. */
 #define WEB_SAMPLER_CACHE 128
 
-static GLuint web_sampler(int stage, BOOL mipmapped)
+static GLuint web_sampler(int stage, BOOL mipmapped, BOOL hires)
 {
-	static struct { DWORD inputs[10]; GLuint sampler; } cache[WEB_SAMPLER_CACHE];
+	static struct { DWORD inputs[11]; GLuint sampler; } cache[WEB_SAMPLER_CACHE];
 	static int count;
-	DWORD *state = D3D__TextureState[stage];
-	DWORD min_filter = state[D3DTSS_MINFILTER];
-	DWORD mip_filter = mipmapped ? state[D3DTSS_MIPFILTER] : D3DTEXF_NONE;
-	DWORD inputs[10];
+	DWORD inputs[11];
 	int i;
 
-	inputs[0] = min_filter;
-	inputs[1] = mip_filter;
-	inputs[2] = state[D3DTSS_MAGFILTER];
-	inputs[3] = state[D3DTSS_ADDRESSU];
-	inputs[4] = state[D3DTSS_ADDRESSV];
-	inputs[5] = state[D3DTSS_ADDRESSW];
-	inputs[6] = state[D3DTSS_MIPMAPLODBIAS];
-	inputs[7] = state[D3DTSS_MAXMIPLEVEL];
-	inputs[8] = state[D3DTSS_MAXANISOTROPY];
-	inputs[9] = state[D3DTSS_BORDERCOLOR];
+	sampler_inputs(stage, mipmapped, hires, inputs);
 	for (i = 0; i < count; i++)
 		if (!memcmp(cache[i].inputs, inputs, sizeof(inputs)))
 			return cache[i].sampler;
 	if (count == WEB_SAMPLER_CACHE)
 	{
 		/* more states than expected: fall back to the stage's sampler */
-		configure_sampler(stage, mipmapped);
+		configure_sampler(stage, mipmapped, hires);
 		return device.samplers[stage];
 	}
 	memcpy(cache[count].inputs, inputs, sizeof(inputs));
 	glGenSamplers(1, &cache[count].sampler);
-	sampler_parameters(cache[count].sampler, state, min_filter, mip_filter);
+	sampler_parameters(cache[count].sampler, D3D__TextureState[stage], inputs[0], inputs[1], inputs[2], inputs[6],
+		inputs[7]);
 	return cache[count++].sampler;
 }
 #endif
@@ -2320,10 +2321,10 @@ static void bind_textures(struct nv2a_pixel_shader_key *key, float texture_scale
 			}
 			state_texture(stage, gl_target, gl_texture);
 #ifdef HALO_WEB
-			state_sampler(stage, web_sampler(stage, description.levels > 1));
+			state_sampler(stage, web_sampler(stage, description.levels > 1, description.hires));
 #else
 			state_sampler(stage, device.samplers[stage]);
-			configure_sampler(stage, description.levels > 1);
+			configure_sampler(stage, description.levels > 1, description.hires);
 #endif
 			key->sampler_type[stage] = gl_target == GL_TEXTURE_CUBE_MAP ? _xgpu_sampler_cube :
 				gl_target == GL_TEXTURE_3D ? _xgpu_sampler_3d : _xgpu_sampler_2d;

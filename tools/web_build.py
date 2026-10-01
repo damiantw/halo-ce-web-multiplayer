@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 from typing import Any, List
 
+from .embed_assets import hud_asset_inputs, hud_assets_build
 from .ninja_syntax import Writer
 from .linux_build import (
     PORT_CONFIG, PORT_DIR, XDK_INCLUDE, TOML_DIR, KCP_DIR, MUSL_MATH_DIR, GAME_FLAGS, PLATFORM_FLAGS,
@@ -104,7 +105,8 @@ WEB_LDFLAGS = [
 
 
 def web_configure_inputs() -> List[Path]:
-    return [Path(__file__), WEB_DIR / "web_abi_shims.json", WEB_DIR / "src"] if (WEB_DIR / "src").is_dir() else [Path(__file__)]
+    return ([Path(__file__), WEB_DIR / "web_abi_shims.json", WEB_DIR / "src", *hud_asset_inputs()]
+            if (WEB_DIR / "src").is_dir() else [Path(__file__)])
 
 
 def generate_web_build(n: Writer, sln: Any) -> None:
@@ -214,6 +216,9 @@ def generate_web_build(n: Writer, sln: Any) -> None:
         add_object(source, posix_cflags if source.name.startswith("posix_") else platform_cflags)
     for source in sorted((WEB_DIR / "src").glob("*.c")):
         add_object(source, posix_cflags if source.name.startswith("posix_") else platform_cflags)
+    # the high-res HUD's textures (port/assets/hud; port/linux/src/hud_hires.c)
+    for source in hud_assets_build(n, "web", build_dir / "generated" / "hud_hires_assets.c"):
+        add_object(source, platform_cflags)
     add_object(TOML_DIR / "tomlc17.c", " ".join([abi, "-std=gnu11", "-w"]))
     add_object(KCP_DIR / "ikcp.c", " ".join([abi, "-std=gnu11", "-w"]))
     for source in musl_math_sources():

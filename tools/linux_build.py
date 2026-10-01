@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from .embed_assets import hud_asset_inputs, hud_assets_build
 from .ninja_syntax import Writer
 
 PORT_DIR = Path("port/linux")
@@ -266,7 +267,7 @@ def linux_configure_inputs() -> List[Path]:
     """Files whose change must re-run configure.py."""
     if not PORT_CONFIG.is_file():
         return [Path(__file__)]
-    return [PORT_CONFIG, Path(__file__), PORT_DIR / "src", PORT_DIR / "game", XDK_INCLUDE]
+    return [PORT_CONFIG, Path(__file__), PORT_DIR / "src", PORT_DIR / "game", XDK_INCLUDE, *hud_asset_inputs()]
 
 
 def _quote(path: Any) -> str:
@@ -339,6 +340,9 @@ def generate_linux_build(n: Writer, sln: Any) -> None:
         description="LINUX PGO TRAINING: playing levels in the instrumented build",
         pool="console",
     )
+
+    # the high-res HUD's textures (port/assets/hud; port/linux/src/hud_hires.c)
+    embedded_assets = hud_assets_build(n, "linux", build_dir / "generated" / "hud_hires_assets.c")
 
     abi = " ".join(LINUX_ABI_FLAGS + [march_flag(sln)] + (["-DHALO_RELEASE"] if getattr(sln, "port_release", False) else []))
     port_include = PORT_DIR / "include"
@@ -428,6 +432,8 @@ def generate_linux_build(n: Writer, sln: Any) -> None:
                 add_object(source, f"{platform_cflags} {updater_defines(getattr(sln, 'port_release', False))}")
             else:
                 add_object(source, platform_cflags)
+        for source in embedded_assets:
+            add_object(source, platform_cflags)
         # the self-updater's TLS (port/third_party/mbedtls), with the host's
         # ABI as the posix_*.c that use it (and no loop turned into glibc's
         # wcslen, which linux_link_check.py rejects: the game's wchar_t is

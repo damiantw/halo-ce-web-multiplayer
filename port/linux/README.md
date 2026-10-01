@@ -171,6 +171,7 @@ the setting for one start of the game. It has priority over the file.
 | `display.window_scale` | `2` | `HALO_WINDOW_SCALE` | The size of the window, as a multiple of 640x480. You can change the size of the window. |
 | `display.vsync` | `true` | `HALO_NO_VSYNC=1` sets `false` | `true`: each frame waits for the display. |
 | `display.interpolation` | `true` | `HALO_INTERPOLATION` | `true`: one frame for each refresh of the display. `false`: 30 frames each second, as on the Xbox. Refer to "Frame rate". |
+| `display.high_res_hud` | `true` | `HALO_HIGH_RES_HUD` | `true`: the HUD's health, shield and ammo meters, ammo counter and their panels are drawn from the high-res assets in `port/assets/hud`, 8x the size of the maps' bitmaps. `false`: the maps' own bitmaps. |
 | `audio.enabled` | `true` | `HALO_NO_AUDIO=1` sets `false` | `false`: no audio device. The sound continues without output. |
 | `audio.volume` | `1.0` | `HALO_VOLUME` | The master volume. |
 | `input.mouse_sensitivity` | `1.0` | `HALO_MOUSE_SENSITIVITY` | The multiplier for the mouse aim. |
@@ -796,6 +797,7 @@ person joins the game. If the game does not operate, Discord starts it.
 | --- | --- |
 | Game code | All 466 C files of the game. The changes are in "Game source changes". |
 | Graphics | Direct3D 8 on OpenGL 4.5 core through SDL3 (`src/d3d8_gl.c`). The port translates the NV2A vertex shaders and register combiners to GLSL. It decodes all the Xbox texture formats. The vertex and index buffers come from a GL copy of the Xbox memory. |
+| High-res HUD | The health, shield and ammo meters, the ammo counter and some of their panels are drawn from high-res assets: redraws at 8x the size of the maps' bitmaps, in `port/assets/hud`. `tools/hud_assets.py` makes them from the SVG redraws, and the build embeds them in the executable. When the game uploads one of those bitmaps, `src/hud_hires.c` gives the high-res texture in its place. The game sizes and places the HUD from its tags as before. `display.high_res_hud = false` turns this off. |
 | Sound | Xbox DirectSound on SDL3 audio (`src/dsound_sdl.c`): PCM and Xbox ADPCM, mixed at 48 kHz, with volume, pitch, mix bins, distance, stereo pan, occlusion and obstruction. There is no Doppler effect, no cones and no reverb. |
 | Input | XInput on SDL3 (`src/xinput_sdl.c`): keyboard, mouse, gamepads with rumble, and the debug keyboard for the console. |
 | Files | The Win32 file functions and the MSVC file functions on POSIX, with the translation of Xbox paths. |
@@ -882,6 +884,7 @@ Other changes are in `#ifdef HALO_LINUX`. All the native ports define
 | `networking/`, `game/`, `interface/`, `bungie_net/network/` and the pools of objects, effects and sounds | The system link limits and the memory for them. |
 | `game/`, `objects/`, `units/`, `networking/` | The distributed netcode. Refer to `NETCODE.md`. |
 | `main/main.c`, `shell/shell_xbox.c`, `game/game_engine.c`, `interface/ui_widget.c`, `networking/network_server_manager.c`, `networking/network_client_manager.c`, `networking/network_game_manager.c`, `networking/telnet_console.c` | The dedicated server: no rendering, a 30 Hz sleep, no host player in the checks, the automatic countdown, the automatic return to the lobby, the server name, no telnet console, the fatal error event of a map that does not load, and the lobby, player and machine information and the kick for the control channel. Refer to "Dedicated server" and "Dedicated server control". |
+| `cache/cache_files.c` | When a map's tags load and unload, the port finds the bitmaps that the high-res HUD replaces (`game/hud_hires_tags.c`). |
 
 The x86 inline assembly of the game has C replacements in
 `#ifdef HALO_LINUX`. Thus the compiler can optimize that code for each
