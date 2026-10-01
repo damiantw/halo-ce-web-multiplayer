@@ -296,3 +296,29 @@ Remaining gaps:
   real browser to look at.
 - WebRTC data channels carry the datagrams when UDP 3478 reaches the gateway (above, "WebRTC"); there is no
   TURN yet, so networks that block it stay on the WebSocket.
+
+## Versions
+
+A web client joins only a server of its own network version
+(`HALO_PORT_NETWORK_VERSION`, `port/linux/include/halo_port_limits.h`; raised
+with any change to what the machines send each other). The servers and the web
+build come from one image, so they are deployed together; three things keep a
+browser from meeting a server of another version anyway:
+
+- **The build's URLs are versioned.** `ninja web` writes
+  `build/web/halo-version.json` (`{"network_version": N}`), which the image
+  ships next to `halo.js`. The site serves the build's `index.html` with
+  `?v=<build>` on `halo-loader.js` and `halo.js`, and `halo-loader.js` puts the
+  same on `halo.wasm` (`Module.locateFile`): a cached `halo.wasm` of another
+  build is never run with this `halo.js` (the names are not hashed).
+- **The page reloads a stale build.** A client that finds its host on another
+  version leaves with the `halo:leave` event's `version_mismatch` reason
+  (`{hostVersion, clientVersion}`, `auto_join.c`, `web_library.js`). A host
+  newer than the build means the browser had an old build: the page reloads,
+  once a minute at most for one pair of versions; otherwise it says the server
+  is being updated.
+- **The server list shows only servers of the build's version.** A dedicated
+  server says its `network_version` in its `server_started` and `status`
+  events (`port/linux/README.md`); the site compares it with the build's
+  `halo-version.json`. A server that does not say it is of version 4 (the
+  builds before the field).

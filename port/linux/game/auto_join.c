@@ -62,6 +62,8 @@ enum
 {
 	_web_leave_menu,
 	_web_leave_no_game,
+	/* the host speaks another network version (error code: the host's) */
+	_web_leave_version_mismatch,
 };
 
 static struct
@@ -97,7 +99,7 @@ boolean web_multiplayer_only(
 
 #if defined(HALO_WEB) && defined(HALO_MULTIPLAYER_ONLY)
 /* web_library.js */
-extern void web_leave_game(int reason, int error_code);
+extern void web_leave_game(int reason, int error_code, int client_version);
 #endif
 
 /* the web build leaves the page, once (reasons in web_library.js,
@@ -113,11 +115,22 @@ void web_leave(
 		return;
 	left = TRUE;
 	platform_log("web: leaving the game (reason %d, error %d)", reason, error_code);
-	web_leave_game(reason, error_code);
+	web_leave_game(reason, error_code, HALO_PORT_NETWORK_VERSION);
 #else
 	(void)reason;
 	(void)error_code;
 #endif
+}
+
+/* the host the web build was sent to speaks another network version
+(network_game_client_advertised_game_compatible): the page reloads the
+build or says the server is being updated */
+void web_leave_version_mismatch(
+	unsigned int host_version,
+	unsigned int client_version)
+{
+	(void)client_version;
+	web_leave(_web_leave_version_mismatch, (short)host_version);
 }
 
 /* the web build asked to go back to its main menu (main_screen_shell_load:

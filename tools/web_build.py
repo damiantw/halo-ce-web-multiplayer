@@ -233,5 +233,18 @@ def generate_web_build(n: Writer, sln: Any) -> None:
             "-sASSERTIONS=0" if getattr(sln, "port_release", False) else "-sASSERTIONS=1"])},
         implicit_outputs=[build_dir / "halo.wasm"],
     )
-    n.build(outputs="web", rule="phony", inputs=output)
+    # halo-version.json: the network version (HALO_PORT_NETWORK_VERSION) the
+    # build speaks, for the site, which lists only servers of that version
+    # and versions the build's URLs (docs/gateway.md, "Versions")
+    limits_header = PORT_DIR / "include" / "halo_port_limits.h"
+    version_json = build_dir / "halo-version.json"
+    n.rule(
+        name="web_version",
+        command=("$python -c \"import re, json, sys; "
+                 "v = int(re.search(r'#define HALO_PORT_NETWORK_VERSION ([0-9]+)', open(sys.argv[1]).read()).group(1)); "
+                 "open(sys.argv[2], 'w').write(json.dumps({'network_version': v}) + chr(10))\" $in $out"),
+        description="WEB VERSION $out",
+    )
+    n.build(outputs=version_json, rule="web_version", inputs=limits_header)
+    n.build(outputs="web", rule="phony", inputs=[output, version_json])
     n.newline()

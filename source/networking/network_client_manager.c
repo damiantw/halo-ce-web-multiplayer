@@ -3113,6 +3113,8 @@ joins the first open game the client's search has found, as picking it in
 the system link list does (network_game_join_game_from_server_list) */
 /* the platform layer's (sdl_platform.c) */
 void platform_show_message(char const *title, char const *message);
+/* auto_join.c's */
+void web_leave_version_mismatch(unsigned int host_version, unsigned int client_version);
 
 /* whether this client can join the advertised game: its host's network
 version is this machine's (HALO_PORT_NETWORK_VERSION), and it plays the
@@ -3167,6 +3169,10 @@ boolean network_game_client_advertised_game_compatible(
 		network_event("not joining a host of network version %u%s (this machine's is %u)", theirs,
 			distributed ? "" : " with the lockstep netcode", ours);
 		platform_show_message("Halo: cannot join this game", message);
+		/* port: the web build's page reloads the build (a cached one older
+		than the site's servers) or says the server is being updated
+		(auto_join.c, web_leave) */
+		web_leave_version_mismatch(theirs, ours);
 	}
 	return FALSE;
 }
