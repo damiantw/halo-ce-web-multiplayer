@@ -72,6 +72,8 @@ symbols in this file:
 #include "game.h"
 #include "player_queues_new.h"
 #ifdef HALO_LINUX
+#include "networking/network_client_manager.h"
+#include "networking/network_game_globals.h"
 /* port/linux/game/network_distributed.c's */
 void network_distributed_tick(void);
 #endif
@@ -133,7 +135,6 @@ struct network_game_server;
 #ifndef HALO_LINUX
 extern struct network_game_server *global_network_game_server_get(void);
 extern long network_game_server_get_oldest_client_update_received(struct network_game_server *server);
-extern void network_game_server_stalled_on_client(struct network_game_server *server, boolean stalled);
 #endif
 extern void network_game_server_update_ticks(struct network_game_server *server, long ticks);
 /* ---------- globals */
@@ -335,6 +336,22 @@ void game_time_set_speed(
 	return;
 }
 
+#ifdef HALO_LINUX
+/* whether a client's clock waits for the host's first game update, which
+brings the host's time (the host ticks only once every machine has
+loaded) */
+boolean game_time_held(
+	void)
+{
+	struct network_game_client *client;
+
+	if (game_connection() != _game_connection_network_client)
+		return FALSE;
+	client = global_network_game_client_get();
+	return client && !network_game_client_server_has_started_game(client);
+}
+
+#endif
 /* port: the game's own speed put back; whether it was another
 (cheats_network_client_enforce) */
 boolean game_time_reset_speed(
@@ -558,18 +575,18 @@ void game_time_update(
 						if (game_time < TICKS_PER_SECOND)
 						{
 							connection = game_time;
+							/* port: the lockstep host waits for its slowest client
+							(network_game_server_stalled_on_client, which removed a
+							client 2 seconds behind, is gone: nothing drops a slow
+							machine) */
 							if (game_time <= 0)
-							{
-								network_game_server_stalled_on_client(server, TRUE);
 								break;
-							}
 						}
 						else
 						{
 							connection = TICKS_PER_SECOND;
 						}
 
-						network_game_server_stalled_on_client(server, FALSE);
 					}
 					else
 					{
@@ -648,9 +665,14 @@ void game_time_update(
 
 #ifdef HALO_LINUX
 				/* (a client of the distributed netcode ticks on its own clock,
-				with its own input and the latest the host relayed) */
+				with its own input and the latest the host relayed, from the
+				host's first game update, which brings the host's time: the
+				host ticks only once every machine has loaded) */
 				if (game_connection() == _game_connection_network_client)
-					maximum_possible_server_time = final_local_time;
+				{
+					maximum_possible_server_time = game_time_held() ?
+						game_time_globals->server_time : final_local_time;
+				}
 				else
 					maximum_possible_server_time = update_client_get_maximum_possible_server_time();
 #else
@@ -683,7 +705,13 @@ void game_time_update(
 				code_000a50d0((short)(maximum_possible_server_time - game_time_globals->local_time),
 					(short)server_updates, 0, FALSE);
 
+#ifdef HALO_LINUX
+				/* (none while a client's clock waits: a frame that runs no tick
+				reports none) */
+				game_time_globals->last_local_time_elapsed = game_time_held() ? 0 : (short)ticks_elapsed;
+#else
 				game_time_globals->last_local_time_elapsed = (short)ticks_elapsed;
+#endif
 			}
 		}
 
