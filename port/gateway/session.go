@@ -78,6 +78,7 @@ func (s *session) sendDroppable(f []byte) {
 	if p := s.currentRTC(); p != nil && p.send(f) {
 		s.framesOut.Add(1)
 		s.g.stats.framesOut.Add(1)
+		s.g.stats.bytesOut.Add(int64(len(f)))
 		return
 	}
 	s.sendWSDroppable(f)
@@ -184,6 +185,7 @@ func (s *session) receive(frame []byte, via *rtcPeer) {
 	}
 	s.framesIn.Add(1)
 	s.g.stats.framesIn.Add(1)
+	s.g.stats.bytesIn.Add(int64(len(frame)))
 	if !s.frames.take(1) || !s.bytes.take(float64(len(frame))) {
 		s.dropped.Add(1)
 		s.g.stats.dropped.Add(1)
@@ -219,6 +221,7 @@ func (s *session) writer() {
 			}
 			s.framesOut.Add(1)
 			s.g.stats.framesOut.Add(1)
+			s.g.stats.bytesOut.Add(int64(len(f)))
 		case <-s.ctx.Done():
 			return
 		}
