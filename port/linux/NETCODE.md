@@ -299,6 +299,54 @@ a pregame keep-alive every five seconds from the host
      whether the shield or the body took the hit, and how much is left of
      it (the host's own copies of a client's projectiles likewise).
 
+## Speed hacks
+
+A speed hack makes the clock of a machine run fast, and nothing on that
+machine can see it. The host sees it (`network_distributed.c`, from
+upstream `c5fcfbd4`, measured differently): each message of a client
+carries the client's tick. The client's tick less the host's, taken at the
+least delayed message of each window of 2 seconds (60 host ticks), is
+steady for an honest client: its clock starts at the host's time (from the
+host's first game update) and then runs on real time. That difference is
+not zero (a web client was measured at 15 to 25 ticks ahead, the host's
+time when it began plus its loading), so the host learns each client's
+usual difference instead of expecting none.
+
+A window is fast when the client's ticks (the host's ticks in the window,
+plus how much the difference grew) went by more than
+`server.speed_hack_rate` (1.1) times as fast as real time. Real time, not
+the host's ticks: a host that stalls for more than a second loses that
+time, and every client's difference grows by it. A client counts as a speed hack
+when, over fast windows in a row, its difference has gone more than
+`server.speed_hack_ahead_ticks` (15) past the most it reached in any window
+that was not fast, or past the host's own tick if that is more. A browser
+tab in the background, throttled or frozen loses ticks (at most 30 each
+frame) and only catches back up to its usual difference, or, when it is
+more than a second behind, takes the host's time from the host's next game
+update (which is behind the host's tick by the time it arrives); it never
+goes past the more of those. A host that stalls steps every client's
+difference up once, but no client's ticks went faster than real time, so
+the window is not fast and takes the new difference as the usual.
+What the host does is `server.speed_hack`:
+
+- `log` (the default): a log line, and a `speed_hack` event on the
+  dedicated server's control channel (first window, then each 10 seconds,
+  `action` `logged`).
+- `refuse`: also, while the client is fast, the host ignores the
+  predictions (`player_prediction`, `vehicle_prediction`) of its players;
+  the host's own simulation of them stands (`action` `predictions_refused`).
+- `kick`: as `refuse`, and after `server.speed_hack_seconds` (10) of fast
+  windows without a break, the host kicks the machine as the control
+  channel's `kick` does (`player_left`, reason `kicked`; `speed_hack`
+  `action` `kicked`), and sends every client a notice
+  (`_distributed_message_notice`) that their consoles show.
+- `off`: nothing.
+
+The host keeps no bans (upstream's address, hardware and console bans are
+not taken): behind the web gateway the address is that of the gateway
+session. The supervisor (the Laravel site) can map it to the account and
+ban the account.
+
 ## Transport
 
 What reaches the other machines, and how, decides how the game feels over
