@@ -1615,17 +1615,24 @@ boolean network_connection_idle(
 		current_time - connection->last_idle_time > NETWORK_CONNECTION_STALL_THRESHOLD)
 	{
 		connection->last_keep_alive_time += current_time - connection->last_idle_time;
+		/* (never past now: a message read after the last idle set the
+		keep-alive time later than it, and the timeout below takes the
+		difference unsigned, so a keep-alive time ahead of now read as a
+		silence of 49 days and dropped the connection as the stall ended) */
+		if ((long)(current_time - connection->last_keep_alive_time) < 0)
+			connection->last_keep_alive_time = current_time;
 	}
 	connection->last_idle_time = current_time;
 #endif
 	if (timeout)
 	{
-		/* (differences, which the millisecond clock's wrap leaves right) */
-		if (current_time - connection->last_keep_alive_time > MILLISECONDS_PER_SECOND * 5)
+		/* (signed differences, which the millisecond clock's wrap leaves
+		right, and a keep-alive time a little ahead of now reads as none) */
+		if ((long)(current_time - connection->last_keep_alive_time) > MILLISECONDS_PER_SECOND * 5)
 		{
 			SET_FLAG(connection->flags, _connection_going_stale_bit, TRUE);
 		}
-		if (current_time - connection->last_keep_alive_time > (unsigned long)timeout)
+		if ((long)(current_time - connection->last_keep_alive_time) > timeout)
 		{
 			if (global_connection_dont_timeout)
 			{

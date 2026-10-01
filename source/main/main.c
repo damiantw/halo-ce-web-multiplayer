@@ -668,6 +668,11 @@ void platform_log(char const *format, ...);
 
 /* ---------- prototypes */
 
+#ifdef HALO_WEB
+/* port/web/src/posix_web_net.c */
+void posix_web_net_yield(void);
+#endif
+
 static long sort_desired_local_player_controllers(
 	short const *a,
 	short const *b);
@@ -3459,6 +3464,17 @@ void main_loop(
 				{
 					main_present_frame();
 				}
+#ifdef HALO_WEB
+				/* a frame that draws nothing goes back to the browser too: the
+				game's thread otherwise does so only when it presents a frame,
+				and the gateway's frames arrive only then (a client's clock held
+				for the host's first game update draws nothing until it comes,
+				game_time_held, and would never hear it) */
+				else
+				{
+					posix_web_net_yield();
+				}
+#endif
 			}
 #else
 			main_rasterizer_throttle();

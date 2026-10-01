@@ -283,6 +283,15 @@ int posix_web_net_owner_thread(void)
 	return gateway_opened && pthread_equal(pthread_self(), owner_thread);
 }
 
+/* a frame of the game's that presented nothing (main.c): the thread the
+WebSocket lives on goes back to its event loop for a moment, as presenting
+does, so the gateway's frames keep arriving */
+void posix_web_net_yield(void)
+{
+	if (posix_web_net_owner_thread())
+		emscripten_sleep(1);
+}
+
 /* takes the gateway's frames that have arrived */
 static void pump(void)
 {

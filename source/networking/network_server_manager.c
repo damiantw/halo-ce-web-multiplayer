@@ -2059,7 +2059,9 @@ void network_game_server_update_ticks(
 				tick's buttons with the next ticks', network_distributed.c: this
 				update only keeps the clients' count of the host's ticks and
 				gives them the host's time, which is all they read of it; with
-				no players, none of its actions is sent or read) */
+				no players, none of its actions is sent or read; zeroed, not
+				the stack's bytes) */
+				csmemset(&game_update, 0, sizeof(game_update));
 				game_update.update_number = update_number;
 				game_update.random_seed = 0;
 				game_update.game_time = game_time_get();
