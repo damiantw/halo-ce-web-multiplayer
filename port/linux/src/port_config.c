@@ -202,7 +202,7 @@ static const struct config_setting config_settings[] =
 		"\"kick\" also kicks it after server.speed_hack_seconds. No bans." },
 	{ "server.speed_hack_rate", _config_real, "1.1", "HALO_SERVER_SPEED_HACK_RATE", _environment_value,
 		_platform_all,
-		"How many times as fast as the host's a client's game runs, over 2 seconds,\n"
+		"How many times as fast as real time a client's game runs, over 2 seconds,\n"
 		"to count as fast (at least 1.01)." },
 	{ "server.speed_hack_ahead_ticks", _config_integer, "15", "HALO_SERVER_SPEED_HACK_AHEAD", _environment_value,
 		_platform_all,

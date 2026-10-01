@@ -76,6 +76,7 @@ machine (their datum identifiers need not be).
 double config_real(const char *name);
 long config_integer(const char *name);
 const char *config_string(const char *name);
+unsigned long system_milliseconds(void);
 void console_warning(const char *format, ...);
 void dedicated_server_speed_hack(long machine_index, double rate, long ahead_ticks, long seconds, char const *action);
 boolean dedicated_server_kick_machine(long machine_index);
@@ -3107,8 +3108,10 @@ tick less the host's, at the least delayed of its messages (the most of it
 in a window of the host's ticks), is steady: its clock starts at the host's
 time (from the host's first game update) and runs on real time, so the
 difference is what it was when the client began, give or take a tick of
-jitter. A client fast in a window has that difference grow faster than the
-host's ticks by server.speed_hack_rate; it counts as a speed hack once,
+jitter. A client fast in a window has its ticks (the host's, and how much
+the difference grew) go by faster than real time by server.speed_hack_rate
+(against real time, not the host's ticks: a host that stalls for more than
+a second loses the time, and every client's difference grows by it); it counts as a speed hack once,
 over the fast windows in a row, it has gone server.speed_hack_ahead_ticks
 past the most it ever reached in a window that was not fast: a browser's tab
 that was in the background or throttled only catches up to its usual
@@ -3152,6 +3155,7 @@ fast (NONE: no window yet); how many windows in a row it went fast past
 that, and whether the last did */
 static struct distributed_client_clock
 {
+	unsigned long window_milliseconds;
 	long window_time;
 	long window_ahead;
 	long last_ahead;
@@ -3265,6 +3269,7 @@ static void distributed_note_client_clock(
 	if (clock->window_time == NONE || now < clock->window_time)
 	{
 		clock->window_time = now;
+		clock->window_milliseconds = system_milliseconds();
 		clock->window_ahead = ahead;
 		return;
 	}
@@ -3280,7 +3285,13 @@ static void distributed_note_client_clock(
 	}
 	else
 	{
-		real rate = 1.0f + (real)(clock->window_ahead - clock->last_ahead) / (real)elapsed;
+		/* (the client's ticks against real time: the host's ticks, and how
+		much further the client's went; a host that stalled for more than a
+		second, and lost the time, has every client's difference grow by
+		that, but their ticks no faster than real time) */
+		unsigned long milliseconds = system_milliseconds() - clock->window_milliseconds;
+		real rate = (real)(clock->window_ahead - clock->last_ahead + elapsed) /
+			((real)MAX(milliseconds, 1) * (real)TICKS_PER_SECOND / 1000.0f);
 		/* (past the usual, or past the host's own tick for a client that
 		was behind it: one that catches up by taking the host's time, when
 		it is more than a second behind, network_client_manager.c, lands
@@ -3334,6 +3345,7 @@ static void distributed_note_client_clock(
 	}
 	clock->last_ahead = clock->window_ahead;
 	clock->window_time = now;
+	clock->window_milliseconds = system_milliseconds();
 	clock->window_ahead = ahead;
 }
 

@@ -312,8 +312,11 @@ not zero (a web client was measured at 15 to 25 ticks ahead, the host's
 time when it began plus its loading), so the host learns each client's
 usual difference instead of expecting none.
 
-A window is fast when the difference grew more than `server.speed_hack_rate`
-(1.1) times as fast as the host's ticks. A client counts as a speed hack
+A window is fast when the client's ticks (the host's ticks in the window,
+plus how much the difference grew) went by more than
+`server.speed_hack_rate` (1.1) times as fast as real time. Real time, not
+the host's ticks: a host that stalls for more than a second loses that
+time, and every client's difference grows by it. A client counts as a speed hack
 when, over fast windows in a row, its difference has gone more than
 `server.speed_hack_ahead_ticks` (15) past the most it reached in any window
 that was not fast, or past the host's own tick if that is more. A browser
@@ -322,8 +325,8 @@ frame) and only catches back up to its usual difference, or, when it is
 more than a second behind, takes the host's time from the host's next game
 update (which is behind the host's tick by the time it arrives); it never
 goes past the more of those. A host that stalls steps every client's
-difference up once; the next window that is not fast takes that as the
-usual (so a long host stall can log each client once, but not kick it).
+difference up once, but no client's ticks went faster than real time, so
+the window is not fast and takes the new difference as the usual.
 What the host does is `server.speed_hack`:
 
 - `log` (the default): a log line, and a `speed_hack` event on the
