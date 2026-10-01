@@ -1359,6 +1359,14 @@ static boolean network_client_reliable_connection_read(
 				*buffer_size);
 			reset_queue = TRUE;
 		}
+		/* port: a message marked encrypted, which the game never sends
+		(anyone may: the assert below halted a debug build); dropped with
+		the queue, as the other bad messages above are */
+		else if (TEST_FLAG(header, 0))
+		{
+			error(_error_silent, "got a message marked encrypted; resetting reliable incoming queue");
+			reset_queue = TRUE;
+		}
 		else if (message_size <= circular_queue_size(connection->reliable_incoming_queue) &&
 			circular_queue_dequeue_data(connection->reliable_incoming_queue, message, message_size, TRUE))
 		{

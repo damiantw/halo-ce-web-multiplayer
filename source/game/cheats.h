@@ -40,6 +40,8 @@ void cheats_dispose_from_old_map(
 	void);
 void cheats_update(
 	void);
+void cheats_network_client_enforce(
+	void);
 
 /* ---------- globals */
 
