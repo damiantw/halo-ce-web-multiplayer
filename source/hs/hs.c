@@ -14787,6 +14787,11 @@ boolean hs_scenario_postprocess(
 	return success;
 }
 
+/* console.c's (declared: called undeclared, the web build's linker took
+it for a function of one argument, not console.c's variadic one, and the
+call trapped) */
+void console_warning(const char *format, ...);
+
 /* port: whether this machine plays in another's game (joined to its lobby
 or in its game), whose host decides the game */
 static boolean hs_playing_in_anothers_game(
