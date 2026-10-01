@@ -256,6 +256,8 @@ void players_update_before_game(
 	void);
 void players_update_after_game(
 	void);
+void players_show_telefragged(
+	long player_index);
 void players_debug_render(
 	void);
 
