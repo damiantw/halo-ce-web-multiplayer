@@ -54,6 +54,7 @@ same datum index (identifier and all), so that any message can name one:
 #include "units/units.h"
 #include "units/biped_definitions.h"
 #include "units/vehicle_definitions.h"
+#include "units/vehicle_datum.h"
 #include "items/items.h"
 #include "items/weapons.h"
 #include "items/weapon_definitions.h"
@@ -61,6 +62,9 @@ same datum index (identifier and all), so that any message can name one:
 #include "network_distributed.h"
 
 #include <math.h>
+
+/* physics.c's */
+extern real global_gravity;
 
 /* units.c's */
 void unit_network_add_weapon(long unit_index, long weapon_index, short slot);
@@ -77,9 +81,22 @@ boolean tag_index_is_group(long tag_index, long group_tag);
 them: its layout is not the public header's */
 struct vehicle_definition
 {
-	byte __unknown0[0x2F8];
+	byte __unknown0[0x2F4];
+	short vehicle_type;
+	short __unknown2F6;
 	real maximum_forward_speed;
 	real maximum_reverse_speed;
+};
+
+typedef char network_objects_vehicle_type_offset_assert[
+	offsetof(struct vehicle_definition, vehicle_type) == 0x2F4 ? 1 : -1];
+/* (vehicles.c's vehicle types: those that float, fly or stay) */
+enum
+{
+	_vehicle_type_human_boat = 2,
+	_vehicle_type_human_plane = 3,
+	_vehicle_type_alien_fighter = 5,
+	_vehicle_type_turret = 6,
 };
 
 typedef char network_objects_vehicle_maximum_forward_speed_offset_assert[
@@ -129,6 +146,12 @@ enum
 	/* the host: the client's ticks it takes as run since a client's vehicle's
 	anchor beyond its own (its messages delayed, then bunched) */
 	VEHICLE_PREDICTION_JITTER_TICKS = 6,
+	/* ... how much higher than a throw takes it a vehicle in the air may be
+	(its bounces, the ground's bumps), world units */
+	VEHICLE_PREDICTION_RISE_TOLERANCE = 2,
+	/* ... and the most of a client's round trip it takes a client's vehicle
+	in the air to be ahead of its copy by */
+	VEHICLE_PREDICTION_CEILING_LEAD_TICKS = 15,
 	/* ... how long it measures predictions from one it took, the anchor,
 	before it takes a newer as the anchor (the jitter and the blend granted
 	once a second, not once a tick) */
@@ -137,6 +160,14 @@ enum
 	client which of its ticks it has the vehicle at (longer: from where it
 	has the vehicle only, a ride begun again) */
 	VEHICLE_PREDICTION_REFERENCE_TICKS = 2 * TICKS_PER_SECOND,
+	/* ... and how long it remembers how fast its own ticks sent a client's
+	vehicle (an anchor's second, and the longest round trip: a client learns
+	of an explosion that throws its vehicle a round trip late) */
+	VEHICLE_PREDICTION_SPEED_TICKS = VEHICLE_PREDICTION_ANCHOR_TICKS + 2 * TICKS_PER_SECOND,
+	/* a client: how long a biped the host says is dead, no player's, may
+	live on here before it is killed with nothing to show (the host's
+	killing blow, unreliable, shows it; lost, nothing else would) */
+	DEAD_BIPED_FALLBACK_TICKS = TICKS_PER_SECOND / 2,
 	/* a client: its own player's ammunition and grenades are the host's once
 	the host has had this long past a round trip to see what it did with
 	them (the host's inventories go every INVENTORY_INTERVAL_TICKS) */
@@ -160,6 +191,9 @@ fourth (as it sends players, network_distributed.c) */
 #define REMOTE_OBJECT_TOLERANCE 0.05f
 /* ... and the cosine of the angle (an object at rest turned) */
 #define REMOTE_OBJECT_ANGLE_TOLERANCE 0.98f
+/* how far a client's vehicle prediction moves the host's copy for the copy
+at rest to wake, world units */
+#define VEHICLE_PREDICTION_STILL_DISTANCE 0.01f
 #define LOCAL_VEHICLE_TOLERANCE 4.0f
 /* (the host takes further than a client puts right: between the two they
 would disagree for good) */
@@ -170,8 +204,9 @@ would disagree for good) */
 tick) */
 #define MAXIMUM_PREDICTED_VEHICLE_SPEED 3.0f
 #define MAXIMUM_PREDICTED_VEHICLE_ANGULAR_SPEED 1.0f
-/* ... how much faster than the host's copy, or twice its tag's top speed,
-it goes (world units a tick) */
+/* ... how much further a tick than it goes (twice its tag's top speed, or
+as fast as the host's ticks sent its copy lately) it may be (world units a
+tick) */
 #define PREDICTED_VEHICLE_SPEED_MARGIN 0.1f
 /* the teams a flag's or ball's owner team names (game_engine_ctf.c's
 NUMBER_OF_CTF_TEAMS, game_engine_oddball.c's MAXIMUM_ODDBALLS) */
@@ -191,7 +226,7 @@ enum
 	/* an item in a unit's inventory, not in the world */
 	_distributed_object_carried_bit = 0,
 	_distributed_object_at_rest_bit,
-	/* a unit dead (struct distributed_object_change) */
+	/* a unit dead */
 	_distributed_object_dead_bit,
 	/* (struct distributed_object_state, the host's) the host has the vehicle
 	where the client it goes to had it at the tick in time */
@@ -317,7 +352,10 @@ static struct
 tick; the vehicle it last took (NONE: none), at which of the client's ticks
 and its own, and where that left the host's copy; and the anchor
 predictions are measured from: one it took, at which of the client's ticks
-and its own, and where the client had it */
+and its own, and where the client had it; the velocity it took (what its
+next tick started from); and how fast its own ticks sent the vehicle beyond
+the client's word, the most of this span of VEHICLE_PREDICTION_SPEED_TICKS
+and of the one before */
 static struct
 {
 	boolean valid;
@@ -330,9 +368,29 @@ static struct
 	word anchor_time;
 	long anchor_host_time;
 	real_point3d anchor_position;
+	real_vector3d accepted_velocity;
+	long speed_time;
+	real speeds[2];
+	/* the vehicle it last had on the ground (NONE: none), how high, and how
+	fast up it went as it left it, and when (network_objects_note_vehicle_ground) */
+	long ground_vehicle_index;
+	long ground_time;
+	/* the vehicle whose copy was at rest when it last took its word (NONE:
+	none), and where it came to rest */
+	long rest_vehicle_index;
+	real_point3d rest_position;
+	real ground_height;
+	real ground_rise_speed;
 } objects_host_vehicle_predictions[MAXIMUM_TRACKED_PLAYERS];
 /* a client: the host's objects it has, by absolute index */
 static long objects_client_has[MAXIMUM_TRACKED_OBJECTS];
+/* ... the bipeds, no player's, the host said were dead while they lived
+here, and when it first did (DEAD_BIPED_FALLBACK_TICKS) */
+static struct
+{
+	long object_index;
+	long time;
+} objects_client_dead[MAXIMUM_TRACKED_OBJECTS];
 /* ... its own objects made since the last tick (of any kind: those of the
 kinds the host has go), and whether to look through all the objects
 instead (the host's all told, too many made, or made where it cannot say) */
@@ -671,6 +729,8 @@ static void distributed_state_from_object(
 	csmemset(state, 0, sizeof(*state));
 	state->object_index = object_index;
 	SET_FLAG(state->flags, _distributed_object_at_rest_bit, TEST_FLAG(object->object.flags, _object_at_rest_bit));
+	SET_FLAG(state->flags, _distributed_object_dead_bit, TEST_FLAG(_object_mask_unit, object->object.type) &&
+		TEST_FLAG(object->object.damage_flags, _object_dead_bit));
 	state->position = object->object.position;
 	distributed_vector_pack(&object->object.forward, DISTRIBUTED_UNIT_SCALE, &state->forward);
 	distributed_vector_pack(&object->object.up, DISTRIBUTED_UNIT_SCALE, &state->up);
@@ -1309,18 +1369,92 @@ void network_objects_handle_vehicle_prediction(
 	}
 }
 
+/* (the host) where a client's player's vehicle, which that player drives,
+left the ground (network_objects_vehicle_below_ceiling): noted each tick,
+from the host's copy */
+static void network_objects_note_vehicle_ground(
+	short player_index)
+{
+	long vehicle_index = objects_host_vehicle_predictions[player_index].accepted_vehicle_index;
+	struct vehicle_datum *vehicle = vehicle_index != NONE ?
+		(struct vehicle_datum *)object_try_and_get_and_verify_type(vehicle_index, _object_mask_vehicle) : NULL;
+	struct unit_datum *driver;
+
+	if (!vehicle || vehicle->unit.driver_object_index == NONE ||
+		!(driver = unit_get(vehicle->unit.driver_object_index)) || driver->unit.player_index == NONE ||
+		DATUM_INDEX_TO_ABSOLUTE_INDEX(driver->unit.player_index) != player_index)
+	{
+		objects_host_vehicle_predictions[player_index].ground_vehicle_index = NONE;
+		return;
+	}
+	/* (on the ground, or one new to it: from where it is) */
+	if (vehicle->vehicle.airborne_ticks == 0 ||
+		objects_host_vehicle_predictions[player_index].ground_vehicle_index != vehicle_index)
+	{
+		objects_host_vehicle_predictions[player_index].ground_vehicle_index = vehicle_index;
+		objects_host_vehicle_predictions[player_index].ground_time = game_time_get();
+		objects_host_vehicle_predictions[player_index].ground_height = vehicle->object.position.z;
+		objects_host_vehicle_predictions[player_index].ground_rise_speed =
+			MAX(vehicle->object.translational_velocity.k, 0.0f);
+		/* (so written that a speed not a number is none) */
+		if (!(objects_host_vehicle_predictions[player_index].ground_rise_speed <= MAXIMUM_PREDICTED_VEHICLE_SPEED))
+			objects_host_vehicle_predictions[player_index].ground_rise_speed = 0.0f;
+	}
+}
+
+/* (the host) whether a client's player's vehicle that does not fly (nor
+floats) may be where they say it is: on the ground anywhere its speed
+takes it; in the air no higher above where it left the ground than a thing
+thrown up as fast as it went up then (and a tolerance) falls to since (the
+ticks since, less the client's round trip, no more than
+VEHICLE_PREDICTION_CEILING_LEAD_TICKS, and jitter, which are the client's
+ahead): no flying, nor hovering */
+static boolean network_objects_vehicle_below_ceiling(
+	short player_index,
+	long vehicle_index,
+	real_point3d const *position)
+{
+	struct vehicle_datum *vehicle = vehicle_datum_get(vehicle_index);
+	short type = vehicle_specific_definition_get(vehicle->definition_index)->vehicle_type;
+	real ticks;
+	real ceiling;
+
+	if (type == _vehicle_type_human_boat || type == _vehicle_type_human_plane ||
+		type == _vehicle_type_alien_fighter || type == _vehicle_type_turret ||
+		objects_host_vehicle_predictions[player_index].ground_vehicle_index != vehicle_index ||
+		vehicle->vehicle.airborne_ticks == 0)
+	{
+		return TRUE;
+	}
+	ticks = (real)(game_time_get() - objects_host_vehicle_predictions[player_index].ground_time) -
+		MIN(distributed_machine_round_trip_ticks(objects_host_vehicle_predictions[player_index].machine_index),
+			(real)VEHICLE_PREDICTION_CEILING_LEAD_TICKS) -
+		(real)VEHICLE_PREDICTION_JITTER_TICKS;
+	if (!(ticks > 0.0f) || !(global_gravity > 0.0f))
+		return TRUE;
+	ceiling = VEHICLE_PREDICTION_RISE_TOLERANCE +
+		(objects_host_vehicle_predictions[player_index].ground_rise_speed + PREDICTED_VEHICLE_SPEED_MARGIN) * ticks -
+		0.5f * global_gravity * ticks * ticks;
+	/* (so written that a position not a number is not below) */
+	return position->z - objects_host_vehicle_predictions[player_index].ground_height <= ceiling;
+}
+
 /* ... taken as they are, within a tolerance, if that machine's player
 still drives it: a little off closed by half, more put there. Each taken
 moves the host's copy, and the next is measured from there, so a client
 could take its vehicle HOST_VEHICLE_ACCEPT_TOLERANCE further each tick: a
 prediction is also no further from the anchor (one taken, a newer once a
 second) than the vehicle goes in the client's ticks since (after it, and no
-more than the host's since and a little jitter), and no faster: as fast as
-twice its tag's top speed, or as the host's copy goes (falling, thrown),
-whichever is faster, with a margin. A teleporter moves the host's copy too,
-further than it goes since the last taken: it is measured from where the
-host has it only, a new anchor. Which of the client's ticks the host has it at is noted, to tell
-the client. */
+more than the host's since and a little jitter), with a margin, and no
+faster: as fast as twice its tag's top speed, or as the host's own ticks
+sent its copy lately (thrown), whichever is faster. What they sent it is
+its speed less as much as the velocity it took of the client was faster
+than twice the top speed: a client that says it goes faster gains nothing
+by it (its gravity on a copy said to hover and fall). A teleporter moves
+the host's copy too, further than it goes since the last taken: it is
+measured from where the host has it only, a new anchor. In the air it is
+no higher than network_objects_vehicle_below_ceiling says. Which of the
+client's ticks the host has it at is noted, to tell the client. */
 void network_objects_apply_vehicle_predictions(
 	void)
 {
@@ -1337,6 +1471,7 @@ void network_objects_apply_vehicle_predictions(
 		real speed;
 		boolean anchored;
 
+		network_objects_note_vehicle_ground(player_index);
 		if (!objects_host_vehicle_predictions[player_index].valid)
 			continue;
 		objects_host_vehicle_predictions[player_index].valid = FALSE;
@@ -1356,6 +1491,10 @@ void network_objects_apply_vehicle_predictions(
 		/* (so written that a position not a number is not taken) */
 		if (!(dx * dx + dy * dy + dz * dz <= HOST_VEHICLE_ACCEPT_TOLERANCE * HOST_VEHICLE_ACCEPT_TOLERANCE))
 			continue;
+		/* (no higher in the air than it was thrown up leaving the ground,
+		falling since: past that the host's copy falls as its ticks have it) */
+		if (!network_objects_vehicle_below_ceiling(player_index, state->object_index, &state->position))
+			continue;
 		/* (how fast it may go, a tick) */
 		{
 			struct vehicle_definition const *definition = vehicle_specific_definition_get(vehicle->definition_index);
@@ -1363,11 +1502,38 @@ void network_objects_apply_vehicle_predictions(
 			real_vector3d const *host_velocity = &vehicle->object.translational_velocity;
 			real host_speed = (real)sqrt(host_velocity->i * host_velocity->i + host_velocity->j * host_velocity->j +
 				host_velocity->k * host_velocity->k);
+			long *speed_time = &objects_host_vehicle_predictions[player_index].speed_time;
+			real *speeds = objects_host_vehicle_predictions[player_index].speeds;
 
-			/* (so written that a speed not a number is none) */
-			speed = host_speed >= 0.0f ? host_speed : 0.0f;
-			if (top_speed > speed)
-				speed = top_speed;
+			/* (so written that a tag's speed not a number is none) */
+			if (!(top_speed >= 0.0f))
+				top_speed = 0.0f;
+			/* (what the host's ticks sent it since the last taken) */
+			if (objects_host_vehicle_predictions[player_index].accepted_vehicle_index == state->object_index)
+			{
+				real_vector3d const *taken = &objects_host_vehicle_predictions[player_index].accepted_velocity;
+				real taken_speed = (real)sqrt(taken->i * taken->i + taken->j * taken->j + taken->k * taken->k);
+
+				if (taken_speed > top_speed)
+					host_speed -= taken_speed - top_speed;
+			}
+			/* (the most of each span; so written that a speed not a number
+			is none) */
+			if (now < *speed_time || now - *speed_time >= 2 * VEHICLE_PREDICTION_SPEED_TICKS)
+			{
+				*speed_time = now;
+				speeds[0] = 0.0f;
+				speeds[1] = 0.0f;
+			}
+			else if (now - *speed_time >= VEHICLE_PREDICTION_SPEED_TICKS)
+			{
+				*speed_time = now;
+				speeds[1] = speeds[0];
+				speeds[0] = 0.0f;
+			}
+			if (host_speed > speeds[0])
+				speeds[0] = host_speed;
+			speed = MAX(top_speed, MAX(speeds[0], speeds[1]));
 			speed = MIN(speed, MAXIMUM_PREDICTED_VEHICLE_SPEED);
 		}
 		anchored = objects_host_vehicle_predictions[player_index].accepted_vehicle_index == state->object_index &&
@@ -1405,17 +1571,49 @@ void network_objects_apply_vehicle_predictions(
 			}
 		}
 		distributed_object_state_unpack(state, &forward, &up, &velocity, &angular_velocity);
-		/* (no faster than it goes, with a margin) */
-		distributed_vector_clamp(&velocity, MIN(speed + PREDICTED_VEHICLE_SPEED_MARGIN, MAXIMUM_PREDICTED_VEHICLE_SPEED));
+		/* (no faster than it goes: the margin is for where it is only, else
+		its copy would go faster by it each tick) */
+		distributed_vector_clamp(&velocity, speed);
 		distributed_vector_clamp(&angular_velocity, MAXIMUM_PREDICTED_VEHICLE_ANGULAR_SPEED);
 		if (!distributed_transform_valid(&state->position, &forward, &up, &velocity, &angular_velocity, &forward, &up))
 			continue;
-		network_objects_reconcile(state->object_index, &state->position, &forward, &up, &velocity, &angular_velocity,
-			HOST_VEHICLE_BLEND_DISTANCE);
+		{
+			real_point3d previous_position = vehicle->object.position;
+
+			network_objects_reconcile(state->object_index, &state->position, &forward, &up, &velocity,
+				&angular_velocity, HOST_VEHICLE_BLEND_DISTANCE);
+			/* (a copy at rest runs no physics, and so neither falls nor
+			counts its ticks in the air: one the client moved from where it
+			came to rest (a little at a time too), or says moves, wakes, and
+			settles again if it is still) */
+			if (!TEST_FLAG(vehicle->object.flags, _object_at_rest_bit))
+			{
+				objects_host_vehicle_predictions[player_index].rest_vehicle_index = NONE;
+			}
+			else
+			{
+				if (objects_host_vehicle_predictions[player_index].rest_vehicle_index != state->object_index)
+				{
+					objects_host_vehicle_predictions[player_index].rest_vehicle_index = state->object_index;
+					objects_host_vehicle_predictions[player_index].rest_position = previous_position;
+				}
+				dx = vehicle->object.position.x - objects_host_vehicle_predictions[player_index].rest_position.x;
+				dy = vehicle->object.position.y - objects_host_vehicle_predictions[player_index].rest_position.y;
+				dz = vehicle->object.position.z - objects_host_vehicle_predictions[player_index].rest_position.z;
+				if (!(dx * dx + dy * dy + dz * dz <=
+						VEHICLE_PREDICTION_STILL_DISTANCE * VEHICLE_PREDICTION_STILL_DISTANCE) ||
+					velocity.i != 0.0f || velocity.j != 0.0f || velocity.k != 0.0f)
+				{
+					SET_FLAG(vehicle->object.flags, _object_at_rest_bit, FALSE);
+					objects_host_vehicle_predictions[player_index].rest_vehicle_index = NONE;
+				}
+			}
+		}
 		objects_host_vehicle_predictions[player_index].accepted_vehicle_index = state->object_index;
 		objects_host_vehicle_predictions[player_index].accepted_time = (word)state->time;
 		objects_host_vehicle_predictions[player_index].accepted_host_time = now;
 		objects_host_vehicle_predictions[player_index].accepted_host_position = vehicle->object.position;
+		objects_host_vehicle_predictions[player_index].accepted_velocity = vehicle->object.translational_velocity;
 		/* (a new anchor: the first, one a second on, or after a jump) */
 		if (!anchored ||
 			now - objects_host_vehicle_predictions[player_index].anchor_host_time >= VEHICLE_PREDICTION_ANCHOR_TICKS)
@@ -1857,6 +2055,32 @@ static boolean distributed_client_correct_own_vehicle(
 	return TRUE;
 }
 
+/* (a client) a biped, no player's (a player's the units' states kill), the
+host says is dead, alive here: its killing blow, unreliable, kills it; lost,
+nothing else would. Killed with nothing to show or count of it once the host
+has said so for a while. */
+static void distributed_client_dead_biped(
+	long object_index)
+{
+	long absolute_index = DATUM_INDEX_TO_ABSOLUTE_INDEX(object_index);
+	struct unit_datum *unit = (struct unit_datum *)object_try_and_get_and_verify_type(object_index,
+		_object_mask_biped);
+
+	if (!unit || TEST_FLAG(unit->object.damage_flags, _object_dead_bit) || unit->unit.player_index != NONE)
+		return;
+	if (objects_client_dead[absolute_index].object_index != object_index)
+	{
+		objects_client_dead[absolute_index].object_index = object_index;
+		objects_client_dead[absolute_index].time = game_time_get();
+	}
+	else if (game_time_get() - objects_client_dead[absolute_index].time >= DEAD_BIPED_FALLBACK_TICKS)
+	{
+		unit_kill_silent(object_index);
+		unit_kill_no_statistics(object_index);
+		object_damage_update(object_index);
+	}
+}
+
 void network_objects_handle_states(
 	void const *entries,
 	short count)
@@ -1877,6 +2101,13 @@ void network_objects_handle_states(
 		if (!distributed_object_index_valid(state->object_index) || !network_objects_client_has(state->object_index))
 			continue;
 		object = object_get(state->object_index);
+		if (TEST_FLAG(state->flags, _distributed_object_dead_bit))
+		{
+			distributed_client_dead_biped(state->object_index);
+			/* (a body its tag destroys at once is gone) */
+			if (!object_try_and_get_and_verify_type(state->object_index, _object_mask_all))
+				continue;
+		}
 		/* (an item made carried whose unit never had it here, placed on the
 		host: in the world, seen) */
 		if (TEST_FLAG(_object_mask_item, object->object.type) && object->object.parent_object_index == NONE &&
@@ -2340,6 +2571,7 @@ void network_objects_new_game(
 		objects_host_inventories[absolute_index].carried_time = NONE;
 		objects_host_inventories[absolute_index].ammunition_time = NONE;
 		objects_client_has[absolute_index] = NONE;
+		objects_client_dead[absolute_index].object_index = NONE;
 	}
 	objects_host_told_count = 0;
 	objects_host_resting_cursor = 0;
@@ -2348,7 +2580,11 @@ void network_objects_new_game(
 		objects_host_machines[machine_index].time = NONE;
 	csmemset(objects_host_vehicle_predictions, 0, sizeof(objects_host_vehicle_predictions));
 	for (index = 0; index < MAXIMUM_TRACKED_PLAYERS; index++)
+	{
 		objects_host_vehicle_predictions[index].accepted_vehicle_index = NONE;
+		objects_host_vehicle_predictions[index].ground_vehicle_index = NONE;
+		objects_host_vehicle_predictions[index].rest_vehicle_index = NONE;
+	}
 	objects_client_synchronized = FALSE;
 	objects_client_ready_time = NONE;
 	objects_client_ready_interval = CLIENT_READY_INTERVAL_TICKS;
