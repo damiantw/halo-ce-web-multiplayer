@@ -1187,6 +1187,7 @@ static void dedicated_emit_status(
 		control_begin("status");
 	control_field_string("state", state);
 	control_field_string("name", config_string("server.name"));
+	control_field_integer("network_version", HALO_PORT_NETWORK_VERSION);
 	control_field_real("uptime", dedicated.uptime, 1);
 	control_field_integer("games_hosted", (long)dedicated.games_hosted);
 	dedicated_write_rotation();
@@ -1250,6 +1251,10 @@ static void dedicated_emit_server_started(
 	control_begin("server_started");
 	control_field_string("name", config_string("server.name"));
 	control_field_integer("protocol", DEDICATED_CONTROL_PROTOCOL_VERSION);
+	/* the game's network version (halo_port_limits.h): clients of another
+	refuse this server, so the site lists it only to a web build of this
+	one */
+	control_field_integer("network_version", HALO_PORT_NETWORK_VERSION);
 	/* (always: the lockstep netcode is gone; kept for the protocol's readers) */
 	control_field_boolean("distributed", TRUE);
 	dedicated_write_rotation();

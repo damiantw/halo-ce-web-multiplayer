@@ -357,12 +357,16 @@ addToLibrary({
 	// web_leave): the player left the game (the pause menu's Quit, B in the
 	// lobby), the connection was lost or the join refused (reason 0, "left";
 	// error_code: the game's error, -1 for none), or no game was found to
-	// join (1, "no_game"). On the page's main thread: a "halo:leave" event
+	// join (1, "no_game"), or the host speaks another network version (2,
+	// "version_mismatch", with hostVersion and clientVersion: the page
+	// reloads the build or says the server is being updated). On the page's main thread: a "halo:leave" event
 	// ({reason, errorCode}) for the site's page, which goes back to its home
 	// page; with nobody to take it (preventDefault), halo-loader.js does.
 	web_leave_game__proxy: "async",
-	web_leave_game: (reason, errorCode) => {
-		const detail = { reason: reason === 1 ? "no_game" : "left", errorCode: errorCode < 0 ? null : errorCode };
+	web_leave_game: (reason, errorCode, clientVersion) => {
+		const detail = reason === 2
+			? { reason: "version_mismatch", errorCode: null, hostVersion: errorCode, clientVersion }
+			: { reason: reason === 1 ? "no_game" : "left", errorCode: errorCode < 0 ? null : errorCode };
 		Module["haloLeft"] = detail;
 		if (typeof dispatchEvent === "function" && typeof CustomEvent === "function")
 			dispatchEvent(new CustomEvent("halo:leave", { detail, cancelable: true }));

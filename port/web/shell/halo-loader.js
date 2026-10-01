@@ -50,9 +50,12 @@
 // asks the page to leave (web_library.js, web_leave_game); inputSettings,
 // HALO_WEB_LOOK_SENSITIVITY, HALO_WEB_INVERT_LOOK, HALO_WEB_STICK_DEADZONE,
 // HALO_WEB_VIBRATION and HALO_WEB_MOUSE_SENSITIVITY; gamepadEvents, the
-// "halo:gamepad" event (below).
+// "halo:gamepad" event (below); versionMismatch, the "halo:leave" event's
+// "version_mismatch" reason ({hostVersion, clientVersion}) and ?v=<build> on
+// this script's URL passed on to halo.wasm (halo-version.json has the
+// build's network version).
 window.haloFeatures = Object.assign(window.haloFeatures || {}, { webJoin: true, playerColor: true, playerTeam: true, leave: true,
-	inputSettings: true, gamepadEvents: true });
+	inputSettings: true, gamepadEvents: true, versionMismatch: true });
 (() => {
 	const params = new URLSearchParams(location.search);
 	const envParam = (name) => {
@@ -84,8 +87,23 @@ window.haloFeatures = Object.assign(window.haloFeatures || {}, { webJoin: true, 
 	};
 	window.haloLog = lines;
 
+	// The build's version (the site adds ?v=<build> to this script's URL and
+	// to halo.js's, docs/gateway.md "Versions"): the same on halo.wasm's,
+	// so that a browser never runs a cached wasm of another build with this
+	// halo.js (their names are not hashed)
+	const buildVersion = (() => {
+		try {
+			return new URL(document.currentScript.src).searchParams.get("v");
+		} catch (error) {
+			return null;
+		}
+	})();
+	window.haloBuildVersion = buildVersion;
+
 	var Module = window.Module = {
 		canvas: document.getElementById("canvas"),
+		locateFile: (path, prefix) => (buildVersion && /\.(wasm|js)$/.test(path)
+			? `${prefix}${path}?v=${encodeURIComponent(buildVersion)}` : prefix + path),
 		print,
 		printErr: print,
 		setStatus: (text) => { if (statusElement) statusElement.textContent = text; },
@@ -282,6 +300,26 @@ window.haloFeatures = Object.assign(window.haloFeatures || {}, { webJoin: true, 
 	window.addEventListener("gamepaddisconnected", (event) => announce(event.gamepad, false), true);
 })();
 
+// A host of another network version (web_library.js, web_leave_game:
+// "version_mismatch"): a host newer than this build means the page has a
+// cached older build, so it reloads, once a minute at most for one pair of
+// versions (sessionStorage), so that a server really ahead of the site's
+// build does not reload the page for ever. True when it reloads.
+function reloadForVersion(detail) {
+	if (!(detail.hostVersion > detail.clientVersion)) return false;
+	const key = `halo.version-reload.${detail.clientVersion}.${detail.hostVersion}`;
+	try {
+		const last = Number(sessionStorage.getItem(key));
+		if (last && Date.now() - last < 60000) return false;
+		sessionStorage.setItem(key, String(Date.now()));
+	} catch (error) {
+		return false;
+	}
+	location.reload();
+	return true;
+}
+window.haloReloadForVersion = reloadForVersion;
+
 // Leaving: the game says the player left (web_library.js, web_leave_game).
 // The site's game bridge takes the event (preventDefault) and the site goes
 // back to its home page; standing alone, the page goes to HALO_WEB_EXIT_URL
@@ -293,8 +331,12 @@ window.addEventListener("halo:leave", (event) => {
 			.map((pair) => pair.split("=")).filter(([key]) => key === "HALO_WEB_EXIT_URL").map(([, ...value]) => value.join("="))[0];
 		if (exitUrl) {
 			location.assign(decodeURIComponent(exitUrl));
+		} else if (event.detail && event.detail.reason === "version_mismatch" && reloadForVersion(event.detail)) {
+			// (reloading: a cached build older than the server)
 		} else if (window.Module && window.Module.setStatus) {
-			window.Module.setStatus(event.detail && event.detail.reason === "no_game" ? "No game to join" : "You left the game");
+			window.Module.setStatus(event.detail && event.detail.reason === "version_mismatch"
+				? `This server runs network version ${event.detail.hostVersion}, this page ${event.detail.clientVersion}: the server is being updated`
+				: event.detail && event.detail.reason === "no_game" ? "No game to join" : "You left the game");
 		}
 	}, 0);
 });
