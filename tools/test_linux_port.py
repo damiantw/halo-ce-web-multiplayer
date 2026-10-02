@@ -240,6 +240,31 @@ def test_prefixes_define_halo_linux():
         assert re.search(r"^#define HALO_LINUX 1$", text, re.M), prefix
 
 
+# ---------- the dedicated server's player limit (server.max_players)
+
+
+def test_dedicated_server_takes_up_to_127_players(tmp_path):
+    """server.max_players is pinned to 1..DEDICATED_MAXIMUM_PLAYERS: the
+    port's session limit (128 machines) less the server's own machine. A
+    stress test with 128 native clients on Blood Gulch had 127 join."""
+    compiler = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if not compiler:
+        pytest.skip("no C compiler")
+    root = Path(__file__).resolve().parents[1]
+    server = (root / "port/linux/game/dedicated_server.c").read_text(encoding="latin-1")
+    expression = re.search(r"DEDICATED_MAXIMUM_PLAYERS = ([^,]+),", server).group(1)
+    assert "PIN(config_integer(\"server.max_players\"), 1, DEDICATED_MAXIMUM_PLAYERS)" in server
+    source = write(tmp_path / "limit.c", "#include \"halo_port_limits.h\"\n"
+                   f"_Static_assert(({expression}) == 127, \"server.max_players at most 127\");\n")
+    subprocess.run([compiler, "-std=c11", "-I", str(root / "port/linux/include"), "-c", "-o",
+                    str(tmp_path / "limit.o"), str(source)], check=True)
+    config = (root / "port/linux/src/port_config.c").read_text(encoding="latin-1")
+    setting = re.search(r'\{ "server\.max_players", _config_integer, "(\d+)"[^}]*\}', config, re.S)
+    # (the default stays system link's 16; servers raise it on their own)
+    assert setting.group(1) == "16"
+    assert "1-127" in setting.group(0)
+
+
 def test_builds_force_include_the_prefix():
     for build in ("tools/linux_build.py", "tools/web_build.py", "tools/android_build.py"):
         assert '"halo_linux_prefix.h"' in (REPO / build).read_text(), build

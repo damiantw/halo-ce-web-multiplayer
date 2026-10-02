@@ -186,8 +186,9 @@ static const struct config_setting config_settings[] =
 		"at most server.max_players). Only with server.lobby." },
 	{ "server.max_players", _config_integer, "16", "HALO_SERVER_MAX_PLAYERS", _environment_value,
 		_platform_desktop,
-		"Players the dedicated server's games take at most (1-16, as system link\n"
-		"on the Xbox); a machine that would go over is refused as the game is full." },
+		"Players the dedicated server's games take at most (1-127: the port's 128\n"
+		"machines less the server's own; 16 as system link on the Xbox); a machine\n"
+		"that would go over is refused as the game is full." },
 	{ "server.postgame_seconds", _config_integer, "10", "HALO_SERVER_POSTGAME", _environment_value, _platform_desktop,
 		"Seconds the dedicated server shows the scores after a game before the\n"
 		"rotation's next game (straight away, or its lobby with server.lobby)." },

@@ -100,8 +100,11 @@ enum
 	DEDICATED_MAP_PATH_LENGTH = 128,
 	DEDICATED_VARIANT_NAME_LENGTH = 32,
 	DEDICATED_ROTATION_TEXT_LENGTH = 4096,
-	/* server.max_players: system link's players on the Xbox */
-	DEDICATED_MAXIMUM_PLAYERS = 16,
+	/* server.max_players at most: the port's session limit
+	(halo_port_limits.h: 128 machines), less the server's own machine, which
+	takes a machine slot and has no player (the Xbox's system link took 16,
+	still the default) */
+	DEDICATED_MAXIMUM_PLAYERS = HALO_PORT_MAXIMUM_NETWORK_MACHINES - 1,
 
 	DEDICATED_PLAYER_SLOTS = HALO_PORT_MAXIMUM_NETWORK_PLAYERS,
 	DEDICATED_MACHINE_SLOTS = HALO_PORT_MAXIMUM_NETWORK_MACHINES,
