@@ -4085,6 +4085,35 @@ void get_unique_random_color(
 	return;
 }
 
+#ifdef HALO_LINUX
+/* port: whether two names read the same typed in ASCII, in either case
+(player_name_character_ascii: "Jos\u00e9" and "jose" do), so that a numbered
+name ("Name2") tells apart players a typed name could not */
+static boolean player_names_read_the_same(
+	wchar_t const *a,
+	wchar_t const *b)
+{
+	long index;
+
+	for (index = 0; index < NETWORK_PLAYER_NAME_LENGTH; index++)
+	{
+		char x = player_name_character_ascii(a[index]);
+		char y = player_name_character_ascii(b[index]);
+
+		if (!a[index] || !b[index])
+			return !a[index] && !b[index];
+		if (x >= 'A' && x <= 'Z')
+			x = (char)(x - 'A' + 'a');
+		if (y >= 'A' && y <= 'Z')
+			y = (char)(y - 'A' + 'a');
+		if (x != y)
+			return FALSE;
+	}
+
+	return TRUE;
+}
+#endif
+
 static boolean player_name_is_unique(
 	struct network_game_server *server,
 	wchar_t const *name)
@@ -4097,7 +4126,11 @@ static boolean player_name_is_unique(
 	{
 		struct network_player *player = &server->game.players[player_index];
 
+#ifdef HALO_LINUX
+		if (network_player_is_valid(player) && player_names_read_the_same(player->name, name))
+#else
 		if (network_player_is_valid(player) && !ustrcmp(player->name, name))
+#endif
 			return FALSE;
 	}
 

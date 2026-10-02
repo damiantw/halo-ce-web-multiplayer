@@ -1613,38 +1613,19 @@ boolean network_game_server_handle_datagram(
 
 /* port: a name a machine sends (its machine's, or a player's: they come
 from the wire, from anyone joining by any link) kept to what draws as one
-line of text: ended within its field, without control characters (line
-breaks, tabs), Unicode's separators of lines and paragraphs, zero-width
-and right-to-left marks, lone surrogates and non-characters, nor "|" (the
-game's text's own marks), its spaces before and after left out; one with
-nothing left the default given */
+line of text (player_name_clean: no control characters, line or paragraph
+separators, characters that draw as nothing, lone surrogates,
+non-characters nor "|", the game's text's own marks; its spaces before and
+after left out); one with nothing left that can be typed (in ASCII, a
+letter with a mark as its plain letter) the default given. (A player's name
+the same as another player's is numbered after this, as it is added:
+network_server_manager.c.) */
 static void network_game_server_clean_name(
 	wchar_t *name,
 	long count,
 	wchar_t const *default_name)
 {
-	long read;
-	long written = 0;
-
-	name[count - 1] = 0;
-	for (read = 0; read < count && name[read]; read++)
-	{
-		unsigned short character = (unsigned short)name[read];
-
-		if (character < 0x20 || (character >= 0x7F && character <= 0x9F) ||
-			(character >= 0x200B && character <= 0x200F) || (character >= 0x2028 && character <= 0x202E) ||
-			(character >= 0x2060 && character <= 0x206F) || character == 0xFEFF ||
-			(character >= 0xD800 && character <= 0xDFFF) || character >= 0xFFF0 || character == '|' ||
-			(character == ' ' && written == 0))
-		{
-			continue;
-		}
-		name[written++] = name[read];
-	}
-	while (written > 0 && name[written - 1] == ' ')
-		written--;
-	name[written] = 0;
-	if (!written)
+	if (!player_name_clean(name, count))
 	{
 		long index;
 
@@ -1669,7 +1650,8 @@ static void network_game_server_queue_client_player(
 		network_event("client machine #%ld tried to add a player of another machine", machine_index);
 		return;
 	}
-	player->name[NUMBEROF(player->name) - 1] = 0;
+	/* (port: its name kept to text that draws, as every name from the wire) */
+	network_game_server_clean_name(player->name, NUMBEROF(player->name), L"Player");
 	network_game_server_queue_player_for_addition(server, player);
 }
 
