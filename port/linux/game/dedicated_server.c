@@ -16,8 +16,9 @@ does (the automated host of network_test.c, without its player):
   late joins); with server.lobby the countdown (server.countdown seconds)
   starts whenever server.minimum_players players are in the lobby, and is
   never left paused;
-- a game nobody is left in ends after server.empty_seconds (and the server
-  then waits, idle, for the next player);
+- a game nobody is left in (and no machine is joining) ends after
+  server.empty_seconds, without its end sequence or scores: the lobby opens
+  again at once, and the server waits there, idle, for the next player;
 - server.postgame_seconds after the scores show, the rotation's next map and
   game type is set up (game_engine.c's postgame, which would wait for the
   host to press a button): the next game starts at once when there are
@@ -80,6 +81,7 @@ int platform_data_has_map(char const *name);
 int platform_data_map_type(char const *name);
 /* network_server_manager.c's */
 short network_game_server_dedicated_player_count(struct network_game_server *server);
+short network_game_server_dedicated_joining_count(struct network_game_server *server);
 boolean network_game_server_dedicated_in_pregame(struct network_game_server *server);
 boolean network_game_server_dedicated_in_game(struct network_game_server *server);
 void network_game_server_dedicated_lobby_update(struct network_game_server *server, long minimum_players,
@@ -2167,7 +2169,8 @@ void dedicated_server_update(
 				dedicated_upcoming(&upcoming);
 				control_begin("postgame");
 				dedicated_write_entry_fields(&dedicated.game_entry);
-				control_field_integer("postgame_seconds", (long)dedicated.postgame_seconds);
+				/* (0: the scores are skipped, the lobby opens at once) */
+				control_field_integer("postgame_seconds", dedicated.skip_postgame ? 0L : (long)dedicated.postgame_seconds);
 				dedicated_write_entry("next", &upcoming);
 				control_end();
 			}
@@ -2206,7 +2209,11 @@ void dedicated_server_update(
 			break;
 		}
 		case _phase_game:
-			if (player_count > 0 || dedicated.empty_seconds <= 0.0f)
+			/* (a machine joining the game counts: its player is on the way,
+			and ending the game now would let the machine go, a join that
+			fails, network_game_server_close_ended_game) */
+			if (player_count > 0 || dedicated.empty_seconds <= 0.0f ||
+				network_game_server_dedicated_joining_count(server) > 0)
 			{
 				dedicated.empty_elapsed = 0.0f;
 			}
@@ -2215,9 +2222,13 @@ void dedicated_server_update(
 				dedicated.empty_elapsed += seconds;
 				if (dedicated.empty_elapsed >= dedicated.empty_seconds && game_in_progress())
 				{
+					/* (nobody to show its end or its scores to: the lobby
+					opens again at once, game_engine_end_game_at_once and
+					dedicated_server_postgame_update) */
 					platform_log("dedicated server: nobody left in the game; ending it");
 					dedicated.end_reason = "empty";
-					game_engine_end_game();
+					dedicated.skip_postgame = TRUE;
+					game_engine_end_game_at_once();
 					dedicated.ended_empty_game = TRUE;
 				}
 			}

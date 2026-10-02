@@ -197,7 +197,7 @@ the setting for one start of the game. It has priority over the file.
 | `debug.hidden_window`, `debug.null_renderer` | `false` | `HALO_HIDDEN_WINDOW`, `HALO_NULL_RENDERER` | `true`: no visible window, or no graphics. |
 | `debug.gpu_stats`, `debug.gpu_trace_frame`, `debug.gpu_trace_constants`, `debug.gpu_dump_shaders`, `debug.texture_dump_directory`, `debug.texture_log`, `debug.gl_debug`, `debug.texture_no_cache` | off | `HALO_GPU_STATS`, `HALO_GPU_TRACE`, `HALO_GPU_TRACE_CONSTANTS`, `HALO_GPU_DUMP_SHADERS`, `HALO_TEXTURE_DUMP`, `HALO_TEXTURE_LOG`, `HALO_GL_DEBUG`, `HALO_TEXTURE_NO_CACHE` | Tools to find problems in the graphics: counts for each frame, all the GL state of one frame, the GLSL code, the textures. |
 | `debug.gpu_skip_vertex_shaders`, `debug.gpu_debug_expression`, `debug.gpu_debug_flat`, `debug.gpu_debug_texture0` | off | `HALO_GPU_SKIP_VS`, `HALO_GPU_DEBUG_EXPR`, `HALO_GPU_DEBUG_FLAT`, `HALO_GPU_DEBUG_T0` | Tools to find problems in the graphics: skip the draws of a vertex shader, or replace the output of all pixel shaders with a GLSL expression (for example `t0.rgb`). |
-| `web.join` | `""` | `HALO_WEB_JOIN` | `"first"`: join the first system link game found without the menus (`game/auto_join.c`), as picking it and pressing A in its lobby do. The site's `/play` sets it for the server the player picked (its gateway token shows only that server). If the game refuses the machine, or ends while the machine joins it, the machine joins again when the game is open (the next lobby). |
+| `web.join` | `""` | `HALO_WEB_JOIN` | `"first"`: join the first system link game found without the menus (`game/auto_join.c`), as picking it and pressing A in its lobby do. The site's `/play` sets it for the server the player picked (its gateway token shows only that server). The player is added as soon as the lobby has sent the machine its settings. If the game refuses the machine, or ends while the machine joins it, the machine joins again when the game is open (the next lobby), up to 10 joins; the web build stays on the page meanwhile. |
 | `debug.network_log` | `false` | `HALO_NETWORK_LOG` | Log where every player is, and the netcode's counters, every second in a game (the `network test: tick` lines of the automated tests, without a test). |
 | `debug.network_test`, `debug.network_test_start`, `debug.network_test_kill`, `debug.network_test_shoot`, `debug.network_test_vehicle`, `debug.network_test_pickup`, `debug.test_input` | off | `HALO_NETWORK_TEST`, `HALO_NETWORK_TEST_START`, `HALO_NETWORK_TEST_KILL`, `HALO_NETWORK_TEST_SHOOT`, `HALO_NETWORK_TEST_VEHICLE`, `HALO_NETWORK_TEST_PICKUP`, `HALO_TEST_INPUT` | Automatic tests of system link (`game/network_test.c`). Refer to `NETCODE.md`. |
 | `debug.network_latency`, `debug.network_loss` | `0` | `HALO_NETWORK_LATENCY`, `HALO_NETWORK_LOSS` | The game holds all the data that it receives for this number of milliseconds, and ignores this percentage of the datagrams. Use these settings to test the netcode as on the internet. |
@@ -375,7 +375,10 @@ The server:
    who joins goes to the smaller team, and the teams are evened out between
    games.
 3. Plays the game. If all the players go, the game stops after
-   `server.empty_seconds`. The game continues when the other players go
+   `server.empty_seconds` (counted only while no machine is joining it),
+   and the next entry is set up at once: no end sequence and no scores,
+   with nobody to show them to (the `postgame` event says
+   `"postgame_seconds": 0`). The game continues when the other players go
    and one player (or one team) is left, because players can join a game
    in progress. (Halo ends the game then.)
 4. Shows the scores for `server.postgame_seconds`, then sets up the next
@@ -609,7 +612,7 @@ Common objects:
 | `score` | During a game, when a statistic or a score changes. At most once each second. | Entry fields, `time_elapsed` (seconds), `team_scores`, `players`. |
 | `status` | Each `server.status_interval` seconds, on SIGUSR1, and as the reply to `status` (then with `id`/`command`). | `state` (`starting`, `hosting`, `lobby`, `game`, `postgame` (from `game_ended` on, the game's end screen included), `waiting`), `name`, `network_version`, `uptime` (seconds), `games_hosted`, `rotation`, `rotation_index` (the current game position in the rotation, or `null` if a command set the game), `next` (entry), `lobby` (object or `null`), `game` (object or `null`). |
 | `game_ended` | The game ends (before the scores show). | `reason` (`game_over`, `empty`, `end_game`, `next_map`, `change_map`), entry fields, variant fields, `time_elapsed`, `time_remaining` (always `null`), `team_scores`, `players` (with `won`), `next` (entry). |
-| `postgame` | The scores show. | Entry fields (the game that ended), `postgame_seconds`, `next` (entry). |
+| `postgame` | The scores show. | Entry fields (the game that ended), `postgame_seconds` (`0` when the scores are skipped: a game that ended empty, or `next_map` with `skip_postgame`), `next` (entry). |
 | `reloaded` | After SIGHUP. | `rotation_changed`, `rotation`, `rejected` `[{entry, reason}]`, `settings`. |
 | `input_closed` | The command input ended. | `exiting` (boolean). |
 | `shutdown` | The server stops. | `reason` (`signal`, `command`, `input_closed`), `signal` (integer or `null`), `immediate` (boolean), `games_hosted`. |
@@ -717,6 +720,12 @@ A game `status` (abbreviated):
 
 `tools/dedicated_control_test.py` tests the channel without game data
 (`python3 tools/dedicated_control_test.py --binary build/linux/halo`).
+`tools/auto_join_test.py` runs a real dedicated server and `HALO_WEB_JOIN`
+clients (it needs the game data and `xvfb-run`, and skips without them:
+`python3 tools/auto_join_test.py --binary build/linux/halo --data-root <root>`).
+It checks the add-player delay, a lobby join, a late join, a machine refused
+as a game ends (it joins again), an empty game going straight to the lobby,
+a client joining as the empty countdown runs out, and the CTF teams.
 
 ## Internet play
 

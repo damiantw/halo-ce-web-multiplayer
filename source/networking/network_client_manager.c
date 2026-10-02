@@ -845,6 +845,14 @@ static boolean network_game_client_late_join_clock_pending;
 be joined (network_game_client_join_first_available_game) */
 static boolean network_game_client_incompatibility_told;
 
+/* whether the lobby joined has sent its settings since the client was
+accepted into it or switched to it (network_game_client_lobby_local_player) */
+static boolean network_game_client_lobby_settings_received;
+
+/* whether a game refused this machine's join, or let it go as it ended
+(network_game_client_rejected_by_game), since auto_join.c last asked */
+static boolean network_game_client_refused;
+
 /* when each controller last asked the host for its player in the pregame
 (network_game_client_add_player): the pregame screen asks every frame, and
 is answered once every half second. A removal asked for since lets the next
@@ -1027,6 +1035,7 @@ boolean network_game_client_switch_to_pregame(
 		client->state = _network_game_client_state_pregame;
 		network_game_client_late_join_time = 0;
 		network_game_client_late_join_clock_pending = FALSE;
+		network_game_client_lobby_settings_received = FALSE;
 		network_event("switching to pregame");
 		network_game_reset_to_pregame_ui();
 		network_connection_keep_alive(client->connection);
@@ -1287,6 +1296,10 @@ boolean network_game_client_game_settings_updated(
 			main_set_multiplayer_map_name(message_packet->map.name);
 		}
 
+#ifdef HALO_LINUX
+		if (client->state == _network_game_client_state_pregame)
+			network_game_client_lobby_settings_received = TRUE;
+#endif
 		csmemcpy(&previous_game, &client->game, sizeof(client->game));
 		csmemcpy(&client->game, message_packet, sizeof(client->game));
 		csmemcpy(
@@ -1907,6 +1920,9 @@ void network_game_client_accepted_into_game(
 		struct message_client_settings_request settings_request;
 		message_header *message;
 
+#ifdef HALO_LINUX
+		network_game_client_lobby_settings_received = FALSE;
+#endif
 		client->machine_index = message_packet->machine_index;
 		client->game.machines[message_packet->machine_index].machine_index =
 			(char)message_packet->machine_index;
@@ -2385,6 +2401,10 @@ void network_game_client_rejected_by_game(
 		"unable to join game: reason= #%d/%s",
 		rejection_code,
 		reason);
+#ifdef HALO_LINUX
+	/* (auto_join.c joins again: the abort below may take the client with it) */
+	network_game_client_refused = TRUE;
+#endif
 	/* port: the join went to the pregame screen at once (and a machine
 	refused a game in progress, network_game_server_refuse_late_joiner, is in
 	it): with no game behind it, it is left for the main menu, which says
@@ -3142,6 +3162,17 @@ boolean network_game_client_take_let_go(
 	return let_go;
 }
 
+/* auto_join.c's: whether a game refused this machine (or closed as it
+joined) since the last call */
+boolean network_game_client_take_refused(
+	void)
+{
+	boolean refused = network_game_client_refused;
+
+	network_game_client_refused = FALSE;
+	return refused;
+}
+
 /* auto_join.c's: what the client has of a game: 0 none (no client, or
 searching), 1 joining one, 2 in its lobby, 3 playing it or its scores */
 short network_game_client_join_progress(
@@ -3165,6 +3196,33 @@ short network_game_client_join_progress(
 		network_game_client_initiate_join_game) */
 		return 0;
 	}
+}
+
+/* auto_join.c's: whether the lobby this client joined has told it its
+settings yet (-1: not yet, or not in a lobby), and then whether a player of
+this machine is in them (1) or not (0). The settings follow the server's
+acceptance at once (network_game_client_accepted_into_game asks for them);
+adding the player before they arrive would be the request of a machine the
+lobby has not set up yet. */
+short network_game_client_lobby_local_player(
+	void)
+{
+	struct network_game_client *client = global_network_game_client_get();
+	short player_index;
+
+	if (!client || client->state != _network_game_client_state_pregame ||
+		!network_game_client_lobby_settings_received)
+	{
+		return NONE;
+	}
+	for (player_index = 0; player_index < MAXIMUM_NUMBER_OF_PLAYERS; player_index++)
+	{
+		struct network_player const *player = &client->game.players[player_index];
+
+		if (network_player_is_valid(player) && player->machine_index == (char)client->machine_index)
+			return 1;
+	}
+	return 0;
 }
 
 boolean network_game_client_join_first_available_game(

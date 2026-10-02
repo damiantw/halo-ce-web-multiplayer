@@ -10,13 +10,24 @@ network client searches, joins the game, opens the pregame lobby screen and
 adds the player of controller 1. The server gives the player a team (a team
 game balances them); nothing else is scripted.
 
+The player is added as soon as the lobby has sent this machine its
+settings (a round trip after the join is accepted), and asked for again
+(twice a second, as the pregame screen asks) until the lobby's settings have
+it. (This used to wait a fixed 3 seconds after the join, copied from the
+netcode tests' join mode, network_test.c, for "the lobby to settle": the
+settings are what it waited for.)
+
 A game that ends while the machine joins it (the host lets it go:
 network_server_manager.c's network_game_server_close_ended_game), or that
 refuses it, puts the network client back to searching, or (when the game
 ended as the machine loaded it) makes the client leave it: the join starts
-again, and takes the next lobby when the game is open again. That lasts
-until the machine is in a game; a client that is gone otherwise (the host
-went down, the player was kicked) is left at the main menu.
+again, and takes the next lobby when the game is open again. The refusal's
+way back to the main menu (network_game_client_rejected_by_game: an error
+shown at the main menu, which the web build would take for leaving) does not
+end the visit then: the join starts over (web_menu_requested), up to
+WEB_JOIN_ATTEMPTS times. That lasts until the machine is in a game; a client
+that is gone otherwise (the host went down, the player was kicked) is left at
+the main menu.
 
 This replaces the web client's use of the netcode tests' join mode
 (network_test.c, debug.network_test = "join"), which does the same and
@@ -76,6 +87,9 @@ static struct
 	boolean joined;
 	real joined_seconds;
 	boolean player_added;
+	/* when the player was last asked for (network_game_client_add_player
+	takes one request every half second) */
+	real add_seconds;
 	/* in a game, or the game lost: done */
 	boolean finished;
 	short attempts;
@@ -83,6 +97,14 @@ static struct
 
 /* how long the web build looks for the game before giving up and leaving */
 #define WEB_SEARCH_SECONDS 45.0f
+
+/* how many joins the web build starts before a refusal leaves the page
+(each one: the game ended or refused the machine as it joined) */
+#define WEB_JOIN_ATTEMPTS 10
+
+/* the main menu settling before the first search (without menus, the web
+build has only the main menu's scenario, loaded once main_menu_loaded) */
+#define MENU_SETTLE_SECONDS 2.0f
 
 /* whether the web build is the multiplayer-only one without menus */
 boolean web_multiplayer_only(
@@ -146,11 +168,28 @@ static struct
 
 #define WEB_MENU_LEAVE_SECONDS 1.5f
 
+/* the join's errors (ui_widget.h): a refusal, or a game that closed as the
+machine joined it */
+static boolean auto_join_refusal_error(
+	short error_code)
+{
+	return error_code == _error_network_join_game_closed || error_code == _error_network_failed_to_join_game;
+}
+
 void web_menu_requested(
 	short error_code)
 {
 	if (!web_multiplayer_only())
 		return;
+	/* (a refusal while joining: the client is back to searching, and
+	auto_join_update starts the join over; the page stays) */
+	if (auto_join.mode != _auto_join_off && !auto_join.finished && auto_join.attempts > 0 &&
+		auto_join.attempts < WEB_JOIN_ATTEMPTS && auto_join_refusal_error(error_code))
+	{
+		platform_log("auto join: the game closed or refused this machine as it joined (error %d); joining again",
+			error_code);
+		return;
+	}
 	web_menu_request.pending = TRUE;
 	web_menu_request.error_code = error_code;
 	web_menu_request.seconds = 0.0f;
@@ -190,6 +229,7 @@ static void auto_join_restart(
 	auto_join.menu_seconds = 0.0f;
 	auto_join.joined = FALSE;
 	auto_join.player_added = FALSE;
+	auto_join.add_seconds = 0.0f;
 	auto_join.finished = FALSE;
 	auto_join.searching_seconds = 0.0f;
 	/* (the join starts over: the page stays) */
@@ -228,8 +268,9 @@ void auto_join_update(
 		if (!main_menu_loaded)
 			return;
 		auto_join.menu_seconds += seconds;
-		/* (the main menu settling first; without menus, only the scenario) */
-		if (auto_join.menu_seconds < (web_multiplayer_only() ? 0.5f : 2.0f))
+		/* (the main menu settling first; without menus, there is nothing to
+		wait for once its scenario is loaded) */
+		if (!web_multiplayer_only() && auto_join.menu_seconds < MENU_SETTLE_SECONDS)
 			return;
 		auto_join.searching = TRUE;
 		dispose_global_network_game_client();
@@ -249,9 +290,15 @@ void auto_join_update(
 
 	if (!global_network_game_client_get())
 	{
-		/* (gone before it was in a game: the host went down, or kicked the
-		player; not joined again) */
-		if (auto_join.joined)
+		/* (gone before it was in a game: refused, or the game closed as it
+		joined, joined again; the host went down, or kicked the player: not
+		joined again) */
+		if (auto_join.joined && network_game_client_take_refused() && auto_join.attempts < WEB_JOIN_ATTEMPTS)
+		{
+			platform_log("auto join: the game closed or refused this machine as it joined; joining again when it is open");
+			auto_join_restart();
+		}
+		else if (auto_join.joined)
 		{
 			platform_log("auto join: the game was lost before it started for this machine");
 			auto_join.finished = TRUE;
@@ -270,9 +317,11 @@ void auto_join_update(
 		}
 		else if (network_game_client_join_first_available_game())
 		{
+			(void)network_game_client_take_refused();
 			auto_join.joined = TRUE;
 			auto_join.joined_seconds = 0.0f;
 			auto_join.player_added = FALSE;
+			auto_join.add_seconds = 0.0f;
 			auto_join.attempts++;
 			ui_widgets_close_all();
 			ui_widget_load_by_name_or_tag(
@@ -301,12 +350,24 @@ void auto_join_update(
 		network_game_client_reset) */
 		auto_join_restart();
 	}
-	else if (progress == 2 && !auto_join.player_added && auto_join.joined_seconds >= 3.0f)
+	else if (progress == 2)
 	{
-		/* the player, once the lobby has settled (as pressing A in it) */
-		auto_join.player_added = network_game_client_add_player(global_network_game_client_get(), 0);
-		if (auto_join.player_added)
-			platform_log("auto join: player added");
+		/* the player (as pressing A in the lobby), once the lobby has sent
+		its settings, and again until they have the player: a request the
+		lobby did not take (it was starting the game, or a game in progress
+		was not yet taking this machine's players) is not lost */
+		short lobby = network_game_client_lobby_local_player();
+
+		auto_join.add_seconds += seconds;
+		if (lobby == 0 && (!auto_join.player_added || auto_join.add_seconds >= 0.5f))
+		{
+			boolean requested = network_game_client_add_player(global_network_game_client_get(), 0);
+
+			auto_join.add_seconds = 0.0f;
+			if (requested && !auto_join.player_added)
+				platform_log("auto join: player added");
+			auto_join.player_added |= requested;
+		}
 	}
 }
 

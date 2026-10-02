@@ -3880,6 +3880,12 @@ static void game_engine_update_teleporter(
 	return;
 }
 
+#ifdef HALO_LINUX
+/* port: whether the game's end skips its delays (the 7 seconds of its end,
+the 5 before the scores), set by game_engine_end_game_at_once */
+static boolean game_engine_postgame_at_once;
+#endif
+
 void game_engine_update(
 	void)
 {
@@ -3977,6 +3983,10 @@ void game_engine_update(
 			game_engine_globals.postgame_progress = 0.0f;
 			game_engine_globals.postgame_state = 2;
 			game_engine_globals.postgame_timer = 5.0f;
+#ifdef HALO_LINUX
+			if (game_engine_postgame_at_once)
+				game_engine_globals.postgame_timer = 0.0f;
+#endif
 
 			data_iterator_new(&iterator.data, player_data);
 			player = (struct player_datum *)data_iterator_next(&iterator.data);
@@ -4755,6 +4765,24 @@ void game_engine_end_game(
 
 	return;
 }
+
+#ifdef HALO_LINUX
+/* port: the game ends now and goes straight to the scores, without the
+delays meant for its players: the dedicated server's game that nobody is
+in (port/linux/game/dedicated_server.c, server.empty_seconds), whose
+lobby then opens at once */
+void game_engine_end_game_at_once(
+	void)
+{
+	if (game_engine_globals.postgame_state == 0)
+	{
+		game_engine_globals.postgame_state = 1;
+		game_engine_globals.postgame_timer = 0.0f;
+		game_engine_postgame_at_once = TRUE;
+		ui_widgets_close_all();
+	}
+}
+#endif
 
 void game_engine_player_damaged_player(
 	long damaging_player_index,
@@ -6456,6 +6484,9 @@ void game_engine_initialize(
 {
 	csmemset(&game_engine_globals, 0, sizeof(game_engine_globals));
 	game_engine_globals.postgame_state = 0;
+#ifdef HALO_LINUX
+	game_engine_postgame_at_once = FALSE;
+#endif
 
 	if (variant && variant->game_engine_index)
 	{
