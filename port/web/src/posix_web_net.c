@@ -184,6 +184,15 @@ static void net_initialize(void)
 	}
 }
 
+/* the gateway's connection, opened as the game starts (sdl_platform.c,
+platform_sdl_initialize) rather than when the game makes its first socket:
+the WebSocket's and WebRTC's handshakes then run while the game boots. On
+the game's thread, which owns the sockets (owner_thread). */
+void posix_web_net_start(void)
+{
+	net_initialize();
+}
+
 static int is_local(uint32_t ip)
 {
 	return ip == htonl(INADDR_LOOPBACK) || ip == local_address || ip == 0;

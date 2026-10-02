@@ -321,6 +321,15 @@ BOOL platform_sdl_initialize(void)
 		return FALSE;
 	}
 	platform_sdl_started = TRUE;
+#ifdef HALO_WEB
+	/* the gateway's connection opens now (port/web/src/posix_web_net.c), not
+	when the game makes its first socket a second or so later */
+	{
+		void posix_web_net_start(void);
+
+		posix_web_net_start();
+	}
+#endif
 #ifndef HALO_ANDROID
 	platform_add_gamepad_mappings();
 	/* found (or offered to the player, platform_offer_game_data) before the
