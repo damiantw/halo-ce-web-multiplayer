@@ -3256,6 +3256,35 @@ short network_game_server_dedicated_player_count(
 	return server ? server->game.player_count : 0;
 }
 
+/* the machines joining: other machines in the game (accepted, not let go)
+none of whose players is in it yet. The dedicated server keeps a game
+nobody plays going while one is (dedicated_server.c, server.empty_seconds):
+its player is added a moment later. */
+short network_game_server_dedicated_joining_count(
+	struct network_game_server *server)
+{
+	short count = 0;
+	long client_machine_index;
+
+	if (!server)
+		return 0;
+	for (client_machine_index = 0; client_machine_index < MAXIMUM_NETWORK_MACHINE_COUNT; client_machine_index++)
+	{
+		struct network_game_server_client_machine *machine = &server->client_machines[client_machine_index];
+
+		if (machine->machine_index == NONE ||
+			machine->machine_index == network_game_client_get_local_machine_index() ||
+			network_game_server_client_machine_is_local(server, machine) ||
+			network_game_server_client_machine_let_go(server, machine) ||
+			network_game_server_machine_has_players(server, machine->machine_index))
+		{
+			continue;
+		}
+		count++;
+	}
+	return count;
+}
+
 boolean network_game_server_dedicated_in_pregame(
 	struct network_game_server *server)
 {

@@ -506,6 +506,10 @@ void game_engine_load_stage(
 
 void game_engine_end_game(
 	void);
+#ifdef HALO_LINUX
+void game_engine_end_game_at_once(
+	void);
+#endif
 
 void ticks_to_unicode_time_string(
 	long ticks,
