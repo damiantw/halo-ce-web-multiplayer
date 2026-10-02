@@ -260,6 +260,15 @@ void players_show_telefragged(
 	long player_index);
 void players_debug_render(
 	void);
+/* port: player names that can always be typed and told apart (in ASCII) */
+char player_name_character_ascii(
+	wchar_t character);
+boolean player_name_clean(
+	wchar_t *name,
+	long count);
+boolean player_name_valid(
+	wchar_t const *name,
+	long count);
 
 /* ---------- globals */
 
