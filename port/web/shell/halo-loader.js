@@ -18,6 +18,16 @@
 //                 loads). Emscripten's lazy files would need synchronous XHR
 //                 on the page's main thread, which browsers forbid for binary
 //                 data; see docs/wasm-spike.md.
+//   prefetch=<a,b> maps fetched from the start alongside the preloaded ones,
+//                 without holding up the start (the site passes the map of
+//                 the server the player picked: it is there by the time the
+//                 lobby names it)
+//
+// The maps are kept in the browser between visits when halo-maps.js (loaded
+// before this script) is there: window.haloMaps, Cache Storage keyed by each
+// map's name and version (index.json's sha256, else its size). A page that
+// embeds the game may start the same downloads first (haloMaps.prefetch):
+// the game then waits for those and reads them from the storage.
 //
 // Diagnostics, given with env= (the site's /play passes env= through):
 //   HALO_WEB_DPR=<n>   the device pixel ratio the game sees (1: a drawing
@@ -124,15 +134,22 @@ window.haloFeatures = Object.assign(window.haloFeatures || {}, { webJoin: true, 
 			}
 			Module.addRunDependency("maps-index");
 			const preload = (params.get("preload") || "ui").toLowerCase();
+			const prefetch = (params.get("prefetch") || "").toLowerCase().split(",").filter((name) => /^[a-z0-9_\-]{1,64}$/.test(name));
 			const fetching = {};
 			let maps = [];
 			// maps/<name>.map into the file system once: true when it is there
 			const fetchMap = (map) => fetching[map.name] || (fetching[map.name] = (async () => {
-				const response = await fetch(mapsUrl + map.name);
-				if (!response.ok) throw new Error(`${map.name}: HTTP ${response.status}`);
-				const data = new Uint8Array(await response.arrayBuffer());
+				const started = performance.now();
+				let data, from = "network";
+				if (window.haloMaps) {
+					({ data, from } = await window.haloMaps.get(mapsUrl, map));
+				} else {
+					const response = await fetch(mapsUrl + map.name);
+					if (!response.ok) throw new Error(`${map.name}: HTTP ${response.status}`);
+					data = new Uint8Array(await response.arrayBuffer());
+				}
 				FS.writeFile("/data/maps/" + map.name, data);
-				print(`[web] fetched ${map.name} (${(data.length / 1048576).toFixed(0)} MB)`);
+				print(`[web] fetched ${map.name} (${(data.length / 1048576).toFixed(0)} MB, from the ${from === "storage" ? "browser's storage" : "network"} in ${Math.round(performance.now() - started)} ms)`);
 				return data.length;
 			})());
 			Module.haloFetchMap = async (name) => {
@@ -154,6 +171,9 @@ window.haloFeatures = Object.assign(window.haloFeatures || {}, { webJoin: true, 
 				maps = index;
 				const wanted = preload === "all" ? maps : maps.filter((map) => preload.split(",").some((name) =>
 					map.name.toLowerCase() === name + ".map"));
+				// (the prefetched maps go alongside: not waited for here)
+				for (const map of maps.filter((entry) => prefetch.includes(entry.name.toLowerCase().replace(/\.map$/, ""))))
+					fetchMap(map).catch((error) => { delete fetching[map.name]; print(`[web] cannot prefetch ${map.name}: ${error}`); });
 				let bytes = 0;
 				await Promise.all(wanted.map(async (map) => {
 					bytes += await fetchMap(map);
@@ -166,6 +186,11 @@ window.haloFeatures = Object.assign(window.haloFeatures || {}, { webJoin: true, 
 					FS.writeFile("/data/" + name.replace(/[\/\\]/g, "_"), text);
 				FS.chdir("/data");
 				Module.removeRunDependency("maps-index");
+				// the stored versions of maps the index no longer has (a map
+				// updated or removed), once the game is under way
+				if (window.haloMaps) setTimeout(() => window.haloMaps.forget(mapsUrl, maps).then((count) => {
+					if (count) print(`[web] removed ${count} old map version${count === 1 ? "" : "s"} from the browser's storage`);
+				}, () => {}), 30000);
 			}).catch((error) => {
 				print(`[web] cannot list the maps at ${mapsUrl}: ${error}`);
 			});

@@ -206,7 +206,7 @@ the offer limits).
    `gamepadEvents`) so the page can tell builds that know the settings. It also puts the original Xbox controller
    (Duke and Controller S, `045e:0202/0285/0287/0288/0289`) in the standard gamepad layout, and reports controllers
    coming and going as a `halo:gamepad` event (`{connected, index, id, name, layout}`).
-   `/maps/index.json` lists `[{name, size}]`, and `/maps/<name>.map` serves the files with Range support. For the
+   `/maps/index.json` lists `[{name, size}]` (and `sha256` where the site gives it), and `/maps/<name>.map` serves the files with Range support. For the
    multiplayer-only build it needs only `ui.map` and the multiplayer maps.
 5. **nginx**:
 
@@ -267,6 +267,23 @@ The loader (`port/web/shell/halo-loader.js`) fetches only `ui.map` before the st
 host's map as soon as the pregame lobby names it (`network_game_globals.c`) or the join's non-blocking precache
 asks for it, and the blocking precache at game start waits for the download (`cache_files_windows.c`).
 
+`?prefetch=a,b` starts fetching those maps from the start too, without holding the start up: the site passes the
+map of the server the player picked, so it is there by the time the lobby names it.
+
+**Kept in the browser.** With `port/web/shell/halo-maps.js` (loaded before the loader: `window.haloMaps`) the maps
+go into Cache Storage (`halo-maps-v1`), each under its URL and version: `<maps>/<name>?v=<sha256>` when the index
+gives a `sha256`, else `?size=<size>`. A later visit reads them from there (the loader's log says "from the
+browser's storage"). What comes out is checked against the index's size, and a missing or short entry (the browser
+evicts the storage under disk pressure) is downloaded again; a map that changes has a new key, and 30 s after the
+start the loader deletes the stored versions the index no longer lists. Without Cache Storage (an insecure origin)
+or when storing fails (quota), maps are fetched as before. A page that embeds the game can start the same downloads
+first (`haloMaps.prefetch(mapsUrl, ["ui", "bloodgulch"])`, as the site's `/play` does when a server is picked,
+before the game's frame exists): one Web Lock per map key means the game waits for that download and reads the
+stored map instead of downloading it again.
+
+The gateway's WebSocket opens when the platform starts (`posix_web_net_start`, from `sdl_platform.c`), so its
+connection is ready by the time the game searches for servers.
+
 ## Status (end to end on the box)
 
 Dedicated server (native, `127.0.1.1`, Blood Gulch slayer, minimum 1 player) + `halo-gateway` + the web build
@@ -308,7 +325,7 @@ browser from meeting a server of another version anyway:
 - **The build's URLs are versioned.** `ninja web` writes
   `build/web/halo-version.json` (`{"network_version": N}`), which the image
   ships next to `halo.js`. The site serves the build's `index.html` with
-  `?v=<build>` on `halo-loader.js` and `halo.js`, and `halo-loader.js` puts the
+  `?v=<build>` on `halo-maps.js`, `halo-loader.js` and `halo.js` (served `immutable` for a year), and `halo-loader.js` puts the
   same on `halo.wasm` (`Module.locateFile`): a cached `halo.wasm` of another
   build is never run with this `halo.js` (the names are not hashed).
 - **The page reloads a stale build.** A client that finds its host on another
