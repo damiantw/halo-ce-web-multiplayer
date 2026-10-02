@@ -413,7 +413,7 @@ the server again.
 | `server.lobby` | `false` | `HALO_SERVER_LOBBY` | `false`: the games follow one another without a lobby or a countdown; a game starts as soon as one player is in, and `server.countdown` and `server.minimum_players` do not apply. `true`: the lobby waits for `server.minimum_players`, then counts down `server.countdown` seconds. |
 | `server.countdown` | `30` | `HALO_SERVER_COUNTDOWN` | With `server.lobby`: the seconds of the countdown in the lobby (0 to 600). `0`: the game starts immediately, as the immediate start of the host does. |
 | `server.minimum_players` | `1` | `HALO_SERVER_MINIMUM_PLAYERS` | With `server.lobby`: the players that the countdown waits for (1 to `server.max_players`). |
-| `server.max_players` | `16` | `HALO_SERVER_MAX_PLAYERS` | The maximum players in the game (1 to 16, the system link limit of the Xbox). The list of system link games shows it. When the game is full, the server refuses a machine that tries to join ("game is full"). |
+| `server.max_players` | `16` | `HALO_SERVER_MAX_PLAYERS` | The maximum players in the game: 1 to 127 (the port's 128 machines in a session, less the server's own machine, which has no player). The default, 16, is the system link limit of the Xbox. Each player more costs the server bandwidth for every other player: refer to "Player count". The list of system link games shows it. When the game is full, the server refuses a machine that tries to join ("game is full"). |
 | `server.postgame_seconds` | `10` | `HALO_SERVER_POSTGAME` | The seconds that the scores show after a game (after the 12 seconds of the end of the game), before the next game. |
 | `server.empty_seconds` | `10` | `HALO_SERVER_EMPTY` | The seconds that a game without players continues. `0`: the game continues. |
 | `server.rehost_seconds` | `5` | `HALO_SERVER_REHOST` | The seconds before the server hosts again after it lost the game. |
@@ -508,6 +508,25 @@ map (`rejected`). The events that describe an entry (`rotation`, `lobby`,
 
 The code is in `game/variant_overrides.c`; `tools/variant_overrides_test.py`
 tests it without game data.
+
+#### Player count
+
+Measured on Blood Gulch Slayer (distributed netcode, native headless
+clients on one 8-core machine, 2026-10). The server keeps 30 ticks each
+second with 127 players. What grows is the bandwidth: each client receives
+about 8 kbit/s for each other player.
+
+| Players | Server CPU (one core) | Server memory | To each client | Server upload (all clients) |
+| --- | --- | --- | --- | --- |
+| 16 | 3% | 76 MB | 0.25 Mbit/s | 4 Mbit/s |
+| 32 | 6% | 77 MB | 0.39 Mbit/s | 12.6 Mbit/s |
+| 64 | 11% | 78 MB | 0.66 Mbit/s | 42 Mbit/s |
+| 126 | 19% | 80 MB | 0.98 Mbit/s | 123 Mbit/s |
+
+`server.max_players` is at most 127: with 128 clients and the limit at 128,
+the 128th was refused, as the server's own machine takes one of the 128
+machine slots. A gateway between web clients and the server
+(`port/gateway`) relays all of these bytes as well.
 
 ### Dedicated server control
 
