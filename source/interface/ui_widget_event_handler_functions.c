@@ -1081,6 +1081,12 @@ void display_error_deferred(
 	short local_player_index,
 	boolean modal,
 	boolean pause_game_time);
+void display_error_text_deferred(
+	wchar_t const *text,
+	short local_player_index);
+boolean player_name_valid(
+	wchar_t const *name,
+	long count);
 boolean virtual_keyboard_launch(
 	void *text,
 	long maximum_length,
@@ -4107,6 +4113,20 @@ static boolean player_profile_set_for_game_1wide(
 	}
 	if (player_profile_get(available_profiles[spinner_list->data3C.selected_index], &profile))
 	{
+#ifndef HALO_WEB
+		/* port: not a profile whose name can't be typed or is blank (one made
+		before names were checked: player_name_valid). (The web build names
+		its player from the site, HALO_WEB_PLAYER_NAME, not the profile, and
+		the host cleans that name as every name from the wire.) */
+		if (!player_name_valid(profile.player_name, NUMBEROF(profile.player_name)))
+		{
+			display_error_text_deferred(
+				L"Sorry, this profile's\r\nname can't be used in\r\nmultiplayer. Please\r\nrename the profile.",
+				controller_index);
+			ui_play_audio_feedback_sound(4);
+			return FALSE;
+		}
+#endif
 		player_ui_set_active_player_profile(controller_index, available_profiles[spinner_list->data3C.selected_index], &profile);
 		return TRUE;
 	}

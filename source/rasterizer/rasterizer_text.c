@@ -199,11 +199,18 @@ static void rasterizer_draw_character_with_dropshadow(
 	short dx,
 	short dy);
 
+static void rasterizer_text_draw_scaled_character(
+	struct dynamic_screen_vertex const *vertices);
+
 /* ---------- globals */
 
 extern struct rasterizer_window_begin_parameters global_window_parameters;
 
 static struct hardware_character_cache hardware_character_cache;
+/* port: the text's scale about a point (rasterizer_text_set_scale) */
+static real text_scale = 1.0f;
+static real text_scale_origin_x = 0.0f;
+static real text_scale_origin_y = 0.0f;
 static pixel32 global_shadow_color = 0;
 static short rasterizer_text_unused = 0;
 static short magic_number= 12;
@@ -344,7 +351,7 @@ rasterizer_draw_character(
 		vertices[0].texture_coordinates.y = vertices[1].texture_coordinates.y = (real)v0;
 		vertices[2].texture_coordinates.y = vertices[3].texture_coordinates.y = (real)(v0 + dy);
 
-		rasterizer_text_draw_character(vertices);
+		rasterizer_text_draw_scaled_character(vertices);
 	}
 
 	return;
@@ -569,7 +576,7 @@ rasterizer_draw_character_with_dropshadow(
 			vertices[0].texture_coordinates.y = vertices[1].texture_coordinates.y = (real)v0;
 			vertices[2].texture_coordinates.y = vertices[3].texture_coordinates.y = (real)(v0 + dy);
 
-			rasterizer_text_draw_character(vertices);
+			rasterizer_text_draw_scaled_character(vertices);
 
 			if (!shadow)
 				break;
@@ -583,6 +590,46 @@ rasterizer_draw_character_with_dropshadow(
 }
 
 /* ---------- private code */
+
+/* port: text drawn scale times larger about a point (in screen units), until
+it is set back to 1: the characters' quads are laid out as before, and
+scaled about it as they are drawn */
+void rasterizer_text_set_scale(
+	real scale,
+	real origin_x,
+	real origin_y)
+{
+	text_scale = scale > 0.0f ? scale : 1.0f;
+	text_scale_origin_x = origin_x;
+	text_scale_origin_y = origin_y;
+
+	return;
+}
+
+/* port: a character's quad, scaled (rasterizer_text_set_scale) */
+static void rasterizer_text_draw_scaled_character(
+	struct dynamic_screen_vertex const *vertices)
+{
+	struct dynamic_screen_vertex scaled[NUMBER_OF_VERTICES_PER_QUADRILATERAL];
+	short vertex_index;
+
+	if (text_scale == 1.0f)
+	{
+		rasterizer_text_draw_character(vertices);
+		return;
+	}
+	for (vertex_index = 0; vertex_index < NUMBER_OF_VERTICES_PER_QUADRILATERAL; vertex_index++)
+	{
+		scaled[vertex_index] = vertices[vertex_index];
+		scaled[vertex_index].position.x =
+			text_scale_origin_x + (vertices[vertex_index].position.x - text_scale_origin_x) * text_scale;
+		scaled[vertex_index].position.y =
+			text_scale_origin_y + (vertices[vertex_index].position.y - text_scale_origin_y) * text_scale;
+	}
+	rasterizer_text_draw_character(scaled);
+
+	return;
+}
 
 struct bitmap_data *
 hardware_character_cache_get_bitmap(

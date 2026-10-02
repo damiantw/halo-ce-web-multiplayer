@@ -283,3 +283,81 @@ def test_cseries_refuses_a_build_without_halo_linux(tmp_path):
     with_prefix = subprocess.run(base + [str(guard_only)], cwd=REPO, capture_output=True, text=True)
     assert with_prefix.returncode == 0, with_prefix.stderr
 
+
+# ---------- player names (source/game/players.c)
+
+
+PLAYER_NAME_HARNESS = r"""
+#include <stdio.h>
+#include <string.h>
+typedef unsigned short wchar_t16;
+#define wchar_t wchar_t16
+typedef int boolean;
+#define TRUE 1
+#define FALSE 0
+#define NUMBEROF(a) ((long)(sizeof(a) / sizeof((a)[0])))
+%(functions)s
+static void show(const char *label, wchar_t const *name)
+{
+	long index;
+
+	printf("%%s:", label);
+	for (index = 0; name[index]; index++)
+		printf(" %%04x", name[index]);
+	printf("\n");
+}
+int main(void)
+{
+	static wchar_t const cases[][16] = {
+		{ ' ', 0x200B, 'B', 'o', 'b', 0x00A0, 0 },
+		{ 0x200B, 0x3164, ' ', 0x2800, 0 },
+		{ 'J', 'o', 's', 0x00E9, 0 },
+		{ 'a', '|', 'b', 0xFE0F, 0x00AD, 'c', 0 },
+		{ 0x4E2D, 0x6587, 0 },
+		{ 0x2003, 'x', 0x2003, 0 },
+	};
+	long index;
+
+	for (index = 0; index < NUMBEROF(cases); index++)
+	{
+		wchar_t name[16];
+		char label[32];
+
+		memcpy(name, cases[index], sizeof(name));
+		snprintf(label, sizeof(label), "clean%%ld=%%d", index, player_name_clean(name, NUMBEROF(name)));
+		show(label, name);
+		printf("valid%%ld=%%d\n", index, player_name_valid(cases[index], 16));
+	}
+	printf("ascii=%%c%%c%%c%%c\n", player_name_character_ascii(0x00E9), player_name_character_ascii(0x00D1),
+		player_name_character_ascii(0x017E), player_name_character_ascii(0x4E2D));
+	return 0;
+}
+"""
+
+
+def test_player_names_are_cleaned_to_typeable_text(tmp_path):
+    compiler = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if not compiler:
+        pytest.skip("no C compiler")
+    text = (Path(__file__).resolve().parents[1] / "source/game/players.c").read_text(encoding="latin-1")
+    start = text.index("/* port: a character of a player's name")
+    end = text.index("/* ---------- private code */", start)
+    source = write(tmp_path / "player_names.c", PLAYER_NAME_HARNESS % {"functions": text[start:end]})
+    binary = tmp_path / "player_names"
+    subprocess.run([compiler, "-std=gnu99", "-o", str(binary), str(source)], check=True)
+    lines = dict(line.split(":", 1) if ":" in line else line.split("=", 1)
+                 for line in subprocess.run([str(binary)], check=True, capture_output=True, text=True).stdout.splitlines())
+    # spaces trimmed, a zero-width space dropped, a no-break space made a space (then trimmed)
+    assert lines["clean0=1"] == " 0042 006f 0062"
+    # only characters that draw as nothing: nothing to type, so not a name
+    assert lines["clean1=0"] == ""
+    # a letter with a mark is kept (typed as its plain letter)
+    assert lines["clean2=1"] == " 004a 006f 0073 00e9"
+    # "|" (the game's text marks), a variation selector and a soft hyphen dropped
+    assert lines["clean3=1"] == " 0061 0062 0063"
+    # drawn but not typeable in ASCII: kept, but not a name the host can type
+    assert lines["clean4=0"] == " 4e2d 6587"
+    # Unicode's spaces made plain ones, then trimmed
+    assert lines["clean5=1"] == " 0078"
+    assert [lines[f"valid{index}"] for index in range(6)] == ["0", "0", "1", "0", "0", "0"]
+    assert lines["ascii"] == "eNz?"

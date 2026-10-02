@@ -171,6 +171,8 @@ the setting for one start of the game. It has priority over the file.
 | `display.window_scale` | `2` | `HALO_WINDOW_SCALE` | The size of the window, as a multiple of 640x480. You can change the size of the window. |
 | `display.vsync` | `true` | `HALO_NO_VSYNC=1` sets `false` | `true`: each frame waits for the display. |
 | `display.interpolation` | `true` | `HALO_INTERPOLATION` | `true`: one frame for each refresh of the display. `false`: 30 frames each second, as on the Xbox. Refer to "Frame rate". |
+| `display.player_names` | `"all"` | `HALO_PLAYER_NAMES` | In multiplayer, whose names are drawn above their heads: `"all"`, `"allies"`, `"enemies"` or `"none"`. An ally's name is drawn above the triangle the game shows over teammates. An enemy's name shows only while the enemy is in sight and not camouflaged, so it never shows where an enemy hides, and only as far away as the weapon in hand turns its reticle red over an enemy (at least 20 world units, the motion sensor's reach, and at most 70). |
+| `display.player_name_scale` | `1.0` | `HALO_PLAYER_NAME_SCALE` | How large the players' names are drawn: `1.0` is three quarters of the size of the HUD's text, from `0.25` to `4`. |
 | `audio.enabled` | `true` | `HALO_NO_AUDIO=1` sets `false` | `false`: no audio device. The sound continues without output. |
 | `audio.volume` | `1.0` | `HALO_VOLUME` | The master volume. |
 | `input.mouse_sensitivity` | `1.0` | `HALO_MOUSE_SENSITIVITY` | The multiplier for the mouse aim. |
@@ -927,6 +929,8 @@ Other changes are in `#ifdef HALO_LINUX`. All the native ports define
 | `cseries/errors.c` | `debug.txt` stays open between lines. |
 | `networking/`, `game/`, `interface/`, `bungie_net/network/` and the pools of objects, effects and sounds | The system link limits and the memory for them. |
 | `game/`, `objects/`, `units/`, `networking/` | The distributed netcode. Refer to `NETCODE.md`. |
+| `interface/hud.c`, `rasterizer/rasterizer_text.c` | In multiplayer, players' names are drawn above their heads (`display.player_names`, `display.player_name_scale`); text can be drawn scaled about a point (`rasterizer_text_set_scale`). |
+| `game/players.c`, `networking/network_server_message_handler.c`, `networking/network_server_manager.c`, `interface/virtual_keyboard.c` | Players' names are kept to text that can be typed and told apart: the host trims the spaces around a name and removes characters that draw as nothing; a name with nothing left to type (in ASCII, a letter with a mark as its plain letter: "jose" for "José") becomes "Player"; a name that reads the same as another player's (in either case) gets a number ("Player2"). The profile name keyboard refuses such a name, and (not in the web build, which names the player from the site) a multiplayer game refuses a profile whose name was made before this check. |
 | `main/main.c`, `shell/shell_xbox.c`, `game/game_engine.c`, `interface/ui_widget.c`, `networking/network_server_manager.c`, `networking/network_client_manager.c`, `networking/network_game_manager.c`, `networking/telnet_console.c` | The dedicated server: no rendering, a 30 Hz sleep, no host player in the checks, the automatic countdown, the automatic return to the lobby, the server name, no telnet console, the fatal error event of a map that does not load, and the lobby, player and machine information and the kick for the control channel. Refer to "Dedicated server" and "Dedicated server control". |
 
 The x86 inline assembly of the game has C replacements in
