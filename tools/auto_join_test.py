@@ -104,7 +104,7 @@ class Process:
         try:
             self.process.stdin.write((text + "\n").encode())
             self.process.stdin.flush()
-        except OSError:
+        except (OSError, ValueError):  # (a process already stopped: its stdin is closed)
             pass
 
     def stop(self):
