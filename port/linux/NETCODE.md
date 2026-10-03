@@ -89,7 +89,9 @@ each datagram, sends damage and pickups only to the machines they concern,
 stamps a hit with the host's tick the client had heard of, and checks hits
 and a client's own player's moves more closely; version 7 sends with a
 killing blow its killer's score after it, and with a body's state that it
-is dead.
+is dead; version 8 checks how fast a client's player moves and fires
+against the host's time; version 9 sends every player's ping, as the host
+measures it, for the scoreboard.
 
 ## Joining a game in progress
 
@@ -146,6 +148,9 @@ a pregame keep-alive every five seconds from the host
    - what a client's players pick up, which the host decides: the client
      shows it (the HUD's message, the sound, a powerup's screen flash);
      only that client is told;
+   - every two seconds, each player's ping (unreliable): the round trip
+     of its machine's messages to the host and back, as the host smooths
+     it, 0 for the host's own players, for the scoreboard;
    - twice a second and with every kill, the players' statistics that
      changed (once a second a few more, round them all, as the message is
      unreliable); when it changes (looked at five times a second, sent at
