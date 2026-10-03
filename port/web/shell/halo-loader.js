@@ -52,6 +52,14 @@
 //                                  leaves the game (default: stay)
 //   HALO_WEB_MENUS=1               the multiplayer-only build's menus back
 //                                  (development)
+// Scoreboard settings (port_config.c display.scoreboard_*), given with env=;
+// the scoreboard opens while BACK or F1 is held and scrolls with the mouse
+// wheel, Page Up / Page Down or the gamepad's d-pad:
+//   HALO_SCOREBOARD_TEAM_LAYOUT=<teams|score>  a team game's players in a
+//                                  column per team (teams) or by score
+//   HALO_SCOREBOARD_BACKGROUND=<0|1>  0: no panel behind it (1)
+//   HALO_SCOREBOARD_BACKGROUND_COLOR=<r g b a>  the panel's colour, each
+//                                  0-255, spaces between (16 16 16 150)
 // What this build understands, for the site's game bridge (which runs before
 // the game starts, after this script): webJoin, the web.join setting
 // (HALO_WEB_JOIN=first, port/linux/game/auto_join.c); playerColor,
