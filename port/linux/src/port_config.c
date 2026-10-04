@@ -84,8 +84,9 @@ static const struct config_setting config_settings[] =
 		"ticks a second; false keeps the original 30 frames a second." },
 	{ "display.player_names", _config_string, "\"all\"", "HALO_PLAYER_NAMES", _environment_value, _platform_all,
 		"In multiplayer, whose names are drawn above their heads: \"all\",\n"
-		"\"allies\", \"enemies\" or \"none\". An enemy's shows only while in sight\n"
-		"and not camouflaged." },
+		"\"allies\", \"enemies\" or \"none\". An enemy's shows only within the\n"
+		"motion sensor's reach, in sight and not camouflaged; none show if the\n"
+		"gametype's motion tracker shows no players." },
 	{ "display.player_name_scale", _config_real, "1.0", "HALO_PLAYER_NAME_SCALE", _environment_value, _platform_all,
 		"How large the players' names are drawn: 1.0 three quarters of the size of\n"
 		"the HUD's text, 0.25 to 4." },
