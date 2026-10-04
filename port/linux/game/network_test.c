@@ -26,7 +26,9 @@ seconds later stands them at a vehicle's driver's entrance, where a joining
 machine's player holds the action button, as getting in does)
 and debug.network_test_pickup (the last player stands on a weapon lying
 about that many seconds in, and a joining machine's player holds the action
-button a second later, to pick it up).
+button a second later, to pick it up) and debug.network_test_walkover (the
+last player stands on a weapon lying about that many seconds in, with no
+button held: a second weapon is picked up and readied on walking over it).
 
 Called from the main loop every frame (main.c).
 */
@@ -102,6 +104,7 @@ static struct
 	real shoot_interval;
 	real vehicle_time;
 	real pickup_time;
+	real walkover_time;
 	long logged_time;
 } network_test;
 
@@ -134,6 +137,7 @@ static void network_test_read_settings(
 	network_test.shoot_interval = (real)config_real("debug.network_test_shoot");
 	network_test.vehicle_time = (real)config_real("debug.network_test_vehicle");
 	network_test.pickup_time = (real)config_real("debug.network_test_pickup");
+	network_test.walkover_time = (real)config_real("debug.network_test_walkover");
 	network_test.log = network_test.mode != _network_test_off || config_boolean("debug.network_log");
 	if (network_test.mode != _network_test_off)
 		platform_log("network test: %s", setting);
@@ -207,9 +211,12 @@ static void network_test_log_players(
 				{
 					struct weapon_datum *weapon = weapon_get(weapon_index);
 
-					network_test_append(line, (int)sizeof(line), &length, " %lx:%d",
+					/* (* the weapon in hand, + the one being switched to) */
+					network_test_append(line, (int)sizeof(line), &length, " %lx:%d%s",
 						(unsigned long)weapon->definition_index & 0xFFFF, weapon->weapon.magazines[0].rounds_total +
-						weapon->weapon.magazines[0].rounds_loaded);
+						weapon->weapon.magazines[0].rounds_loaded,
+						slot == unit->unit.current_weapon_index ? "*" :
+						slot == unit->unit.desired_weapon_index ? "+" : "");
 				}
 			}
 		}
@@ -732,6 +739,13 @@ void network_test_update(
 
 				test_input_hold_action(hold);
 			}
+		}
+		if (network_test.walkover_time > 0.0f)
+		{
+			long walkover_time = (long)(network_test.walkover_time * TICKS_PER_SECOND);
+
+			if (game_time_get() >= walkover_time && game_time_get() - walkover_time < TICKS_PER_SECOND)
+				network_test_pickup();
 		}
 		if (network_test.mode == _network_test_host && network_test.vehicle_time > 0.0f)
 		{

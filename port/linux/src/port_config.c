@@ -84,8 +84,9 @@ static const struct config_setting config_settings[] =
 		"ticks a second; false keeps the original 30 frames a second." },
 	{ "display.player_names", _config_string, "\"all\"", "HALO_PLAYER_NAMES", _environment_value, _platform_all,
 		"In multiplayer, whose names are drawn above their heads: \"all\",\n"
-		"\"allies\", \"enemies\" or \"none\". An enemy's shows only while in sight\n"
-		"and not camouflaged." },
+		"\"allies\", \"enemies\" or \"none\". An enemy's shows only within the\n"
+		"motion sensor's reach, in sight and not camouflaged; none show if the\n"
+		"gametype's motion tracker shows no players." },
 	{ "display.player_name_scale", _config_real, "1.0", "HALO_PLAYER_NAME_SCALE", _environment_value, _platform_all,
 		"How large the players' names are drawn: 1.0 three quarters of the size of\n"
 		"the HUD's text, 0.25 to 4." },
@@ -275,6 +276,10 @@ static const struct config_setting config_settings[] =
 	{ "debug.network_test_pickup", _config_real, "0.0", "HALO_NETWORK_TEST_PICKUP", _environment_value, _platform_all,
 		"This many seconds into an automated test game the host stands its last\n"
 		"player on a weapon, which a joining player then picks up; 0 never." },
+	{ "debug.network_test_walkover", _config_real, "0.0", "HALO_NETWORK_TEST_WALKOVER", _environment_value, _platform_all,
+		"This many seconds into an automated test game the last player stands on a\n"
+		"weapon with no button held (a second weapon is picked up on walking over\n"
+		"it); 0 never." },
 	{ "debug.telnet_console", _config_boolean, "false", "HALO_TELNET_CONSOLE", _environment_set_is_true, _platform_all,
 		"Listen on 127.0.0.1 port 23 (telnet) for a script console that runs what\n"
 		"it is sent as the game's console does, with no password; false none." },

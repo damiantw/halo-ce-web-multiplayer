@@ -91,7 +91,9 @@ and a client's own player's moves more closely; version 7 sends with a
 killing blow its killer's score after it, and with a body's state that it
 is dead; version 8 checks how fast a client's player moves and fires
 against the host's time; version 9 sends every player's ping, as the host
-measures it, for the scoreboard.
+measures it, for the scoreboard; version 10 gives a player who joins the
+slot of one who quit once his unit is gone (a client of 9 would find that
+slot held), and readies a weapon walked over into an empty slot.
 
 ## Joining a game in progress
 
@@ -447,7 +449,9 @@ removed and the hits reported, dealt, rejected and replayed, so two
 machines' views of one game can be compared. `debug.network_test_kill`,
 `debug.network_test_shoot`, `debug.network_test_vehicle` and
 `debug.network_test_pickup` script kills, hits, a vehicle ride and a weapon
-swap the bots' wandering does not reach. `debug.network_latency` and
+swap the bots' wandering does not reach, and `debug.network_test_walkover` a
+second weapon picked up by walking over it (the log marks the weapon in hand
+with `*` and the one being switched to with `+`). `debug.network_latency` and
 `debug.network_loss` hold back what a machine receives and drop some of its
 datagrams, to test as over the internet.
 
