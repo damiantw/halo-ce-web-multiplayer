@@ -276,6 +276,10 @@ static const struct config_setting config_settings[] =
 	{ "debug.network_test_pickup", _config_real, "0.0", "HALO_NETWORK_TEST_PICKUP", _environment_value, _platform_all,
 		"This many seconds into an automated test game the host stands its last\n"
 		"player on a weapon, which a joining player then picks up; 0 never." },
+	{ "debug.network_test_walkover", _config_real, "0.0", "HALO_NETWORK_TEST_WALKOVER", _environment_value, _platform_all,
+		"This many seconds into an automated test game the last player stands on a\n"
+		"weapon with no button held (a second weapon is picked up on walking over\n"
+		"it); 0 never." },
 	{ "debug.telnet_console", _config_boolean, "false", "HALO_TELNET_CONSOLE", _environment_set_is_true, _platform_all,
 		"Listen on 127.0.0.1 port 23 (telnet) for a script console that runs what\n"
 		"it is sent as the game's console does, with no password; false none." },
