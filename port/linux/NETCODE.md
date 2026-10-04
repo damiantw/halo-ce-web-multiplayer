@@ -91,7 +91,9 @@ and a client's own player's moves more closely; version 7 sends with a
 killing blow its killer's score after it, and with a body's state that it
 is dead; version 8 checks how fast a client's player moves and fires
 against the host's time; version 9 sends every player's ping, as the host
-measures it, for the scoreboard.
+measures it, for the scoreboard; version 10 gives a player who joins the
+slot of one who quit once his unit is gone (a client of 9 would find that
+slot held), and readies a weapon walked over into an empty slot.
 
 ## Joining a game in progress
 

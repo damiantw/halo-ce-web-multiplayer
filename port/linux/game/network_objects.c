@@ -46,6 +46,7 @@ same datum index (identifier and all), so that any message can name one:
 #include "game/game.h"
 #include "game/game_engine.h"
 #include "game/players.h"
+#include "game/player_control.h"
 #include "networking/network_game_globals.h"
 #include "objects/objects.h"
 #include "objects/damage.h"

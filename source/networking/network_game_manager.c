@@ -91,6 +91,9 @@ symbols in this file:
 #include "networking/network_server_manager.h"
 #include "objects/objects.h"
 #include "units/units.h"
+
+/* players.c's */
+void player_delete(long player_index);
 #include "text/unicode.h"
 
 #include <xtl.h>
