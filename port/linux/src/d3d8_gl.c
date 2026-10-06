@@ -2718,8 +2718,13 @@ static struct program_entry *prepare_draw(BOOL immediate)
 		{
 			unsigned long long serial;
 
-			for (serial = entry->constants_serial + 1; serial <= constants_serial; serial++)
+			/* stop at the target rather than incrementing past it: were the
+			target the largest serial, its successor would be zero and the
+			loop would never end (from upstream PR #108; the 64-bit serials
+			never get there, but the loop no longer depends on it) */
+			for (serial = entry->constants_serial; serial != constants_serial; )
 			{
+				serial++;
 				index = constant_log[serial % CONSTANT_LOG_SIZE];
 				if (index >= entry->constant_count)
 					continue;
