@@ -2041,7 +2041,10 @@ boolean network_game_client_add_player_to_game(
 					struct network_player const *added = player;
 					long slot;
 
-					player = &client->game.players[client->game.player_count - 1];
+					/* (the slot network_game_add_player gave it, not one
+					worked out from player_count) */
+					player = VALID_INDEX(added->player_list_index, MAXIMUM_NUMBER_OF_PLAYERS) ?
+						&client->game.players[added->player_list_index] : NULL;
 					for (slot = 0; slot < MAXIMUM_NUMBER_OF_PLAYERS; slot++)
 					{
 						if (network_player_is_valid(&client->game.players[slot]) &&
@@ -2057,7 +2060,7 @@ boolean network_game_client_add_player_to_game(
 				player = &client->game.players[client->game.player_count - 1];
 #endif
 
-				success = network_game_spawn_player(player);
+				success = player && network_game_spawn_player(player);
 
 				if (success)
 				{

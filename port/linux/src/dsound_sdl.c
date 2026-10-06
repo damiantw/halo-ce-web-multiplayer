@@ -17,7 +17,8 @@ runs on SDL's audio thread; for every voice it resamples to the output rate
 	  direction in listener space, and the low frequency part of the I3DL2
 	  direct path, obstruction and occlusion levels.
 Doppler, the high frequency filters, cones and I3DL2 reverb are not
-modelled.
+modelled. A look-ahead limiter keeps the sum of the voices under full scale
+(limit).
 
 Packets the mixer has finished are completed from DirectSoundDoWork, which
 the game calls every frame, and from Flush, never from the audio thread:
@@ -110,6 +111,8 @@ static struct
 	float front[3];
 	float top[3];
 	float rolloff_factor;
+	/* meters a unit (SetDistanceFactor): the game sets 3.048, a world unit
+	being 10 feet. Only Doppler, which is not modelled, would use it */
 	float distance_factor;
 } listener = { { 0, 0, 0 }, { 0, 0, 1 }, { 0, 1, 0 }, 1.0f, 1.0f };
 
@@ -159,9 +162,13 @@ static int ima_expand(int nibble, int *predictor, int *index)
 	return *predictor;
 }
 
-/* Xbox ADPCM: per block, a 4-byte header per channel (predictor, step
+/* Xbox ADPCM: per block, a 4-byte header per channel (first sample, step
 index), then 4-byte groups of eight nibbles, low nibble first, alternating
-between channels; 64 samples per channel */
+between channels; 64 samples per channel. The header's sample is the block's
+first, and the nibbles code the 63 after it: the 64th nibble only pads the
+block (the maps' sounds always have 0 there), and decoding it in place of the
+header's sample put a wrong sample in every 64, a buzz at 344 Hz in 22 kHz
+sounds. */
 static short *decode_adpcm(const unsigned char *source, unsigned long size, unsigned long channels,
 	unsigned long *frame_count)
 {
@@ -187,16 +194,19 @@ static short *decode_adpcm(const unsigned char *source, unsigned long size, unsi
 			int index = header[2] > 88 ? 88 : header[2];
 			unsigned long group, byte;
 
+			output[channel] = (short)predictor;
 			for (group = 0; group < 8; group++)
 			{
 				const unsigned char *nibbles = data + 4 * channels + (group * channels + channel) * 4;
 
 				for (byte = 0; byte < 4; byte++)
 				{
-					unsigned long sample = group * 8 + byte * 2;
+					/* nibble n codes sample n + 1 */
+					unsigned long sample = group * 8 + byte * 2 + 1;
 
 					output[sample * channels + channel] = (short)ima_expand(nibbles[byte] & 0xf, &predictor, &index);
-					output[(sample + 1) * channels + channel] = (short)ima_expand(nibbles[byte] >> 4, &predictor, &index);
+					if (sample + 1 < XBOX_ADPCM_BLOCK_SAMPLES)
+						output[(sample + 1) * channels + channel] = (short)ima_expand(nibbles[byte] >> 4, &predictor, &index);
 				}
 			}
 		}
@@ -247,7 +257,10 @@ static void spatialize(const struct sdl_stream *stream, float *left, float *righ
 		side = dot3(offset, right_axis);
 		ahead = dot3(offset, listener.front);
 	}
-	distance = sqrtf(dot3(offset, offset)) * listener.distance_factor;
+	/* in the game's units, those of the minimum and maximum distances: the
+	distance factor turns units into meters for Doppler, and scaling by it
+	here put every 3D sound 3 times as far away, up to 10 dB quieter */
+	distance = sqrtf(dot3(offset, offset));
 
 	/* DirectSound's inverse distance law, held beyond the maximum distance */
 	attenuation = 1.0f;
@@ -400,16 +413,98 @@ static void mix_voice(struct sdl_stream *stream, float *output, unsigned long fr
 	stream->current_right = target_right;
 }
 
+/* ---------- limiter
+
+The game sets its mix bins' headroom to 0 (sound_dsound_xbox.c), so the voices
+sum at their full level, as on the Xbox, and a pile of loud ones goes over
+full scale. Clipping each sample, or bending it near full scale, distorts the
+sound: dialogue over gunfire crackled. Instead the whole mix is turned down
+for as long as it would go over, both channels alike. The output is delayed
+LIMITER_LOOKAHEAD - 1 frames (1.3 ms), so that the gain comes down smoothly
+before each peak: the smallest gain the frames ahead need, averaged over the
+last LIMITER_LOOKAHEAD frames, is never more than a peak needs when it plays.
+The gain comes back up over LIMITER_RELEASE_SECONDS. */
+
+#define LIMITER_CEILING 0.891f /* -1 dBFS */
+#define LIMITER_LOOKAHEAD 64
+#define LIMITER_RELEASE_SECONDS 0.1f
+
+static struct
+{
+	/* the frames the output is delayed by, and the gain each needs */
+	float delay[LIMITER_LOOKAHEAD][OUTPUT_CHANNELS];
+	float needed[LIMITER_LOOKAHEAD];
+	/* the gain held down to what the frames ahead need, coming back up */
+	float held;
+	/* its last LIMITER_LOOKAHEAD values, and their sum */
+	float history[LIMITER_LOOKAHEAD];
+	double history_sum;
+	unsigned long position;
+	BOOL initialized;
+} limiter;
+
+static void limit(float *output, unsigned long frames)
+{
+	float release = 1.0f - expf(-1.0f / (LIMITER_RELEASE_SECONDS * OUTPUT_RATE));
+	unsigned long frame, index, channel;
+
+	if (!limiter.initialized)
+	{
+		for (index = 0; index < LIMITER_LOOKAHEAD; index++)
+		{
+			limiter.needed[index] = 1.0f;
+			limiter.history[index] = 1.0f;
+		}
+		limiter.held = 1.0f;
+		limiter.history_sum = LIMITER_LOOKAHEAD;
+		limiter.initialized = TRUE;
+	}
+	for (frame = 0; frame < frames; frame++)
+	{
+		float *sample = output + frame * OUTPUT_CHANNELS;
+		unsigned long position = limiter.position;
+		unsigned long oldest = (position + 1) % LIMITER_LOOKAHEAD;
+		float peak = 0.0f, lowest, gain;
+
+		/* the new frame takes the slot of the oldest, which has played */
+		for (channel = 0; channel < OUTPUT_CHANNELS; channel++)
+		{
+			if (fabsf(sample[channel]) > peak)
+				peak = fabsf(sample[channel]);
+			limiter.delay[position][channel] = sample[channel];
+		}
+		limiter.needed[position] = peak > LIMITER_CEILING ? LIMITER_CEILING / peak : 1.0f;
+		lowest = limiter.needed[0];
+		for (index = 1; index < LIMITER_LOOKAHEAD; index++)
+		{
+			if (limiter.needed[index] < lowest)
+				lowest = limiter.needed[index];
+		}
+		if (lowest < limiter.held)
+			limiter.held = lowest;
+		else
+			limiter.held += (lowest - limiter.held) * release;
+		limiter.history_sum += limiter.held - limiter.history[position];
+		limiter.history[position] = limiter.held;
+		gain = (float)(limiter.history_sum / LIMITER_LOOKAHEAD);
+		/* the frame LIMITER_LOOKAHEAD - 1 frames old plays */
+		for (channel = 0; channel < OUTPUT_CHANNELS; channel++)
+			sample[channel] = limiter.delay[oldest][channel] * gain;
+		limiter.position = oldest;
+	}
+}
+
 static void mix(float *output, unsigned long frames)
 {
 	struct sdl_stream *stream;
-	unsigned long sample;
 
 	memset(output, 0, frames * OUTPUT_CHANNELS * sizeof(float));
 #ifdef HALO_WEB
 	/* (web_mixer_thread's: the stream holds about 100 ms, so waiting a
 	little for the game to let go of the lock is inaudible, where a chunk
-	of silence is a click; only a lock held long gives silence) */
+	of silence is a click; only a lock held long gives silence. The silence
+	still goes through the limiter, so that the frames its look-ahead holds
+	play in order before it) */
 	{
 		struct timespec deadline;
 
@@ -421,7 +516,10 @@ static void mix(float *output, unsigned long frames)
 			deadline.tv_sec++;
 		}
 		if (pthread_mutex_timedlock(&mixer_lock, &deadline) != 0)
+		{
+			limit(output, frames);
 			return;
+		}
 	}
 #else
 	pthread_mutex_lock(&mixer_lock);
@@ -429,19 +527,7 @@ static void mix(float *output, unsigned long frames)
 	for (stream = streams; stream; stream = stream->next)
 		mix_voice(stream, output, frames);
 	pthread_mutex_unlock(&mixer_lock);
-	/* soft limit rather than wrap or hard clip when many voices pile up */
-	for (sample = 0; sample < frames * OUTPUT_CHANNELS; sample++)
-	{
-		float value = output[sample];
-
-		if (value > 0.8f || value < -0.8f)
-		{
-			float sign = value < 0.0f ? -1.0f : 1.0f;
-			float excess = fabsf(value) - 0.8f;
-
-			output[sample] = sign * (0.8f + 0.2f * tanhf(excess / 0.2f));
-		}
-	}
+	limit(output, frames);
 }
 
 /* ---------- output */
