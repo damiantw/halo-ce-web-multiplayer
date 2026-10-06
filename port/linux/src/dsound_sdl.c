@@ -502,7 +502,9 @@ static void mix(float *output, unsigned long frames)
 #ifdef HALO_WEB
 	/* (web_mixer_thread's: the stream holds about 100 ms, so waiting a
 	little for the game to let go of the lock is inaudible, where a chunk
-	of silence is a click; only a lock held long gives silence) */
+	of silence is a click; only a lock held long gives silence. The silence
+	still goes through the limiter, so that the frames its look-ahead holds
+	play in order before it) */
 	{
 		struct timespec deadline;
 
@@ -514,7 +516,10 @@ static void mix(float *output, unsigned long frames)
 			deadline.tv_sec++;
 		}
 		if (pthread_mutex_timedlock(&mixer_lock, &deadline) != 0)
+		{
+			limit(output, frames);
 			return;
+		}
 	}
 #else
 	pthread_mutex_lock(&mixer_lock);
