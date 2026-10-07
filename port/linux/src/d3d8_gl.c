@@ -346,6 +346,13 @@ struct gl_device
 	float query_area[VISIBILITY_TEST_SLOTS];
 	GLuint active_query;
 	BOOL visibility_test_active;
+	/* (queries read on the CPU) each slot's latest count known, and whether
+	its query has yet to be read: the game spins on a result it is told is
+	incomplete, so a query is read only once it says it is available, and
+	until then the slot's earlier count stands. A frame of The Library's
+	lights makes hundreds of tests. */
+	GLuint visibility_known[VISIBILITY_TEST_SLOTS];
+	BOOL visibility_unread[VISIBILITY_TEST_SLOTS];
 #ifdef HALO_ANDROID
 	/* with atomic counters: one counter per test, used as a ring; the
 	counter a test ended in, per result slot */
@@ -837,6 +844,9 @@ static GLuint framebuffer_get(GLuint color, GLuint depth)
 	return entry->framebuffer;
 }
 
+/* counts draws and clears into render targets (xgpu_render_target.written) */
+static unsigned long render_target_write_serial;
+
 /* the pixels per unit of the bound targets (render_target_get) */
 static float target_scale[2] = { 1.0f, 1.0f };
 
@@ -858,7 +868,10 @@ static BOOL bind_targets(BOOL *has_depth)
 	if (!color && !depth)
 		return FALSE;
 	if (color)
+	{
 		color->last_rendered = device.frame + 1;
+		color->target.written = ++render_target_write_serial;
+	}
 	/* viewports and clears are in the targets' units (render_target_get) */
 	target_scale[0] = color ? color->target.scale[0] : depth->target.scale[0];
 	target_scale[1] = color ? color->target.scale[1] : depth->target.scale[1];
@@ -1427,6 +1440,7 @@ HRESULT WINAPI D3DDevice_EndVisibilityTest(DWORD index)
 	device.queries[index] = scratch;
 #endif
 	device.query_pending[index] = TRUE;
+	device.visibility_unread[index] = TRUE;
 #ifndef HALO_ANDROID
 	if (device.visibility_results)
 	{
@@ -1485,7 +1499,6 @@ HRESULT WINAPI D3DDevice_GetVisibilityTestResult(DWORD index, UINT *result, ULON
 		return S_OK;
 	}
 #endif
-	glGetQueryObjectuiv(device.queries[index], GL_QUERY_RESULT_AVAILABLE, &available);
 #ifdef HALO_WEB
 	/* WebGL makes a query's result available only after the frame goes back
 	to the browser's event loop, so the game's wait for it (rasterizer_xbox_
@@ -1495,6 +1508,7 @@ HRESULT WINAPI D3DDevice_GetVisibilityTestResult(DWORD index, UINT *result, ULON
 		static UINT last_samples[VISIBILITY_TEST_SLOTS];
 		static BOOL last_known[VISIBILITY_TEST_SLOTS];
 
+		glGetQueryObjectuiv(device.queries[index], GL_QUERY_RESULT_AVAILABLE, &available);
 		if (available)
 		{
 			glGetQueryObjectuiv(device.queries[index], GL_QUERY_RESULT, &samples);
@@ -1520,20 +1534,30 @@ HRESULT WINAPI D3DDevice_GetVisibilityTestResult(DWORD index, UINT *result, ULON
 		return S_OK;
 	}
 #endif
-	if (!available)
-		return D3DERR_TESTINCOMPLETE;
-	glGetQueryObjectuiv(device.queries[index], GL_QUERY_RESULT, &samples);
+	/* the latest count known: from this test, or while the GPU is still
+	behind, from the slot's earlier ones */
+	if (device.visibility_unread[index])
+	{
+		glGetQueryObjectuiv(device.queries[index], GL_QUERY_RESULT_AVAILABLE, &available);
+		if (available)
+		{
+			glGetQueryObjectuiv(device.queries[index], GL_QUERY_RESULT, &samples);
 #ifdef HALO_ANDROID
-	/* ES only says whether any sample passed. The game divides the count by
-	the test's area (lens flare brightness, rasterizer_lights.c): report
-	more than any test covers, well below what would overflow there. */
-	if (samples)
-		samples = VISIBILITY_ALL_SAMPLES;
+			/* ES only says whether any sample passed. The game divides the
+			count by the test's area (lens flare brightness,
+			rasterizer_lights.c): report more than any test covers, well
+			below what would overflow there. */
+			if (samples)
+				samples = VISIBILITY_ALL_SAMPLES;
 #else
-	samples = visibility_unscaled(samples, index);
+			samples = visibility_unscaled(samples, index);
 #endif
+			device.visibility_known[index] = samples;
+			device.visibility_unread[index] = FALSE;
+		}
+	}
 	if (result)
-		*result = samples;
+		*result = device.visibility_known[index];
 	return S_OK;
 }
 
@@ -2055,38 +2079,30 @@ static GLenum address_mode(DWORD mode)
 	}
 }
 
-static void sampler_parameters(GLuint sampler, const DWORD *state, DWORD min_filter, DWORD mip_filter);
+/* ---------- sampler objects
 
-static void configure_sampler(int stage, BOOL mipmapped)
+A sampler object for each sampler state the game uses, made once: a draw
+binds the one its state needs, rather than changing a sampler's parameters,
+which costs a GL call each (5 to 8 a change). The game uses a few dozen
+states and switches between them many times a frame. (Upstream bf4d5d8f; it
+replaces the web build's own cache, web_sampler, which did the same with a
+linear search, and now serves every build.) */
+
+#define SAMPLER_STATE_WORDS 10
+#define SAMPLER_CACHE_SIZE 512
+
+static struct
 {
-	/* the texture stage state each sampler was last configured from */
-	static DWORD configured[D3DTSS_MAXSTAGES][10];
-	static BOOL configured_valid[D3DTSS_MAXSTAGES];
-	GLuint sampler = device.samplers[stage];
-	DWORD *state = D3D__TextureState[stage];
-	DWORD min_filter = state[D3DTSS_MINFILTER];
-	DWORD mip_filter = mipmapped ? state[D3DTSS_MIPFILTER] : D3DTEXF_NONE;
-	DWORD inputs[10];
+	DWORD inputs[SAMPLER_STATE_WORDS];
+	GLuint sampler;
+} sampler_cache[SAMPLER_CACHE_SIZE];
+static unsigned long sampler_cache_count;
 
-	inputs[0] = min_filter;
-	inputs[1] = mip_filter;
-	inputs[2] = state[D3DTSS_MAGFILTER];
-	inputs[3] = state[D3DTSS_ADDRESSU];
-	inputs[4] = state[D3DTSS_ADDRESSV];
-	inputs[5] = state[D3DTSS_ADDRESSW];
-	inputs[6] = state[D3DTSS_MIPMAPLODBIAS];
-	inputs[7] = state[D3DTSS_MAXMIPLEVEL];
-	inputs[8] = state[D3DTSS_MAXANISOTROPY];
-	inputs[9] = state[D3DTSS_BORDERCOLOR];
-	if (configured_valid[stage] && !memcmp(configured[stage], inputs, sizeof(inputs)))
-		return;
-	memcpy(configured[stage], inputs, sizeof(inputs));
-	configured_valid[stage] = TRUE;
-	sampler_parameters(sampler, state, min_filter, mip_filter);
-}
-
-static void sampler_parameters(GLuint sampler, const DWORD *state, DWORD min_filter, DWORD mip_filter)
+/* a sampler's parameters from its state (configure_sampler's inputs) */
+static void sampler_parameters(GLuint sampler, const DWORD *inputs)
 {
+	DWORD min_filter = inputs[0], mip_filter = inputs[1], mag_filter = inputs[2];
+	DWORD lod_bias = inputs[6], maximum_mip_level = inputs[7], anisotropy = inputs[8];
 	GLenum minification;
 	float border[4];
 
@@ -2097,52 +2113,74 @@ static void sampler_parameters(GLuint sampler, const DWORD *state, DWORD min_fil
 		minification = mip_filter == D3DTEXF_NONE ? GL_LINEAR :
 			mip_filter == D3DTEXF_POINT ? GL_LINEAR_MIPMAP_NEAREST : GL_LINEAR_MIPMAP_LINEAR;
 	glSamplerParameteri(sampler, GL_TEXTURE_MIN_FILTER, (GLint)minification);
-	glSamplerParameteri(sampler, GL_TEXTURE_MAG_FILTER, state[D3DTSS_MAGFILTER] == D3DTEXF_POINT ? GL_NEAREST : GL_LINEAR);
-	glSamplerParameteri(sampler, GL_TEXTURE_WRAP_S, (GLint)address_mode(state[D3DTSS_ADDRESSU]));
-	glSamplerParameteri(sampler, GL_TEXTURE_WRAP_T, (GLint)address_mode(state[D3DTSS_ADDRESSV]));
-	glSamplerParameteri(sampler, GL_TEXTURE_WRAP_R, (GLint)address_mode(state[D3DTSS_ADDRESSW]));
+	glSamplerParameteri(sampler, GL_TEXTURE_MAG_FILTER, mag_filter == D3DTEXF_POINT ? GL_NEAREST : GL_LINEAR);
+	glSamplerParameteri(sampler, GL_TEXTURE_WRAP_S, (GLint)address_mode(inputs[3]));
+	glSamplerParameteri(sampler, GL_TEXTURE_WRAP_T, (GLint)address_mode(inputs[4]));
+	glSamplerParameteri(sampler, GL_TEXTURE_WRAP_R, (GLint)address_mode(inputs[5]));
 #ifdef HALO_ANDROID
 	/* ES has no sampler LOD bias; the pixel shader applies it
 	(texture_lod_bias) */
-	glSamplerParameterf(sampler, GL_TEXTURE_MIN_LOD, (float)state[D3DTSS_MAXMIPLEVEL]);
+	(void)lod_bias;
+	glSamplerParameterf(sampler, GL_TEXTURE_MIN_LOD, (float)maximum_mip_level);
 	if (xgpu_capabilities.anisotropy)
 		glSamplerParameterf(sampler, GL_TEXTURE_MAX_ANISOTROPY_EXT,
-			(min_filter == D3DTEXF_ANISOTROPIC && state[D3DTSS_MAXANISOTROPY] > 1) ? (float)state[D3DTSS_MAXANISOTROPY] : 1.0f);
+			(min_filter == D3DTEXF_ANISOTROPIC && anisotropy > 1) ? (float)anisotropy : 1.0f);
 	if (xgpu_capabilities.border_clamp)
 	{
-		color_to_vec4(state[D3DTSS_BORDERCOLOR], border);
+		color_to_vec4(inputs[9], border);
 		glSamplerParameterfv(sampler, GL_TEXTURE_BORDER_COLOR, border);
 	}
 #else
-	glSamplerParameterf(sampler, GL_TEXTURE_LOD_BIAS, dword_to_float(state[D3DTSS_MIPMAPLODBIAS]));
-	glSamplerParameterf(sampler, GL_TEXTURE_MIN_LOD, (float)state[D3DTSS_MAXMIPLEVEL]);
+	glSamplerParameterf(sampler, GL_TEXTURE_LOD_BIAS, dword_to_float(lod_bias));
+	glSamplerParameterf(sampler, GL_TEXTURE_MIN_LOD, (float)maximum_mip_level);
 	glSamplerParameterf(sampler, GL_TEXTURE_MAX_ANISOTROPY,
-		(min_filter == D3DTEXF_ANISOTROPIC && state[D3DTSS_MAXANISOTROPY] > 1) ? (float)state[D3DTSS_MAXANISOTROPY] : 1.0f);
-	color_to_vec4(state[D3DTSS_BORDERCOLOR], border);
+		(min_filter == D3DTEXF_ANISOTROPIC && anisotropy > 1) ? (float)anisotropy : 1.0f);
+	color_to_vec4(inputs[9], border);
 	glSamplerParameterfv(sampler, GL_TEXTURE_BORDER_COLOR, border);
 #endif
 }
 
-
-#ifdef HALO_WEB
-/* WebGL: a sampler object per distinct sampler state, bound to the stage,
-instead of re-specifying the stage's one sampler (5 to 8 calls) whenever
-its state changes; the game switches between a handful of states many times
-a frame. */
-#define WEB_SAMPLER_CACHE 128
-
-static GLuint web_sampler(int stage, BOOL mipmapped)
+/* the sampler object of a sampler state, made the first time; with the
+cache full (never seen), the stage's own sampler set to it */
+static GLuint sampler_get(int stage, const DWORD *inputs)
 {
-	static struct { DWORD inputs[10]; GLuint sampler; } cache[WEB_SAMPLER_CACHE];
-	static int count;
-	DWORD *state = D3D__TextureState[stage];
-	DWORD min_filter = state[D3DTSS_MINFILTER];
-	DWORD mip_filter = mipmapped ? state[D3DTSS_MIPFILTER] : D3DTEXF_NONE;
-	DWORD inputs[10];
-	int i;
+	unsigned long hash = 2166136261UL, index = 0, probe;
+	GLuint sampler;
 
-	inputs[0] = min_filter;
-	inputs[1] = mip_filter;
+	for (index = 0; index < SAMPLER_STATE_WORDS; index++)
+		hash = (hash ^ inputs[index]) * 16777619UL;
+	for (probe = 0; probe < SAMPLER_CACHE_SIZE; probe++)
+	{
+		index = (hash + probe) % SAMPLER_CACHE_SIZE;
+		if (!sampler_cache[index].sampler)
+			break;
+		if (!memcmp(sampler_cache[index].inputs, inputs, sizeof(sampler_cache[index].inputs)))
+			return sampler_cache[index].sampler;
+	}
+	if (probe == SAMPLER_CACHE_SIZE || sampler_cache_count >= SAMPLER_CACHE_SIZE * 3 / 4)
+	{
+		sampler_parameters(device.samplers[stage], inputs);
+		return device.samplers[stage];
+	}
+	glGenSamplers(1, &sampler);
+	sampler_parameters(sampler, inputs);
+	memcpy(sampler_cache[index].inputs, inputs, sizeof(sampler_cache[index].inputs));
+	sampler_cache[index].sampler = sampler;
+	sampler_cache_count++;
+	return sampler;
+}
+
+/* the stage's sampler for its texture stage state, bound */
+static void configure_sampler(int stage, BOOL mipmapped)
+{
+	/* the texture stage state each stage's sampler was last chosen by */
+	static DWORD configured[D3DTSS_MAXSTAGES][SAMPLER_STATE_WORDS];
+	static GLuint configured_sampler[D3DTSS_MAXSTAGES];
+	DWORD *state = D3D__TextureState[stage];
+	DWORD inputs[SAMPLER_STATE_WORDS];
+
+	inputs[0] = state[D3DTSS_MINFILTER];
+	inputs[1] = mipmapped ? state[D3DTSS_MIPFILTER] : D3DTEXF_NONE;
 	inputs[2] = state[D3DTSS_MAGFILTER];
 	inputs[3] = state[D3DTSS_ADDRESSU];
 	inputs[4] = state[D3DTSS_ADDRESSV];
@@ -2151,21 +2189,16 @@ static GLuint web_sampler(int stage, BOOL mipmapped)
 	inputs[7] = state[D3DTSS_MAXMIPLEVEL];
 	inputs[8] = state[D3DTSS_MAXANISOTROPY];
 	inputs[9] = state[D3DTSS_BORDERCOLOR];
-	for (i = 0; i < count; i++)
-		if (!memcmp(cache[i].inputs, inputs, sizeof(inputs)))
-			return cache[i].sampler;
-	if (count == WEB_SAMPLER_CACHE)
+	/* (a fallback to the stage's own sampler is set again each time: its
+	parameters may have been set for another state since) */
+	if (!configured_sampler[stage] || configured_sampler[stage] == device.samplers[stage] ||
+		memcmp(configured[stage], inputs, sizeof(inputs)))
 	{
-		/* more states than expected: fall back to the stage's sampler */
-		configure_sampler(stage, mipmapped);
-		return device.samplers[stage];
+		memcpy(configured[stage], inputs, sizeof(inputs));
+		configured_sampler[stage] = sampler_get(stage, inputs);
 	}
-	memcpy(cache[count].inputs, inputs, sizeof(inputs));
-	glGenSamplers(1, &cache[count].sampler);
-	sampler_parameters(cache[count].sampler, state, min_filter, mip_filter);
-	return cache[count++].sampler;
+	state_sampler(stage, configured_sampler[stage]);
 }
-#endif
 
 
 /* ---------- render targets sampled with their mip chain
@@ -2173,13 +2206,23 @@ static GLuint web_sampler(int stage, BOOL mipmapped)
 The game renders some textures one mip level at a time, each level being a
 surface of its own (the water's ripple map). Sampling such a texture needs
 every level in one GL texture, so the levels' render targets are copied into
-a mipmapped composite whenever it is bound. */
+a mipmapped composite. Each draw of the water binds it, some maps (a30) more
+than once a frame, so the copy (and the mipmaps of the levels the game did not
+render) is redone only once a level's target has been drawn into since the
+last one. */
+
+#define MIP_COMPOSITE_LEVELS 16
 
 struct mip_composite
 {
 	struct mip_composite *next;
 	unsigned long data, width, height, levels;
 	GLuint texture;
+	/* the levels last copied, and each one's target's texture and written
+	serial then */
+	unsigned long rendered_levels;
+	GLuint level_sources[MIP_COMPOSITE_LEVELS];
+	unsigned long level_written[MIP_COMPOSITE_LEVELS];
 };
 
 static struct mip_composite *mip_composites;
@@ -2208,7 +2251,9 @@ static void copy_level_by_blit(GLuint source, GLuint destination, GLint level, G
 static GLuint mip_composite_get(const struct xgpu_texture_description *description, unsigned long data)
 {
 	struct mip_composite *composite;
+	struct xgpu_render_target *targets[MIP_COMPOSITE_LEVELS];
 	unsigned long level, rendered_levels = 0;
+	BOOL changed;
 
 	for (composite = mip_composites; composite; composite = composite->next)
 	{
@@ -2236,10 +2281,11 @@ static GLuint mip_composite_get(const struct xgpu_texture_description *descripti
 
 			glTexImage2D(GL_TEXTURE_2D, (GLint)level, GL_RGBA8, width, height, 0, GL_BGRA, GL_UNSIGNED_BYTE, NULL);
 		}
+		composite->rendered_levels = ~0UL;
 		composite->next = mip_composites;
 		mip_composites = composite;
 	}
-	for (level = 0; level < description->levels; level++)
+	for (level = 0; level < description->levels && level < MIP_COMPOSITE_LEVELS; level++)
 	{
 		unsigned long width = description->width >> level ? description->width >> level : 1;
 		unsigned long height = description->height >> level ? description->height >> level : 1;
@@ -2249,16 +2295,34 @@ static GLuint mip_composite_get(const struct xgpu_texture_description *descripti
 		if (!target || target->width != width || target->height != height ||
 			target->gl_width != width || target->gl_height != height)
 			break;
+		targets[level] = target;
+		rendered_levels++;
+	}
+	changed = rendered_levels != composite->rendered_levels;
+	for (level = 0; level < rendered_levels && !changed; level++)
+	{
+		changed = targets[level]->texture != composite->level_sources[level] ||
+			targets[level]->written != composite->level_written[level];
+	}
+	if (!changed)
+		return composite->texture;
+	composite->rendered_levels = rendered_levels;
+	for (level = 0; level < rendered_levels; level++)
+	{
+		struct xgpu_render_target *target = targets[level];
+		GLsizei width = (GLsizei)target->width, height = (GLsizei)target->height;
+
+		composite->level_sources[level] = target->texture;
+		composite->level_written[level] = target->written;
 #ifdef HALO_ANDROID
 		if (!xgpu_capabilities.copy_image)
 		{
-			copy_level_by_blit(target->texture, composite->texture, (GLint)level, (GLsizei)width, (GLsizei)height);
+			copy_level_by_blit(target->texture, composite->texture, (GLint)level, width, height);
 		}
 		else
 #endif
 		glCopyImageSubData(target->texture, GL_TEXTURE_2D, 0, 0, 0, 0,
-			composite->texture, GL_TEXTURE_2D, (GLint)level, 0, 0, 0, (GLsizei)width, (GLsizei)height, 1);
-		rendered_levels++;
+			composite->texture, GL_TEXTURE_2D, (GLint)level, 0, 0, 0, width, height, 1);
 	}
 	glBindTexture(GL_TEXTURE_2D, composite->texture);
 	/* levels the game did not render come from the ones it did */
@@ -2330,12 +2394,7 @@ static void bind_textures(struct nv2a_pixel_shader_key *key, float texture_scale
 			}
 			gl_targets[stage] = gl_target;
 			gl_textures[stage] = gl_texture;
-#ifdef HALO_WEB
-			state_sampler(stage, web_sampler(stage, description.levels > 1));
-#else
-			state_sampler(stage, device.samplers[stage]);
 			configure_sampler(stage, description.levels > 1);
-#endif
 			key->sampler_type[stage] = gl_target == GL_TEXTURE_CUBE_MAP ? _xgpu_sampler_cube :
 				gl_target == GL_TEXTURE_3D ? _xgpu_sampler_3d : _xgpu_sampler_2d;
 		}

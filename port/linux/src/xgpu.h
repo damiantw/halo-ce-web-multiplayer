@@ -163,6 +163,9 @@ struct xgpu_render_target
 	targets when the game draws at the display's resolution (d3d8_gl.c) */
 	float scale[2];
 	unsigned long gl_width, gl_height;
+	/* changes whenever the target is drawn into or cleared (d3d8_gl.c,
+	bind_targets) */
+	unsigned long written;
 };
 
 /* the GL texture holding a render target with this physical address, or 0 */
