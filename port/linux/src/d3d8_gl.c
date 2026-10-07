@@ -166,6 +166,9 @@ struct vertex_shader_object
 	unsigned long packed_mask;
 	/* [0] streams per the declaration, [1] immediate mode (all floats) */
 	GLuint shader[2];
+	/* which of shader[] have been compiled (bits 0 and 1): one that failed
+	stays 0 and is not compiled again at each draw */
+	unsigned char shaders_tried;
 };
 
 /* ---------- programs */
@@ -1885,12 +1888,14 @@ static unsigned long hash_words(const void *data, unsigned long size)
 static GLuint vertex_shader_get(struct vertex_shader_object *program, BOOL immediate)
 {
 	int variant = immediate ? 1 : 0;
+	unsigned char tried = (unsigned char)(1 << variant);
 
-	if (!program->shader[variant])
+	if (!program->shader[variant] && !(program->shaders_tried & tried))
 	{
 		char *source = nv2a_vertex_shader_to_glsl(program->instructions, program->instruction_count,
 			immediate ? 0 : device.vertex_shader->packed_mask);
 
+		program->shaders_tried |= tried;
 		program->shader[variant] = compile_shader(GL_VERTEX_SHADER, source, "vertex");
 		if (debug_settings.dump_shaders)
 		{
