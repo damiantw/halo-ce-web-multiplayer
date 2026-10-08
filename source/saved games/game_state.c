@@ -120,6 +120,8 @@ symbols in this file:
 #include "data.h"
 #include "lruv_cache.h"
 #include "memory_pool.h"
+/* port: object_bounds_cache.c's */
+void object_bounds_cache_invalidate(void);
 
 /* ---------- constants */
 
@@ -185,6 +187,8 @@ static game_state_before_save_proc before_save_procs[] =
 static game_state_before_load_proc before_load_procs[] =
 {
 	game_sound_clear,
+	/* port: (the objects are put back: object_bounds_cache.c) */
+	object_bounds_cache_invalidate,
 };
 
 static game_state_after_load_proc after_load_procs[] =
@@ -268,6 +272,8 @@ void game_state_initialize_for_new_map(
 {
 	const char *name;
 
+	/* port: (the objects are put back: object_bounds_cache.c) */
+	object_bounds_cache_invalidate();
 	game_state_globals.locked = TRUE;
 	game_state_globals.saved_game_valid = FALSE;
 	game_state_globals.revert_time = NONE;
