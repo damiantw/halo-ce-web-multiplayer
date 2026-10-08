@@ -1218,7 +1218,7 @@ static void game_engine_generate_title_string(
 			}
 			else
 				outcome_string = L"";
-			ustrncpy(title_string, outcome_string, 80);
+			ustrncpy_terminated(title_string, outcome_string, 80);
 			break;
 
 		case FALSE:
@@ -1234,7 +1234,7 @@ static void game_engine_generate_title_string(
 				}
 				else
 					outcome_string = L"";
-				ustrncpy(title_string, outcome_string, 80);
+				ustrncpy_terminated(title_string, outcome_string, 80);
 			}
 			else
 			{
@@ -1248,7 +1248,7 @@ static void game_engine_generate_title_string(
 				}
 				else
 					outcome_string = L"";
-				ustrncpy(title_string, outcome_string, 80);
+				ustrncpy_terminated(title_string, outcome_string, 80);
 			}
 			break;
 
@@ -1265,7 +1265,7 @@ static void game_engine_generate_title_string(
 				}
 				else
 					outcome_string = L"";
-				ustrncpy(title_string, outcome_string, 80);
+				ustrncpy_terminated(title_string, outcome_string, 80);
 			}
 			else
 			{
@@ -1279,7 +1279,7 @@ static void game_engine_generate_title_string(
 				}
 				else
 					outcome_string = L"";
-				ustrncpy(title_string, outcome_string, 80);
+				ustrncpy_terminated(title_string, outcome_string, 80);
 			}
 			break;
 		}
@@ -2075,7 +2075,9 @@ static void game_engine_rasterize_scoreboard(
 	column_name = string_list_index != NONE ? unicode_string_list_get_string(string_list_index, 0x43) : L"";
 	score_name = string_list_index != NONE ? unicode_string_list_get_string(string_list_index, 0x44) : L"";
 	game_engine->format_score_name(score_string);
-	usprintf(row_string, L"\t%s\t%s\t%s\t%s", column_name, score_name, score_string, network ? L"Ping" : L"");
+	/* port: bounded (the map's column names) */
+	usnprintf(row_string, NUMBEROF(row_string), L"\t%s\t%s\t%s\t%s", column_name, score_name, score_string,
+		network ? L"Ping" : L"");
 	{
 		long column;
 
@@ -2139,8 +2141,9 @@ static void game_engine_rasterize_scoreboard(
 			else
 				usprintf(ping_string, L"%ld", ping);
 		}
-		usprintf(
+		usnprintf(
 			row_string,
+			NUMBEROF(row_string),
 			L"\t%s\t%s\t%s\t%s",
 			get_place_string(entry),
 			player->name,
@@ -2234,7 +2237,7 @@ static void game_engine_rasterize_in_game_score(
 		score_name = L"";
 
 	game_engine->format_score_name(score_string);
-	usprintf(row_string, L"\t%s\t%s\t%s", column_name, score_name, score_string);
+	usnprintf(row_string, NUMBEROF(row_string), L"\t%s\t%s\t%s", column_name, score_name, score_string);
 	rasterize_in_game_score_draw_line(row_string, FALSE, &color, 1);
 
 	entry_index = 0;
@@ -2319,8 +2322,9 @@ static void game_engine_rasterize_in_game_score(
 					place_string = place_ordinal_string(raw_place, FALSE);
 #endif
 
-				usprintf(
+				usnprintf(
 					row_string,
+					NUMBEROF(row_string),
 					L"\t%s\t%s\t%s",
 					place_string,
 					player->name,
