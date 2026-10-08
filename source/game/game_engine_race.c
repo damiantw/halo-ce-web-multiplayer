@@ -871,7 +871,7 @@ boolean race_engine_display_score(
 			}
 			else
 				string = L"";
-			usnprintf(buffer, buffer_size, string, other_player->name);
+			usnprintf(buffer, buffer_size, ustring_format_checked(string, "s"), other_player->name);
 		}
 		break;
 
@@ -886,7 +886,7 @@ boolean race_engine_display_score(
 			}
 			else
 				string = L"";
-			usnprintf(buffer, buffer_size, string, other_player->name);
+			usnprintf(buffer, buffer_size, ustring_format_checked(string, "s"), other_player->name);
 		}
 		break;
 
@@ -908,7 +908,7 @@ boolean race_engine_display_score(
 			usnprintf(
 				buffer,
 				buffer_size,
-				string,
+				ustring_format_checked(string, "df"),
 				other_player->statistics.multiplayer_statistics.race_statistics.laps + 1,
 				lap_time);
 		}
@@ -927,7 +927,7 @@ boolean race_engine_display_score(
 		usnprintf(
 			buffer,
 			buffer_size,
-			string,
+			ustring_format_checked(string, "sd"),
 			other_player->name,
 			other_player->statistics.multiplayer_statistics.race_statistics.laps + 1);
 		break;
@@ -945,7 +945,7 @@ boolean race_engine_display_score(
 		usnprintf(
 			buffer,
 			buffer_size,
-			string,
+			ustring_format_checked(string, "sd"),
 			other_player->name,
 			other_player->statistics.multiplayer_statistics.race_statistics.laps);
 		break;
@@ -965,7 +965,7 @@ boolean race_engine_display_score(
 			}
 			else
 				string = L"";
-			usnprintf(buffer, buffer_size, string, best_lap_time);
+			usnprintf(buffer, buffer_size, ustring_format_checked(string, "f"), best_lap_time);
 		}
 		break;
 
@@ -986,7 +986,7 @@ boolean race_engine_display_score(
 				usnprintf(
 					buffer,
 					buffer_size,
-					string,
+					ustring_format_checked(string, "s"),
 					get_place_name(game_engine_get_place(player_index, _get_score_team)));
 			}
 			else
@@ -1003,7 +1003,7 @@ boolean race_engine_display_score(
 				usnprintf(
 					buffer,
 					buffer_size,
-					string,
+					ustring_format_checked(string, "sd"),
 					get_place_name(game_engine_get_place(player_index, _get_score_team)),
 					other_player->statistics.multiplayer_statistics.race_statistics.laps);
 			}
@@ -1023,7 +1023,7 @@ boolean race_engine_display_score(
 			usnprintf(
 				buffer,
 				buffer_size,
-				string,
+				ustring_format_checked(string, "s"),
 				get_place_name(game_engine_get_place(player_index, _get_score_team)));
 		}
 		else
@@ -1040,7 +1040,7 @@ boolean race_engine_display_score(
 			usnprintf(
 				buffer,
 				buffer_size,
-				string,
+				ustring_format_checked(string, "sdd"),
 				get_place_name(game_engine_get_place(player_index, _get_score_team)),
 				other_player->statistics.multiplayer_statistics.race_statistics.laps + 1,
 				game_engine_get_variant()->universal_variant.score_to_win);

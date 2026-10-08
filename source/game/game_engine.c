@@ -1188,7 +1188,7 @@ static void game_engine_generate_title_string(
 			usnprintf(
 				life_string,
 				NUMBEROF(life_string),
-				format_string,
+				ustring_format_checked(format_string, "d"),
 				remaining_lives);
 			life_string[NUMBEROF(life_string) - 1] = 0;
 			secondary_string = life_string;
@@ -1315,7 +1315,7 @@ static void game_engine_generate_title_string(
 			usnprintf(
 				title_string,
 				80,
-				format_string,
+				ustring_format_checked(format_string, "sss"),
 				team0_name,
 				team1_name,
 				secondary_string);
@@ -1335,7 +1335,7 @@ static void game_engine_generate_title_string(
 			usnprintf(
 				title_string,
 				80,
-				format_string,
+				ustring_format_checked(format_string, "sss"),
 				team1_name,
 				team0_name,
 				secondary_string);
@@ -1355,7 +1355,7 @@ static void game_engine_generate_title_string(
 			usnprintf(
 				title_string,
 				80,
-				format_string,
+				ustring_format_checked(format_string, "ss"),
 				team1_name,
 				secondary_string);
 		}
@@ -1384,7 +1384,7 @@ static void game_engine_generate_title_string(
 			usnprintf(
 				title_string,
 				80,
-				format_string,
+				ustring_format_checked(format_string, "sss"),
 				get_place_string(&entry),
 				score_string,
 				secondary_string);
@@ -1405,7 +1405,7 @@ static void game_engine_generate_title_string(
 			usnprintf(
 				title_string,
 				80,
-				format_string,
+				ustring_format_checked(format_string, "sss"),
 				get_place_string(&entry),
 				score_string,
 				secondary_string);
@@ -2475,7 +2475,7 @@ void game_engine_post_rasterize_post_game(
 			usnprintf(
 				row_string,
 				NUMBEROF(row_string),
-				team_formats[team_index],
+				ustring_format_checked(team_formats[team_index], "s"),
 				score_string);
 			row_string[NUMBEROF(row_string) - 1] = 0;
 			drawline(row_string, team_row + 4, 0);
@@ -7826,28 +7826,28 @@ static boolean internal_rasterize_score(
 		usnprintf(
 			message,
 			message_character_count,
-			GET_GAME_ENGINE_HUD_FORMAT(0x4A),
+			ustring_format_checked(GET_GAME_ENGINE_HUD_FORMAT(0x4A), "s"),
 			player->name);
 		break;
 	case 1:
 		usnprintf(
 			message,
 			message_character_count,
-			GET_GAME_ENGINE_HUD_FORMAT(0x4B),
+			ustring_format_checked(GET_GAME_ENGINE_HUD_FORMAT(0x4B), "s"),
 			player->name);
 		break;
 	case 2:
 		usnprintf(
 			message,
 			message_character_count,
-			GET_GAME_ENGINE_HUD_FORMAT(0x4C),
+			ustring_format_checked(GET_GAME_ENGINE_HUD_FORMAT(0x4C), "s"),
 			player->name);
 		break;
 	case 3:
 		usnprintf(
 			message,
 			message_character_count,
-			GET_GAME_ENGINE_HUD_FORMAT(0x4D),
+			ustring_format_checked(GET_GAME_ENGINE_HUD_FORMAT(0x4D), "s"),
 			player->name);
 		break;
 	case 4:
@@ -7855,7 +7855,7 @@ static boolean internal_rasterize_score(
 		usnprintf(
 			message,
 			message_character_count,
-			GET_GAME_ENGINE_HUD_FORMAT(0x4E),
+			ustring_format_checked(GET_GAME_ENGINE_HUD_FORMAT(0x4E), "ss"),
 			player->name,
 			other_player->name);
 		break;
@@ -7864,7 +7864,7 @@ static boolean internal_rasterize_score(
 		usnprintf(
 			message,
 			message_character_count,
-			GET_GAME_ENGINE_HUD_FORMAT(0x4F),
+			ustring_format_checked(GET_GAME_ENGINE_HUD_FORMAT(0x4F), "ss"),
 			player->name,
 			other_player->name);
 		break;
@@ -7873,14 +7873,14 @@ static boolean internal_rasterize_score(
 		usnprintf(
 			message,
 			message_character_count,
-			GET_GAME_ENGINE_HUD_FORMAT(0x50),
+			ustring_format_checked(GET_GAME_ENGINE_HUD_FORMAT(0x50), "s"),
 			other_player->name);
 		break;
 	case 6:
 		usnprintf(
 			message,
 			message_character_count,
-			GET_GAME_ENGINE_HUD_FORMAT(0x51),
+			ustring_format_checked(GET_GAME_ENGINE_HUD_FORMAT(0x51), "s"),
 			player->name);
 		break;
 	case 13:
@@ -7888,7 +7888,7 @@ static boolean internal_rasterize_score(
 		usnprintf(
 			message,
 			message_character_count,
-			GET_GAME_ENGINE_HUD_FORMAT(0x52),
+			ustring_format_checked(GET_GAME_ENGINE_HUD_FORMAT(0x52), "s"),
 			other_player->name);
 		break;
 	case 10:
@@ -7931,14 +7931,14 @@ static boolean internal_rasterize_score(
 		usnprintf(
 			message,
 			message_character_count,
-			GET_GAME_ENGINE_HUD_FORMAT(0x58),
+			ustring_format_checked(GET_GAME_ENGINE_HUD_FORMAT(0x58), "s"),
 			other_player->name);
 		break;
 	case 14:
 		usnprintf(
 			message,
 			message_character_count,
-			GET_GAME_ENGINE_HUD_FORMAT(0x59),
+			ustring_format_checked(GET_GAME_ENGINE_HUD_FORMAT(0x59), "d"),
 			score);
 		game_engine_play_multiplayer_sound(0x10);
 		break;
@@ -7946,7 +7946,7 @@ static boolean internal_rasterize_score(
 		usnprintf(
 			message,
 			message_character_count,
-			GET_GAME_ENGINE_HUD_FORMAT(0x5A),
+			ustring_format_checked(GET_GAME_ENGINE_HUD_FORMAT(0x5A), "d"),
 			score);
 		game_engine_play_multiplayer_sound(0xF);
 		break;
@@ -7954,7 +7954,7 @@ static boolean internal_rasterize_score(
 		usnprintf(
 			message,
 			message_character_count,
-			GET_GAME_ENGINE_HUD_FORMAT(0x5B),
+			ustring_format_checked(GET_GAME_ENGINE_HUD_FORMAT(0x5B), "d"),
 			score);
 		game_engine_play_multiplayer_sound(0xE);
 		break;
@@ -7962,7 +7962,7 @@ static boolean internal_rasterize_score(
 		usnprintf(
 			message,
 			message_character_count,
-			GET_GAME_ENGINE_HUD_FORMAT(0x5C),
+			ustring_format_checked(GET_GAME_ENGINE_HUD_FORMAT(0x5C), "d"),
 			score);
 		game_engine_play_multiplayer_sound(0x11);
 		break;
@@ -7970,7 +7970,7 @@ static boolean internal_rasterize_score(
 		usnprintf(
 			message,
 			message_character_count,
-			GET_GAME_ENGINE_HUD_FORMAT(0x5D),
+			ustring_format_checked(GET_GAME_ENGINE_HUD_FORMAT(0x5D), "d"),
 			score);
 		game_engine_play_multiplayer_sound(0x12);
 		break;
@@ -7979,7 +7979,7 @@ static boolean internal_rasterize_score(
 		usnprintf(
 			message,
 			message_character_count,
-			GET_GAME_ENGINE_HUD_FORMAT(0x5E),
+			ustring_format_checked(GET_GAME_ENGINE_HUD_FORMAT(0x5E), "sd"),
 			other_player->name,
 			score);
 		break;
@@ -7999,7 +7999,7 @@ static boolean internal_rasterize_score(
 		usnprintf(
 			message,
 			message_character_count,
-			GET_GAME_ENGINE_HUD_FORMAT(0x61),
+			ustring_format_checked(GET_GAME_ENGINE_HUD_FORMAT(0x61), "d"),
 			parameter2);
 		break;
 	case 26:
