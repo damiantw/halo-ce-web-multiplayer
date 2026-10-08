@@ -187,6 +187,8 @@ static game_state_before_save_proc before_save_procs[] =
 static game_state_before_load_proc before_load_procs[] =
 {
 	game_sound_clear,
+	/* port: (the objects are put back: object_bounds_cache.c) */
+	object_bounds_cache_invalidate,
 };
 
 static game_state_after_load_proc after_load_procs[] =
@@ -268,10 +270,10 @@ void game_state_dispose(
 void game_state_initialize_for_new_map(
 	void)
 {
-	/* port: (the objects are put back: object_bounds_cache.c) */
-	object_bounds_cache_invalidate();
 	const char *name;
 
+	/* port: (the objects are put back: object_bounds_cache.c) */
+	object_bounds_cache_invalidate();
 	game_state_globals.locked = TRUE;
 	game_state_globals.saved_game_valid = FALSE;
 	game_state_globals.revert_time = NONE;
@@ -311,8 +313,6 @@ void game_state_save(
 void game_state_revert(
 	void)
 {
-	/* port: (the objects are put back: object_bounds_cache.c) */
-	object_bounds_cache_invalidate();
 	if (!game_state_globals.saved_game_valid && !recover_saved_games_hack)
 	{
 		main_reset_map();
@@ -606,8 +606,6 @@ struct lruv_cache *game_state_lruv_cache_new(
 void game_state_try_and_load_from_persistent_storage(
 	void)
 {
-	/* port: (the objects are put back: object_bounds_cache.c) */
-	object_bounds_cache_invalidate();
 	struct game_state_header header;
 
 	if (game_state_read_header_from_persistent_storage(
@@ -634,8 +632,6 @@ void game_state_try_and_load_from_persistent_storage(
 void game_state_load_core(
 	const char *name)
 {
-	/* port: (the objects are put back: object_bounds_cache.c) */
-	object_bounds_cache_invalidate();
 	struct game_state_header header;
 
 	if (game_state_read_core_header(name, &header, sizeof(header))
