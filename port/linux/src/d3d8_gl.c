@@ -166,6 +166,9 @@ struct vertex_shader_object
 	unsigned long packed_mask;
 	/* [0] streams per the declaration, [1] immediate mode (all floats) */
 	GLuint shader[2];
+	/* which of shader[] have been compiled (bits 0 and 1): one that failed
+	stays 0 and is not compiled again at each draw */
+	unsigned char shaders_tried;
 };
 
 /* ---------- programs */
@@ -362,11 +365,21 @@ struct gl_device
 	unsigned long counter_of_slot[VISIBILITY_TEST_SLOTS];
 #else
 	/* each test's latest result, which the GPU writes (as a query buffer)
-	when the test's draws are done: the game waits for results at the start
-	of the next frame, and a query would stop the CPU there until the GPU
-	had caught up */
+	a frame after the test (visibility_copy_batch): the game waits for
+	results at the start of the next frame, and a query would stop the CPU
+	there until the GPU had caught up */
 	GLuint visibility_results_buffer;
 	volatile GLuint *visibility_results;
+	/* the tests of this frame and of the one before, whose counts the GPU
+	is yet to copy into their slots; each batch keeps its own query objects,
+	which are not reused until their counts are copied */
+	struct
+	{
+		GLuint queries[VISIBILITY_TEST_SLOTS];
+		unsigned short slots[VISIBILITY_TEST_SLOTS];
+		unsigned long count;
+	} visibility_batches[2];
+	unsigned long visibility_batch;
 #endif
 
 	unsigned long frame;
@@ -962,7 +975,12 @@ static void gl_initialize(void)
 		GL_MAP_READ_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT);
 	device.visibility_results = glMapBufferRange(GL_QUERY_BUFFER, 0, VISIBILITY_TEST_SLOTS * sizeof(GLuint),
 		GL_MAP_READ_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT);
-	if (!device.visibility_results)
+	if (device.visibility_results)
+	{
+		glGenQueries(VISIBILITY_TEST_SLOTS, device.visibility_batches[0].queries);
+		glGenQueries(VISIBILITY_TEST_SLOTS, device.visibility_batches[1].queries);
+	}
+	else
 		platform_log("cannot map the visibility test results; tests wait for the GPU");
 #endif
 #ifdef HALO_ANDROID
@@ -1379,6 +1397,18 @@ void WINAPI D3DDevice_BeginVisibilityTest(void)
 		glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, 0);
 		return;
 	}
+#else
+	if (device.visibility_results)
+	{
+		unsigned long count = device.visibility_batches[device.visibility_batch].count;
+
+		/* the batch's next query, or (with the batch full) a scratch one
+		whose count is dropped */
+		device.active_query = count < VISIBILITY_TEST_SLOTS ?
+			device.visibility_batches[device.visibility_batch].queries[count] : device.queries[0];
+		glBeginQuery(VISIBILITY_QUERY, device.active_query);
+		return;
+	}
 #endif
 	glBeginQuery(VISIBILITY_QUERY, device.queries[0]);
 }
@@ -1414,6 +1444,21 @@ HRESULT WINAPI D3DDevice_EndVisibilityTest(DWORD index)
 	test's area (lens flares, rasterizer_lights.c), a split-screen window's
 	or the screen's alike */
 	device.query_area[index] = target_scale[0] * target_scale[1];
+#ifndef HALO_ANDROID
+	if (device.visibility_results)
+	{
+		/* the GPU copies the count into the slot at the next frame's end
+		(visibility_copy_batch) */
+		unsigned long *count = &device.visibility_batches[device.visibility_batch].count;
+
+		if (*count < VISIBILITY_TEST_SLOTS)
+		{
+			device.visibility_batches[device.visibility_batch].slots[(*count)++] = (unsigned short)index;
+			device.query_pending[index] = TRUE;
+		}
+		return S_OK;
+	}
+#endif
 	/* swap the scratch query into the requested slot */
 #ifdef HALO_WEB
 	/* keep an earlier query of the slot too: its result is the one WebGL
@@ -1441,15 +1486,6 @@ HRESULT WINAPI D3DDevice_EndVisibilityTest(DWORD index)
 #endif
 	device.query_pending[index] = TRUE;
 	device.visibility_unread[index] = TRUE;
-#ifndef HALO_ANDROID
-	if (device.visibility_results)
-	{
-		/* the GPU writes the count into the slot once it is known */
-		glBindBuffer(GL_QUERY_BUFFER, device.visibility_results_buffer);
-		glGetQueryObjectuiv(device.queries[index], GL_QUERY_RESULT, (GLuint *)(index * sizeof(GLuint)));
-		glBindBuffer(GL_QUERY_BUFFER, 0);
-	}
-#endif
 	return S_OK;
 }
 
@@ -1885,12 +1921,14 @@ static unsigned long hash_words(const void *data, unsigned long size)
 static GLuint vertex_shader_get(struct vertex_shader_object *program, BOOL immediate)
 {
 	int variant = immediate ? 1 : 0;
+	unsigned char tried = (unsigned char)(1 << variant);
 
-	if (!program->shader[variant])
+	if (!program->shader[variant] && !(program->shaders_tried & tried))
 	{
 		char *source = nv2a_vertex_shader_to_glsl(program->instructions, program->instruction_count,
 			immediate ? 0 : device.vertex_shader->packed_mask);
 
+		program->shaders_tried |= tried;
 		program->shader[variant] = compile_shader(GL_VERTEX_SHADER, source, "vertex");
 		if (debug_settings.dump_shaders)
 		{
@@ -3326,15 +3364,17 @@ static void stream_reserve(unsigned long size)
 static unsigned long stream_upload(const void *data, unsigned long size)
 {
 	unsigned long offset;
+	/* (as index_upload: the vertices' own bytes, in room rounded up to 16) */
+	unsigned long length = size;
 
 	size = (size + 15) & ~15UL;
 	stream_reserve(size);
 	offset = device.stream_offset;
 	state_array_buffer(device.stream_buffer);
 #ifdef HALO_ANDROID
-	host_gl_buffer_write(GL_ARRAY_BUFFER, (unsigned int)offset, (unsigned int)size, data);
+	host_gl_buffer_write(GL_ARRAY_BUFFER, (unsigned int)offset, (unsigned int)length, data);
 #else
-	glBufferSubData(GL_ARRAY_BUFFER, (GLintptr)offset, (GLsizeiptr)size, data);
+	glBufferSubData(GL_ARRAY_BUFFER, (GLintptr)offset, (GLsizeiptr)length, data);
 #endif
 	device.stream_offset += size;
 	return offset;
@@ -3394,6 +3434,10 @@ static unsigned long index_upload(const void *data, unsigned long size)
 static unsigned long index_upload(const void *data, unsigned long size)
 {
 	unsigned long offset;
+	/* (the indices' own bytes are written; the room they take is rounded up
+	to 16, for the next ones' alignment: rounding what was read too read
+	past the caller's indices) */
+	unsigned long length = size;
 
 	size = (size + 15) & ~15UL;
 	state_element_array_buffer(device.index_buffer);
@@ -3404,9 +3448,9 @@ static unsigned long index_upload(const void *data, unsigned long size)
 	}
 	offset = device.index_offset;
 #ifdef HALO_ANDROID
-	host_gl_buffer_write(GL_ELEMENT_ARRAY_BUFFER, (unsigned int)offset, (unsigned int)size, data);
+	host_gl_buffer_write(GL_ELEMENT_ARRAY_BUFFER, (unsigned int)offset, (unsigned int)length, data);
 #else
-	glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, (GLintptr)offset, (GLsizeiptr)size, data);
+	glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, (GLintptr)offset, (GLsizeiptr)length, data);
 #endif
 	device.index_offset += size;
 	return offset;
@@ -4141,6 +4185,35 @@ static void write_screenshot(struct render_target_entry *target)
 	free(pixels);
 }
 
+#ifndef HALO_ANDROID
+/* the GPU copies the counts of the previous frame's tests into their slots
+(through the bound query buffer, all at once). A copy right after each
+test stopped the GPU until that test's draws were through, hundreds of times
+a frame in The Library; a frame later the draws are long done, so the copies
+do not wait. */
+static void visibility_copy_batch(void)
+{
+	unsigned long i;
+
+	if (!device.visibility_results)
+		return;
+	/* this frame's tests wait for the next present */
+	device.visibility_batch ^= 1;
+	if (device.visibility_batches[device.visibility_batch].count)
+		glBindBuffer(GL_QUERY_BUFFER, device.visibility_results_buffer);
+	for (i = 0; i < device.visibility_batches[device.visibility_batch].count; i++)
+	{
+		/* port: into the bound query buffer, at the slot's offset (this
+		fork's GL list has no glGetQueryBufferObjectuiv) */
+		glGetQueryObjectuiv(device.visibility_batches[device.visibility_batch].queries[i], GL_QUERY_RESULT,
+			(GLuint *)(device.visibility_batches[device.visibility_batch].slots[i] * sizeof(GLuint)));
+	}
+	if (device.visibility_batches[device.visibility_batch].count)
+		glBindBuffer(GL_QUERY_BUFFER, 0);
+	device.visibility_batches[device.visibility_batch].count = 0;
+}
+
+#endif
 void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destination_rectangle,
 	void *unused, void *unused2)
 {
@@ -4162,6 +4235,9 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 		if (trace_frame())
 			platform_log("present back buffer %08lx texture %u", (unsigned long)device.back_buffer.Data,
 				back_buffer->target.texture);
+#ifndef HALO_ANDROID
+		visibility_copy_batch();
+#endif
 		if (screenshot_every > 0 && device.frame % (unsigned long)screenshot_every == 0)
 			write_screenshot(back_buffer);
 
