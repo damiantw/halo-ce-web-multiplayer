@@ -6761,69 +6761,62 @@ void game_engine_variant_cleanup(
 	return;
 }
 
+/* port: one of the globals' three multiplayer vehicles (0 warthog, 1 ghost,
+2 scorpion), or NONE for one the map's globals lack: a Custom Edition map's
+may have fewer, which the original read past the end of */
+static long game_engine_multiplayer_vehicle(
+	long index)
+{
+	struct game_globals *game_globals = scenario_get_game_globals();
+	struct game_globals_multiplayer_information *information;
+
+	if (game_globals->multiplayer_information.count <= 0)
+		return NONE;
+	information = TAG_BLOCK_GET_ELEMENT(
+		&game_globals->multiplayer_information,
+		0,
+		struct game_globals_multiplayer_information);
+	if (index >= information->vehicles.count)
+		return NONE;
+	return TAG_BLOCK_GET_ELEMENT(&information->vehicles, index, struct game_globals_vehicle)->vehicle.index;
+}
+
+static void game_engine_predict_multiplayer_vehicle(
+	long index)
+{
+	long definition_index = game_engine_multiplayer_vehicle(index);
+
+	if (definition_index != NONE)
+		object_definition_predict(definition_index);
+}
+
 static void game_engine_predict_resources(
 	void)
 {
 	struct game_globals *game_globals;
-	struct game_globals_multiplayer_information *multiplayer_information;
-	struct game_globals_vehicle *vehicle;
 	struct tag_reference *weapon;
 	long weapon_indices[10];
 	long weapon_index;
 
-	game_globals = scenario_get_game_globals();
-	multiplayer_information = TAG_BLOCK_GET_ELEMENT(
-		&game_globals->multiplayer_information,
-		0,
-		struct game_globals_multiplayer_information);
-
 	switch (global_variant.universal_variant.vehicle_set)
 	{
 	case 2:
-		vehicle = TAG_BLOCK_GET_ELEMENT(
-			&multiplayer_information->vehicles,
-			0,
-			struct game_globals_vehicle);
-		object_definition_predict(vehicle->vehicle.index);
+		game_engine_predict_multiplayer_vehicle(0);
 		break;
 
 	case 3:
-		vehicle = TAG_BLOCK_GET_ELEMENT(
-			&multiplayer_information->vehicles,
-			1,
-			struct game_globals_vehicle);
-		object_definition_predict(vehicle->vehicle.index);
+		game_engine_predict_multiplayer_vehicle(1);
 		break;
 
 	case 4:
-		vehicle = TAG_BLOCK_GET_ELEMENT(
-			&multiplayer_information->vehicles,
-			2,
-			struct game_globals_vehicle);
-		object_definition_predict(vehicle->vehicle.index);
+		game_engine_predict_multiplayer_vehicle(2);
 		break;
 
 	default:
-	{
-		struct tag_block *vehicles = &multiplayer_information->vehicles;
-
-		vehicle = TAG_BLOCK_GET_ELEMENT(
-			vehicles,
-			0,
-			struct game_globals_vehicle);
-		object_definition_predict(vehicle->vehicle.index);
-		vehicle = TAG_BLOCK_GET_ELEMENT(
-			vehicles,
-			1,
-			struct game_globals_vehicle);
-		object_definition_predict(vehicle->vehicle.index);
-		vehicle = TAG_BLOCK_GET_ELEMENT(
-			vehicles,
-			2,
-			struct game_globals_vehicle);
-		object_definition_predict(vehicle->vehicle.index);
+		game_engine_predict_multiplayer_vehicle(0);
+		game_engine_predict_multiplayer_vehicle(1);
+		game_engine_predict_multiplayer_vehicle(2);
 		break;
-	}
 	}
 
 	game_globals = scenario_get_game_globals();
@@ -7158,30 +7151,14 @@ long game_engine_remap_vehicle(
 
 	if (game_engine)
 	{
-		struct game_globals *game_globals;
-		struct game_globals_multiplayer_information *multiplayer_information;
-		struct tag_block *vehicles;
-		struct game_globals_vehicle *vehicle0;
-		struct game_globals_vehicle *vehicle1;
-		struct game_globals_vehicle *vehicle2;
-		struct game_globals_vehicle *vehicle;
+		/* (port: NONE for one the map's globals lack) */
+		long vehicle0 = game_engine_multiplayer_vehicle(0);
+		long vehicle1 = game_engine_multiplayer_vehicle(1);
+		long vehicle2 = game_engine_multiplayer_vehicle(2);
 
-		game_globals = scenario_get_game_globals();
-		multiplayer_information = TAG_BLOCK_GET_ELEMENT(
-			&game_globals->multiplayer_information,
-			0,
-			struct game_globals_multiplayer_information);
-		vehicle0 = TAG_BLOCK_GET_ELEMENT(
-			&multiplayer_information->vehicles,
-			0,
-			struct game_globals_vehicle);
-		vehicles = &multiplayer_information->vehicles;
-		vehicle1 = TAG_BLOCK_GET_ELEMENT(vehicles, 1, struct game_globals_vehicle);
-		vehicle2 = TAG_BLOCK_GET_ELEMENT(vehicles, 2, struct game_globals_vehicle);
-
-		if (result != vehicle0->vehicle.index &&
-			result != vehicle1->vehicle.index &&
-			result != vehicle2->vehicle.index)
+		if (result != vehicle0 &&
+			result != vehicle1 &&
+			result != vehicle2)
 		{
 			result = NONE;
 		}
@@ -7193,29 +7170,17 @@ long game_engine_remap_vehicle(
 			break;
 
 		case 2:
-			vehicle = TAG_BLOCK_GET_ELEMENT(
-				vehicles,
-				0,
-				struct game_globals_vehicle);
-			if (vehicle->vehicle.index != result)
+			if (vehicle0 != result)
 				result = NONE;
 			break;
 
 		case 3:
-			vehicle = TAG_BLOCK_GET_ELEMENT(
-				vehicles,
-				1,
-				struct game_globals_vehicle);
-			if (vehicle->vehicle.index != result)
+			if (vehicle1 != result)
 				result = NONE;
 			break;
 
 		case 4:
-			vehicle = TAG_BLOCK_GET_ELEMENT(
-				vehicles,
-				2,
-				struct game_globals_vehicle);
-			if (vehicle->vehicle.index != result)
+			if (vehicle2 != result)
 				result = NONE;
 			break;
 		}
