@@ -4,6 +4,16 @@
 // thread that uses it (the game's), so its messages are taken when that
 // thread returns to its event loop, which it does at every frame.
 addToLibrary({
+	// Emscripten's clock (clock_gettime, the game's GetTickCount and
+	// QueryPerformanceCounter: port/linux/src/xbox_kernel.c) with this
+	// thread's time origin read once: reading performance.timeOrigin each
+	// time made a read of the clock take 1.7 times as long (in a worker in
+	// Chrome, where performance.now() alone takes about 300 ns). (Runs on
+	// the calling thread; upstream 0bfe2112.)
+	$webTimeOrigin: 0,
+	emscripten_get_now__deps: ['$webTimeOrigin'],
+	emscripten_get_now: () => (webTimeOrigin ||= performance.timeOrigin) + performance.now(),
+
 	// generation: how many times the WebSocket has closed. The gateway's
 	// streams die with it (a new session has none), and posix_web_net.c
 	// closes its streams when it sees the count change.
