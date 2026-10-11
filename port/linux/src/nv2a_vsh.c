@@ -147,7 +147,6 @@ static const char shader_prologue[] =
 #else
 	"#version 450 core\n"
 #endif
-	"uniform vec4 c[192];\n"
 	"uniform vec4 viewport_scale;\n"
 	"uniform vec4 viewport_offset;\n"
 	"uniform float point_size;\n"
@@ -195,7 +194,7 @@ static const char shader_prologue[] =
 	"}\n";
 
 char *nv2a_vertex_shader_to_glsl(const DWORD *instructions, unsigned long instruction_count,
-	unsigned long packed_attribute_mask)
+	unsigned long packed_attribute_mask, BOOL constant_block)
 {
 	struct xgpu_text text = { 0 };
 	unsigned long index;
@@ -204,6 +203,11 @@ char *nv2a_vertex_shader_to_glsl(const DWORD *instructions, unsigned long instru
 	xgpu_text_append(&text, "#version %s\n", xgpu_capabilities.shading_language);
 #endif
 	xgpu_text_append(&text, "%s", shader_prologue);
+	if (constant_block)
+		xgpu_text_append(&text, "layout(std140) uniform %s\n{\n\tvec4 c[%d];\n};\n",
+			XGPU_VERTEX_CONSTANT_BLOCK, XGPU_VERTEX_CONSTANT_COUNT);
+	else
+		xgpu_text_append(&text, "uniform vec4 c[%d];\n", XGPU_VERTEX_CONSTANT_COUNT);
 	for (index = 0; index < XGPU_VERTEX_ATTRIBUTE_COUNT; index++)
 	{
 		if (packed_attribute_mask & (1UL << index))

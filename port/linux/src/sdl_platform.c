@@ -637,7 +637,19 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 	setenv("mesa_glthread", "true", 0);
 #endif
 
-#ifdef HALO_ANDROID
+#ifdef HALO_WEB
+	/* The page's CSS sizes the canvas (it fills the /play frame, the
+	picture letterboxed in it). Resizable, SDL gives the canvas's drawing
+	buffer that CSS size again on each of the window's resize events (a
+	phone turned, a foldable unfolded, the page going fullscreen). A
+	fullscreen window only follows them once the browser has made the
+	canvas fullscreen, which a page in the /play frame never does: its
+	request waits for an input event, and the drawing buffer kept the
+	size the page loaded at (a phone loaded in portrait drew the game in a
+	portrait-shaped buffer, shown a third of the size once turned). */
+	platform_window = SDL_CreateWindow("Halo", (int)(width * scale), (int)(height * scale),
+		SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN | SDL_WINDOW_RESIZABLE);
+#elif defined(HALO_ANDROID)
 	platform_window = SDL_CreateWindow("Halo", (int)(width * scale), (int)(height * scale),
 		SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN);
 #else

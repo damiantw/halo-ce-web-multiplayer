@@ -310,6 +310,8 @@ static const struct config_setting config_settings[] =
 		"With gpu_trace_frame, also the vertex shader constants." },
 	{ "debug.gpu_skip_vertex_shaders", _config_string, "\"\"", "HALO_GPU_SKIP_VS", _environment_value, _platform_all,
 		"Comma-separated ids of vertex shaders not to draw with." },
+	{ "debug.gpu_constant_buffer", _config_boolean, "false", "HALO_GPU_CONSTANT_BUFFER", _environment_set_is_true, _platform_all,
+		"Vertex shaders read their constants from a uniform buffer, as they do where the driver drops some of the c[] array." },
 	{ "debug.gpu_dump_shaders", _config_string, "\"\"", "HALO_GPU_DUMP_SHADERS", _environment_value, _platform_all,
 		"A folder to write the generated GLSL to; empty none." },
 	{ "debug.gpu_debug_expression", _config_string, "\"\"", "HALO_GPU_DEBUG_EXPR", _environment_value, _platform_all,

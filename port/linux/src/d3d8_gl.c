@@ -172,11 +172,16 @@ struct vertex_shader_object
 	struct vertex_element elements[XGPU_VERTEX_ATTRIBUTE_COUNT];
 	unsigned long element_count;
 	unsigned long packed_mask;
-	/* [0] streams per the declaration, [1] immediate mode (all floats) */
-	GLuint shader[2];
-	/* which of shader[] have been compiled (bits 0 and 1): one that failed
+	/* [0] streams per the declaration, [1] immediate mode (all floats);
+	[2] and [3] the same reading the constants from the uniform buffer
+	(constant_buffer_sync) */
+	GLuint shader[4];
+	/* which of shader[] have been compiled (bits 0 to 3): one that failed
 	stays 0 and is not compiled again at each draw */
 	unsigned char shaders_tried;
+	/* the variants (bits 0 and 1, as shader[]) that index c[] with a0
+	(skinning: node matrices picked by a vertex's node indices) */
+	unsigned char relative;
 };
 
 /* ---------- programs */
@@ -232,6 +237,13 @@ struct program_entry
 	consecutive locations, a changed range is uploaded by itself */
 	unsigned long constant_count;
 	BOOL constants_consecutive;
+	/* c[] is the uniform block (constant_buffer_sync), not an array */
+	BOOL constant_block;
+	/* the program indexes c[] but the driver kept only part of it: the
+	same program with the constants in the uniform buffer, which draws
+	instead (prepare_draw) */
+	BOOL constants_trimmed;
+	struct program_entry *block_program;
 	/* constants_serial at the program's last constant upload (constants_store) */
 	unsigned long long constants_serial;
 	/* draw_uniforms_serial when the uniforms below were brought up to date */
@@ -242,6 +254,8 @@ struct program_entry
 
 #define FRAGMENT_BUCKETS 1024
 #define PROGRAM_BUCKETS 1024
+/* the uniform buffer binding of the vertex constants' block (nv2a_vsh.c) */
+#define CONSTANT_BLOCK_BINDING 0
 
 static struct fragment_entry *fragment_buckets[FRAGMENT_BUCKETS];
 static struct program_entry *program_buckets[PROGRAM_BUCKETS];
@@ -441,6 +455,7 @@ static struct
 	const char *skip_vertex_shaders;
 	const char *dump_shaders;
 	BOOL statistics;
+	BOOL constant_buffer;
 } debug_settings;
 
 /* ---------- GL state cache
@@ -1013,6 +1028,7 @@ static void gl_initialize(void)
 	debug_settings.dump_shaders = *config_string("debug.gpu_dump_shaders") ?
 		config_string("debug.gpu_dump_shaders") : NULL;
 	debug_settings.statistics = config_boolean("debug.gpu_stats");
+	debug_settings.constant_buffer = config_boolean("debug.gpu_constant_buffer");
 	xgpu_gl_state_invalidate();
 	device.gl_ready = TRUE;
 }
@@ -1929,17 +1945,19 @@ static unsigned long hash_words(const void *data, unsigned long size)
 	return hash;
 }
 
-static GLuint vertex_shader_get(struct vertex_shader_object *program, BOOL immediate)
+static GLuint vertex_shader_get(struct vertex_shader_object *program, BOOL immediate, BOOL constant_block)
 {
-	int variant = immediate ? 1 : 0;
+	int variant = (immediate ? 1 : 0) | (constant_block ? 2 : 0);
 	unsigned char tried = (unsigned char)(1 << variant);
 
 	if (!program->shader[variant] && !(program->shaders_tried & tried))
 	{
 		char *source = nv2a_vertex_shader_to_glsl(program->instructions, program->instruction_count,
-			immediate ? 0 : device.vertex_shader->packed_mask);
+			immediate ? 0 : device.vertex_shader->packed_mask, constant_block);
 
 		program->shaders_tried |= tried;
+		if (strstr(source, "c[clamp("))
+			program->relative |= (unsigned char)(1 << (variant & 1));
 		program->shader[variant] = compile_shader(GL_VERTEX_SHADER, source, "vertex");
 		if (debug_settings.dump_shaders)
 		{
@@ -2005,7 +2023,7 @@ static GLuint fragment_shader_get(const struct nv2a_pixel_shader_key *key)
 	return entry->shader;
 }
 
-static struct program_entry *program_get(GLuint vertex_shader, GLuint fragment_shader)
+static struct program_entry *program_get(GLuint vertex_shader, GLuint fragment_shader, BOOL relative)
 {
 	static struct program_entry *last;
 	unsigned long hash = (vertex_shader * 2654435761UL) ^ fragment_shader;
@@ -2077,6 +2095,32 @@ static struct program_entry *program_get(GLuint vertex_shader, GLuint fragment_s
 				entry->constant_count = XGPU_VERTEX_CONSTANT_COUNT;
 				break;
 			}
+		}
+		/* A program that indexes c[] with a0 can read any of it, so the
+		compiler must keep all of it. A driver that drops the registers
+		past the last one read with a constant index, as though the
+		indexed reads were not there, leaves the node matrices (c[60] on)
+		unset, and WebGL ignores uploads past the size it reports:
+		skinned models (the first-person arms and weapon, bipeds) draw
+		nothing. Such a program draws with the constants in the uniform
+		buffer instead, whose layout (std140) is fixed by the shader. */
+		if (relative && entry->constant_count < XGPU_VERTEX_CONSTANT_COUNT)
+		{
+			static unsigned long reported;
+
+			entry->constants_trimmed = TRUE;
+			if (reported++ < 4)
+				platform_log("vertex shader: the driver keeps c[0..%lu) of a program that indexes c[]; "
+					"its constants go in a uniform buffer", entry->constant_count);
+		}
+	}
+	{
+		GLuint block = glGetUniformBlockIndex(entry->program, XGPU_VERTEX_CONSTANT_BLOCK);
+
+		if (block != GL_INVALID_INDEX)
+		{
+			glUniformBlockBinding(entry->program, block, CONSTANT_BLOCK_BINDING);
+			entry->constant_block = TRUE;
 		}
 	}
 	entry->viewport_scale = glGetUniformLocation(entry->program, "viewport_scale");
@@ -2732,6 +2776,80 @@ static void uniform_float(GLint location, float *shadow, float value)
 	glUniform1f(location, value);
 }
 
+/* the range [*first_out, *last_out] of c[0..limit) changed since
+constants_serial was since; FALSE when none did */
+static BOOL constants_changed_since(unsigned long long since, unsigned long limit,
+	unsigned long *first_out, unsigned long *last_out)
+{
+	unsigned long first = limit, last = 0, index;
+
+	if (constants_serial - since <= XGPU_VERTEX_CONSTANT_COUNT)
+	{
+		unsigned long long serial;
+
+		/* stop at the target rather than incrementing past it: were the
+		target the largest serial, its successor would be zero and the
+		loop would never end (from upstream PR #108; the 64-bit serials
+		never get there, but the loop no longer depends on it) */
+		for (serial = since; serial != constants_serial; )
+		{
+			serial++;
+			index = constant_log[serial % CONSTANT_LOG_SIZE];
+			if (index >= limit)
+				continue;
+			if (first > index)
+				first = index;
+			if (last < index)
+				last = index;
+		}
+	}
+	else
+	{
+		for (index = 0; index < limit; index++)
+		{
+			if (constant_serials[index] > since)
+			{
+				if (first > index)
+					first = index;
+				last = index;
+			}
+		}
+	}
+	*first_out = first;
+	*last_out = last;
+	return first < limit;
+}
+
+/* the uniform buffer the constant-block programs (constant_block) read
+c[] from, bound at CONSTANT_BLOCK_BINDING: one for all of them, as the
+constants are the device's, brought up to date before such a draw */
+static GLuint constant_buffer;
+static unsigned long long constant_buffer_serial;
+
+static void constant_buffer_sync(void)
+{
+	unsigned long first, last;
+
+	if (!constant_buffer)
+	{
+		glGenBuffers(1, &constant_buffer);
+		glBindBuffer(GL_UNIFORM_BUFFER, constant_buffer);
+		glBufferData(GL_UNIFORM_BUFFER, sizeof(device.constants), device.constants, GL_DYNAMIC_DRAW);
+		glBindBufferBase(GL_UNIFORM_BUFFER, CONSTANT_BLOCK_BINDING, constant_buffer);
+		constant_buffer_serial = constants_serial;
+		return;
+	}
+	if (constant_buffer_serial == constants_serial)
+		return;
+	if (constants_changed_since(constant_buffer_serial, XGPU_VERTEX_CONSTANT_COUNT, &first, &last))
+	{
+		glBindBuffer(GL_UNIFORM_BUFFER, constant_buffer);
+		glBufferSubData(GL_UNIFORM_BUFFER, (GLintptr)(first * sizeof(device.constants[0])),
+			(GLsizeiptr)((last - first + 1) * sizeof(device.constants[0])), device.constants[first]);
+	}
+	constant_buffer_serial = constants_serial;
+}
+
 static struct program_entry *prepare_draw(BOOL immediate)
 {
 	struct vertex_shader_object *program = current_program();
@@ -2786,7 +2904,20 @@ static struct program_entry *prepare_draw(BOOL immediate)
 	key.count_samples = device.visibility_test_active && xgpu_capabilities.atomic_counters;
 #endif
 
-	entry = program_get(vertex_shader_get(program, immediate), fragment_shader_get(&key));
+	{
+		GLuint fragment_shader = fragment_shader_get(&key);
+		GLuint vertex_shader = vertex_shader_get(program, immediate, debug_settings.constant_buffer);
+		BOOL relative = (program->relative >> (immediate ? 1 : 0)) & 1;
+
+		entry = program_get(vertex_shader, fragment_shader, relative);
+		if (entry && entry->constants_trimmed)
+		{
+			if (!entry->block_program)
+				entry->block_program = program_get(vertex_shader_get(program, immediate, TRUE), fragment_shader, FALSE);
+			if (entry->block_program)
+				entry = entry->block_program;
+		}
+	}
 	if (!entry)
 	{
 		stats.skipped_link++;
@@ -2816,43 +2947,13 @@ static struct program_entry *prepare_draw(BOOL immediate)
 			(GLintptr)(device.counter_active * sizeof(GLuint)), sizeof(GLuint));
 #endif
 
+	if (entry->constant_block)
+		constant_buffer_sync();
 	if (entry->constants >= 0 && entry->constants_serial != constants_serial)
 	{
-		unsigned long first = entry->constant_count, last = 0, index;
+		unsigned long first, last;
 
-		if (constants_serial - entry->constants_serial <= XGPU_VERTEX_CONSTANT_COUNT)
-		{
-			unsigned long long serial;
-
-			/* stop at the target rather than incrementing past it: were the
-			target the largest serial, its successor would be zero and the
-			loop would never end (from upstream PR #108; the 64-bit serials
-			never get there, but the loop no longer depends on it) */
-			for (serial = entry->constants_serial; serial != constants_serial; )
-			{
-				serial++;
-				index = constant_log[serial % CONSTANT_LOG_SIZE];
-				if (index >= entry->constant_count)
-					continue;
-				if (first > index)
-					first = index;
-				if (last < index)
-					last = index;
-			}
-		}
-		else
-		{
-			for (index = 0; index < entry->constant_count; index++)
-			{
-				if (constant_serials[index] > entry->constants_serial)
-				{
-					if (first > index)
-						first = index;
-					last = index;
-				}
-			}
-		}
-		if (first < entry->constant_count)
+		if (constants_changed_since(entry->constants_serial, entry->constant_count, &first, &last))
 		{
 			if (entry->constants_consecutive)
 				glUniform4fv(entry->constants + (GLint)first, (GLsizei)(last - first + 1), device.constants[first]);
