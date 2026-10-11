@@ -31,7 +31,8 @@
 //
 // Diagnostics, given with env= (the site's /play passes env= through):
 //   HALO_WEB_DPR=<n>   the device pixel ratio the game sees (1: a drawing
-//                      buffer of the canvas's CSS size on a Retina screen)
+//                      buffer of the canvas's CSS size on a Retina screen;
+//                      a phone or tablet has 1 unless this says otherwise)
 // Player settings, given with env= or by the site's game bridge:
 //   HALO_WEB_PLAYER_NAME=<name>    the player's name in network games
 //   HALO_WEB_PLAYER_COLOR=<color>  the player's colour: 0-17 or its name
@@ -48,6 +49,11 @@
 //   HALO_WEB_VIBRATION=<0|1>       0: the controller does not rumble
 //   HALO_WEB_MOUSE_SENSITIVITY=<x> the mouse aim's multiplier, 0.1-10 (1)
 //                                  (port/web/src/web_host.c)
+//   HALO_WEB_TOUCH_CONTROLS=<auto|on|off>  the on-screen touch controls
+//                                  (halo-touch.js): auto shows them on a
+//                                  phone or tablet without a gamepad
+//   HALO_WEB_TOUCH_AIM_ASSIST=<0|1>  0: the touch swipe gets no aim assist
+//   HALO_WEB_TOUCH_SENSITIVITY=<x>  the touch swipe's multiplier, 0.1-10 (1)
 //   HALO_WEB_EXIT_URL=<url>        where the page goes when the player
 //                                  leaves the game (default: stay)
 //   HALO_WEB_MENUS=1               the multiplayer-only build's menus back
@@ -71,9 +77,10 @@
 // "halo:gamepad" event (below); versionMismatch, the "halo:leave" event's
 // "version_mismatch" reason ({hostVersion, clientVersion}) and ?v=<build> on
 // this script's URL passed on to halo.wasm (halo-version.json has the
-// build's network version).
+// build's network version); touchControls, halo-touch.js (the
+// "touch-fullscreen" and "chat-key" {touch: true} messages to the wrapper).
 window.haloFeatures = Object.assign(window.haloFeatures || {}, { webJoin: true, playerColor: true, playerTeam: true, leave: true,
-	inputSettings: true, gamepadEvents: true, versionMismatch: true });
+	inputSettings: true, gamepadEvents: true, versionMismatch: true, touchControls: true });
 (() => {
 	const params = new URLSearchParams(location.search);
 	const envParam = (name) => {
@@ -85,7 +92,13 @@ window.haloFeatures = Object.assign(window.haloFeatures || {}, { webJoin: true, 
 	};
 	// HALO_WEB_DPR: SDL sizes the drawing buffer by window.devicePixelRatio
 	// (SDL_WINDOW_HIGH_PIXEL_DENSITY), read on this thread
-	const dpr = Number(envParam("HALO_WEB_DPR"));
+	// A phone or tablet (a coarse primary pointer with touch: halo-touch.js)
+	// draws at a device pixel ratio of 1, a drawing buffer of the canvas's
+	// CSS size: its 2.5-3x screen would cost the GPU 6-9 times the pixels
+	// for little gain at the Xbox's detail. HALO_WEB_DPR wins.
+	const phone = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches &&
+		("ontouchstart" in window || navigator.maxTouchPoints > 0);
+	const dpr = Number(envParam("HALO_WEB_DPR")) || (phone ? 1 : 0);
 	if (dpr > 0) {
 		try {
 			Object.defineProperty(window, "devicePixelRatio", { configurable: true, get: () => dpr });

@@ -51,6 +51,15 @@ void input_abstraction_update_local_player_preferences(
 	struct game_input_preferences const *preferences);
 struct game_input_state *input_abstraction_get_input_state(
 	short local_player_index);
+#ifdef HALO_WEB
+/* port: the web build's touch controls (port/linux/game/touch_game.c,
+source/game/player_control.c) */
+void input_abstraction_port_button_controls(
+	short controller_index,
+	short *controls);
+boolean input_abstraction_port_look_inverted(
+	short controller_index);
+#endif
 
 /* ---------- globals */
 

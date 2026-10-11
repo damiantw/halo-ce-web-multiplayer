@@ -566,6 +566,22 @@ void input_abstraction_update(
 					error(_error_silent, "unknown joystick preset");
 					break;
 			}
+#ifdef HALO_WEB
+			{
+				/* port: the web build's touch controls' stick
+				(port/linux/src/xinput_sdl.c) moves the player whatever the
+				profile's sticks do, as upstream OpenCE's has it */
+				extern int halo_linux_touch_move(short controller_index, real *forward, real *strafe);
+				real forward;
+				real strafe;
+
+				if (halo_linux_touch_move((short)controller_index, &forward, &strafe))
+				{
+					state->forward_movement = forward;
+					state->strafe = strafe;
+				}
+			}
+#endif
 			input_abstraction_globals.controller_available[controller_index] = TRUE;
 		}
 		else
@@ -736,5 +752,45 @@ static void web_apply_input_settings(
 		preferences->invert_look = invert ? TRUE : FALSE;
 
 	return;
+}
+#endif
+
+#ifdef HALO_WEB
+/* port: the game control on each of the controller's buttons by its
+profile's mapping (NONE for none), numbered as the gamepad's buttons are
+(input.h): the web build's touch controls name their buttons by it
+(port/linux/game/touch_game.c; upstream OpenCE's) */
+void input_abstraction_port_button_controls(
+	short controller_index,
+	short *controls)
+{
+	short button_index;
+	short control_index;
+
+	for (button_index = 0; button_index < NUMBER_OF_GAMEPAD_BUTTONS; button_index++)
+	{
+		controls[button_index] = NONE;
+	}
+	if (controller_index < 0 || controller_index >= MAXIMUM_GAMEPADS)
+		return;
+	for (control_index = 0; control_index < NUMBER_OF_GAME_CONTROLS; control_index++)
+	{
+		byte button_index_bound = input_abstraction_globals.player_control_preferences[controller_index].
+			game_control_to_xbox_buttons[control_index];
+
+		if (button_index_bound < NUMBER_OF_GAMEPAD_BUTTONS && controls[button_index_bound] == NONE)
+		{
+			controls[button_index_bound] = control_index;
+		}
+	}
+}
+
+/* port: whether the controller's profile inverts the look (the touch
+controls' swipe is inverted as the stick is: player_control.c) */
+boolean input_abstraction_port_look_inverted(
+	short controller_index)
+{
+	return controller_index >= 0 && controller_index < MAXIMUM_GAMEPADS &&
+		input_abstraction_globals.player_control_preferences[controller_index].invert_look;
 }
 #endif

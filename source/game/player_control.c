@@ -1099,6 +1099,11 @@ static void get_local_player_input_blob(
 					real yaw_spin_scale;
 					real pitch_spin_scale;
 					real_euler_angles2d look_delta;
+#ifdef HALO_WEB
+					/* port: the touch controls' swipe turned the view (below) */
+					boolean touching = FALSE;
+					boolean touch_assisted = FALSE;
+#endif
 
 					if (input_state->buttons[_button_scope_zoom] &&
 						controls_enable_doubled_spin)
@@ -1132,6 +1137,36 @@ static void get_local_player_input_blob(
 						constants->look_function.count,
 						constants->look_function.address,
 						clamped_pitch) * pitch_spin_scale * look_pitch_rate;
+#ifdef HALO_WEB
+					{
+						/* port: the web build's touch controls' swipe
+						(port/linux/src/xinput_sdl.c), a turn this frame, made a
+						rate as the stick's look is: the zoom, the stun and the
+						magnetism below act on it as on the stick's, so that it
+						slows over a target and follows a moving one
+						(HALO_WEB_TOUCH_AIM_ASSIST, on by default); inverted as
+						the stick is. From upstream OpenCE's player_control.c. */
+						extern int halo_linux_touch_look(short gamepad_index, real *yaw, real *pitch, real *gyro_yaw,
+							real *gyro_pitch);
+						real touch_yaw;
+						real touch_pitch;
+						real gyro_yaw;
+						real gyro_pitch;
+						real touch_scale = time_delta_sec * TICKS_PER_SECOND;
+
+						if (halo_linux_touch_look(gamepad_index, &touch_yaw, &touch_pitch, &gyro_yaw, &gyro_pitch) &&
+							touch_scale > _real_epsilon)
+						{
+							touching = TRUE;
+							if (input_abstraction_port_look_inverted(gamepad_index))
+							{
+								touch_pitch = -touch_pitch;
+							}
+							look_delta.yaw += (touch_yaw + gyro_yaw) / touch_scale;
+							look_delta.pitch += (touch_pitch + gyro_pitch) / touch_scale;
+						}
+					}
+#endif
 
 					if (player->unit_index != NONE && control->zoom_level != NONE)
 					{
@@ -1188,8 +1223,24 @@ static void get_local_player_input_blob(
 							&control->magnetism_level,
 							&target_angular_position,
 							&target_angular_velocity);
+#ifdef HALO_WEB
+						{
+							/* port: no magnetism for the touch controls'
+							swipe without their aim assist (xinput_sdl.c) */
+							extern int halo_linux_touch_aiming(short gamepad_index);
+
+							if (halo_linux_touch_aiming(gamepad_index))
+							{
+								control->magnetism_level = 0.f;
+							}
+						}
+#endif
 						if (player_magnetism_flag && control->magnetism_level > 0.f &&
-							(fabs(clamped_yaw) > _real_epsilon ||
+							(
+#ifdef HALO_WEB
+							touching ||
+#endif
+							fabs(clamped_yaw) > _real_epsilon ||
 							fabs(clamped_pitch) > _real_epsilon ||
 							fabs(input->throttle.i) > _real_epsilon ||
 							fabs(input->throttle.j) > _real_epsilon))
@@ -1218,7 +1269,19 @@ static void get_local_player_input_blob(
 								look_delta.yaw * input_scale;
 							look_delta.pitch = target_angular_velocity.pitch * magnetism_scale +
 								look_delta.pitch * input_scale;
+#ifdef HALO_WEB
+							touch_assisted = touching;
+#endif
 						}
+#ifdef HALO_WEB
+						if (touching)
+						{
+							/* (counted for the page's tests: port/web/src/web_shared.h) */
+							extern void halo_linux_touch_looked(short gamepad_index, int assisted);
+
+							halo_linux_touch_looked(gamepad_index, touch_assisted);
+						}
+#endif
 					}
 
 					{

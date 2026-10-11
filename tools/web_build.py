@@ -93,7 +93,9 @@ WEB_LDFLAGS = [
     "-sPTHREAD_POOL_SIZE=8",
     "-sEXIT_RUNTIME=0",
     "-sFORCE_FILESYSTEM=1",
-    "-sEXPORTED_RUNTIME_METHODS=FS,ENV,callMain",
+    # HEAPU32: the page's touch controls read and write a few words of the
+    # shared memory (port/web/src/web_shared.h, port/web/shell/halo-touch.js)
+    "-sEXPORTED_RUNTIME_METHODS=FS,ENV,callMain,HEAPU32",
     "-sENVIRONMENT=web,worker",
     "-sWASMFS=0",
     "-sGL_ENABLE_GET_PROC_ADDRESS=1",

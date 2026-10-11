@@ -41,6 +41,9 @@ drive the controller.
 #include "platform.h"
 #include "sdl_platform.h"
 #include "port_config.h"
+#ifdef HALO_WEB
+#include "touch_input.h"
+#endif
 
 #include <SDL3/SDL.h>
 #include <math.h>
@@ -144,6 +147,114 @@ int halo_linux_mouse_look(short gamepad_index, float *yaw, float *pitch)
 	*yaw = -x * scale * mouse_sensitivity();
 	*pitch = (invert ? y : -y) * scale * mouse_sensitivity();
 	return TRUE;
+}
+
+/* ---------- touch controls
+
+The web build's on-screen touch controls (port/linux/src/touch_input.c,
+port/web/shell/halo-touch.js), as upstream OpenCE's xinput_sdl.c has them
+for Android and the web: their stick moves the player
+(input_abstraction.c), their swipe turns the view before the aim assist
+(player_control.c), and their buttons are port 0's (XInputGetState). Every
+other build answers no. The mouse and the gamepads are as they were. */
+
+#ifdef HALO_WEB
+/* port/web/src/web_host.c */
+extern float web_touch_sensitivity(void);
+
+/* when port 0's aim last moved by the right stick, and by the touch
+controls (halo_linux_touch_aiming) */
+static Uint64 stick_aimed_ms = 0;
+static Uint64 touch_aimed_ms = 0;
+/* the touch controls moved the player or the aim since port 0's last read
+(the HUD's button prompts then name the controller's buttons) */
+static BOOL touch_used_since_read = FALSE;
+
+/* the touch controls moved the player or the aim (halo_linux_touch_aiming) */
+static void touch_used(void)
+{
+	pthread_mutex_lock(&mouse_lock);
+	touch_aimed_ms = SDL_GetTicks();
+	touch_used_since_read = TRUE;
+	pthread_mutex_unlock(&mouse_lock);
+}
+#endif
+
+/* the touch controls' stick as the player's movement (input_abstraction.c),
+forward and strafe -1..1, whatever the profile's sticks do; nonzero while
+it is pushed. Nothing but in the web build. */
+int halo_linux_touch_move(short controller_index, float *forward, float *strafe)
+{
+	*forward = 0.0f;
+	*strafe = 0.0f;
+	if (controller_index != 0)
+		return FALSE;
+#ifdef HALO_WEB
+	if (!touch_input_move(forward, strafe))
+		return FALSE;
+	touch_used();
+	return TRUE;
+#else
+	return FALSE;
+#endif
+}
+
+/* the touch controls' swipe (and a gyroscope's turn: none yet) since the
+last call, in radians at the mouse's rate per grid unit times
+HALO_WEB_TOUCH_SENSITIVITY, each apart: player_control.c inverts the swipe
+as the profile inverts the stick and makes it the stick's rate before the
+magnetism. Nothing but in the web build. */
+int halo_linux_touch_look(short gamepad_index, float *yaw, float *pitch, float *gyro_yaw, float *gyro_pitch)
+{
+	*yaw = 0.0f;
+	*pitch = 0.0f;
+	*gyro_yaw = 0.0f;
+	*gyro_pitch = 0.0f;
+	if (gamepad_index != 0)
+		return FALSE;
+#ifdef HALO_WEB
+	touch_input_look(0.0022f * web_touch_sensitivity(), yaw, pitch, gyro_yaw, gyro_pitch);
+	if (*yaw == 0.0f && *pitch == 0.0f && *gyro_yaw == 0.0f && *gyro_pitch == 0.0f)
+		return FALSE;
+	touch_used();
+	return TRUE;
+#else
+	return FALSE;
+#endif
+}
+
+/* whether port 0's player aims with the touch controls without their aim
+assist (HALO_WEB_TOUCH_AIM_ASSIST=0): no magnetism then (player_control.c),
+until a stick moves the aim again. With the aim assist (the default), and
+in every other build, no. */
+int halo_linux_touch_aiming(short gamepad_index)
+{
+#ifdef HALO_WEB
+	int aiming;
+
+	if (gamepad_index != 0 || touch_input_aim_assist())
+		return FALSE;
+	pthread_mutex_lock(&mouse_lock);
+	aiming = touch_aimed_ms != 0 && touch_aimed_ms >= stick_aimed_ms;
+	pthread_mutex_unlock(&mouse_lock);
+	return aiming;
+#else
+	(void)gamepad_index;
+	return FALSE;
+#endif
+}
+
+/* a swipe turned port 0's view this frame; assisted: the aim assist's
+magnetism acted on it (player_control.c), counted for the page's tests */
+void halo_linux_touch_looked(short gamepad_index, int assisted)
+{
+#ifdef HALO_WEB
+	if (gamepad_index == 0)
+		touch_input_looked(assisted);
+#else
+	(void)gamepad_index;
+	(void)assisted;
+#endif
 }
 
 /* collects the motion the game has not asked for yet; motion that nobody
@@ -593,6 +704,35 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 		if (count > 0)
 			sdl_gamepad_state(gamepads[0], &state->Gamepad);
 		test_input_gamepad(&state->Gamepad);
+#ifdef HALO_WEB
+		{
+			/* the on-screen touch controls' buttons and triggers, merged
+			into port 0 as a second pad's would be (their stick and swipe go
+			to the game apart: halo_linux_touch_move, halo_linux_touch_look) */
+			XINPUT_GAMEPAD touch;
+			BOOL used;
+			int index;
+
+			memset(&touch, 0, sizeof(touch));
+			touch_input_controls(&touch, input.ui_pointer);
+			state->Gamepad.wButtons |= touch.wButtons;
+			for (index = 0; index < 8; index++)
+			{
+				if (touch.bAnalogButtons[index] > state->Gamepad.bAnalogButtons[index])
+					state->Gamepad.bAnalogButtons[index] = touch.bAnalogButtons[index];
+			}
+			pthread_mutex_lock(&mouse_lock);
+			used = touch_used_since_read;
+			touch_used_since_read = FALSE;
+			if (abs(state->Gamepad.sThumbRX) > 8000 || abs(state->Gamepad.sThumbRY) > 8000)
+				stick_aimed_ms = SDL_GetTicks();
+			pthread_mutex_unlock(&mouse_lock);
+			/* (the HUD's prompts name the controller's buttons, which the
+			overlay's buttons show, while the fingers play) */
+			if (used || gamepad_active(&touch))
+				keyboard_input_latest = FALSE;
+		}
+#endif
 	}
 	else if (port < count)
 	{
@@ -624,6 +764,10 @@ DWORD WINAPI XInputSetState(HANDLE device, PXINPUT_FEEDBACK feedback)
 	/* the player turned the rumble off on the site */
 	if (!web_vibration_enabled())
 		return ERROR_SUCCESS;
+	/* the phone vibrates for the touch controls' player, where the browser
+	lets it (halo-touch.js, while the controls show) */
+	if (port == 0)
+		touch_input_rumble(feedback->Rumble.wLeftMotorSpeed, feedback->Rumble.wRightMotorSpeed);
 #endif
 	if (port < count)
 	{
