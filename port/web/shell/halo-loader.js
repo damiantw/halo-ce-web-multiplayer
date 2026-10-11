@@ -33,6 +33,12 @@
 //   HALO_WEB_DPR=<n>   the device pixel ratio the game sees (1: a drawing
 //                      buffer of the canvas's CSS size on a Retina screen;
 //                      a phone or tablet has 1 unless this says otherwise)
+//   HALO_GL_DEBUG=1, HALO_GPU_STATS=1   the renderer's GL errors, and its draws
+//                      (and those it skipped: no program, a link failure)
+//                      each second, in the console (port_config.c)
+//   HALO_GPU_CONSTANT_BUFFER=1   vertex shaders read their constants from a
+//                      uniform buffer, as they do by themselves where the
+//                      driver drops part of the c[] array (d3d8_gl.c)
 // Player settings, given with env= or by the site's game bridge:
 //   HALO_WEB_PLAYER_NAME=<name>    the player's name in network games
 //   HALO_WEB_PLAYER_COLOR=<color>  the player's colour: 0-17 or its name
