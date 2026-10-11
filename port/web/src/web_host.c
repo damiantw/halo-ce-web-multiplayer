@@ -347,9 +347,14 @@ variables; each one unset, or out of range, leaves the game's default:
 	HALO_WEB_VIBRATION         0: the controller does not rumble
 	HALO_WEB_MOUSE_SENSITIVITY 0.1-10, the multiplier for the mouse aim
 	                           (the desktop builds' input.mouse_sensitivity)
+	HALO_WEB_TOUCH_CONTROLS    auto (default), on or off: the on-screen
+	                           touch controls (web_touch_controls)
+	HALO_WEB_TOUCH_AIM_ASSIST  0: the touch swipe gets no aim assist
+	HALO_WEB_TOUCH_SENSITIVITY 0.1-10, the multiplier for the touch swipe
 
 input_abstraction.c applies the look settings, input_xbox.c the dead zone
-and port/linux/src/xinput_sdl.c the mouse and the rumble. */
+and port/linux/src/xinput_sdl.c the mouse, the touch controls and the
+rumble. */
 static int web_setting_integer(const char *name, int minimum, int maximum)
 {
 	const char *text = getenv(name);
@@ -399,4 +404,38 @@ float web_mouse_sensitivity(void)
 		return 0.0f;
 	value = strtod(text, &end);
 	return !*end && value >= 0.1 && value <= 10.0 ? (float)value : 0.0f;
+}
+
+/* the on-screen touch controls (port/linux/src/touch_input.c,
+port/web/shell/halo-touch.js): HALO_WEB_TOUCH_CONTROLS "on" shows them
+with a controller or a mouse too, "off" never; else ("auto") on a
+touchscreen without a controller (the page decides that) */
+int web_touch_controls(void)
+{
+	const char *text = getenv("HALO_WEB_TOUCH_CONTROLS");
+
+	if (text && (!strcasecmp(text, "on") || !strcmp(text, "1")))
+		return 1;
+	if (text && (!strcasecmp(text, "off") || !strcmp(text, "0")))
+		return -1;
+	return 0;
+}
+
+/* the swipe gets the controller's aim assist unless HALO_WEB_TOUCH_AIM_ASSIST=0 */
+int web_touch_aim_assist(void)
+{
+	return web_setting_integer("HALO_WEB_TOUCH_AIM_ASSIST", 0, 1) != 0;
+}
+
+/* the swipe's turn multiplier (HALO_WEB_TOUCH_SENSITIVITY, 0.1-10), else 1 */
+float web_touch_sensitivity(void)
+{
+	const char *text = getenv("HALO_WEB_TOUCH_SENSITIVITY");
+	char *end;
+	double value;
+
+	if (!text || !*text)
+		return 1.0f;
+	value = strtod(text, &end);
+	return !*end && value >= 0.1 && value <= 10.0 ? (float)value : 1.0f;
 }
