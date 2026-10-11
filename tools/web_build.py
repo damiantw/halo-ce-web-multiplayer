@@ -74,7 +74,6 @@ WEB_LDFLAGS = [
     SDL_PORT_FLAG,
     "-sMAX_WEBGL_VERSION=2",
     "-sMIN_WEBGL_VERSION=2",
-    "-sFULL_ES3=1",
     # the Xbox contiguous window at 0x80000000-0x88000000 (platform.h) lives
     # inside linear memory: wasm32 can address 4 GB
     "-sALLOW_MEMORY_GROWTH=1",

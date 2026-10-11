@@ -2445,8 +2445,14 @@ static void bind_textures(struct nv2a_pixel_shader_key *key, float texture_scale
 				gl_target == GL_TEXTURE_3D ? _xgpu_sampler_3d : _xgpu_sampler_2d;
 		}
 	}
+	/* (a stage the pixel shader does not sample keeps what it had: unbinding
+	it, to bind it again at the next draw that has it, is two calls; upstream
+	a3277d94. A texture deleted invalidates the shadows: xbox_textures.c) */
 	for (stage = 0; stage < D3DTSS_MAXSTAGES; stage++)
-		state_texture(stage, gl_targets[stage], gl_textures[stage]);
+	{
+		if (gl_textures[stage] || key->sampler_type[stage] != _xgpu_sampler_none)
+			state_texture(stage, gl_targets[stage], gl_textures[stage]);
+	}
 }
 
 static GLenum stencil_operation(DWORD operation)
@@ -3779,6 +3785,126 @@ void WINAPI D3DDevice_DrawVertices(D3DPRIMITIVETYPE primitive_type, UINT start_v
 	gl_check_errors("draw");
 }
 
+#ifdef HALO_WEB
+/* WebGL has no base vertex, so the indices of a draw are rebased (less their
+smallest) and uploaded with it, a call into the browser each and a check of
+their range by it. An index array drawn twice the same is kept instead,
+rebased, in a buffer of its own: a draw of it compares its indices with a
+copy and draws from the buffer. Arrays that change (the structure's visible
+triangles, made each frame) are never the same twice, and are uploaded as
+before. When the buffer is full, everything kept is forgotten. (Upstream
+a3277d94.) */
+#define INDEX_CACHE_BUFFER_SIZE (8 * 1024 * 1024)
+#define INDEX_CACHE_SLOTS 8192
+#define INDEX_CACHE_PROBES 4
+
+struct index_cache_entry
+{
+	const WORD *address;
+	unsigned long count;
+	/* the indices as last drawn from address, and room for them */
+	WORD *copy;
+	unsigned long capacity;
+	WORD minimum, maximum;
+	/* in the buffer (when kept is the epoch), or not yet: seen once */
+	unsigned long offset;
+	unsigned long kept;
+};
+
+static struct
+{
+	GLuint buffer;
+	unsigned long used;
+	/* entries kept in an earlier epoch are not in the buffer */
+	unsigned long epoch;
+	struct index_cache_entry entries[INDEX_CACHE_SLOTS];
+} index_cache = { 0, 0, 1 };
+
+/* the buffer offset of the rebased indices kept for the array, with their
+extent; FALSE if it is not kept (yet) */
+static BOOL index_cache_get(const WORD *indices, unsigned long count, unsigned long *minimum, unsigned long *maximum,
+	unsigned long *offset)
+{
+	unsigned long slot = (((unsigned long)indices >> 1) ^ (count * 2654435761UL)) % INDEX_CACHE_SLOTS;
+	unsigned long probe, size = count * sizeof(WORD), index;
+	struct index_cache_entry *entry = NULL, *oldest = NULL;
+	WORD *rebased;
+
+	for (probe = 0; probe < INDEX_CACHE_PROBES; probe++)
+	{
+		struct index_cache_entry *candidate = &index_cache.entries[(slot + probe) % INDEX_CACHE_SLOTS];
+
+		if (candidate->address == indices && candidate->count == count)
+		{
+			entry = candidate;
+			break;
+		}
+		if (!oldest || candidate->kept < oldest->kept)
+			oldest = candidate;
+	}
+	if (entry && entry->copy && !memcmp(entry->copy, indices, size))
+	{
+		if (entry->kept == index_cache.epoch)
+		{
+			*minimum = entry->minimum;
+			*maximum = entry->maximum;
+			*offset = entry->offset;
+			return TRUE;
+		}
+		/* the second time the same: kept from now on */
+		if (index_cache.used + ((size + 15) & ~15UL) > INDEX_CACHE_BUFFER_SIZE)
+		{
+			index_cache.epoch++;
+			index_cache.used = 0;
+		}
+		if (!index_cache.buffer)
+		{
+			glGenBuffers(1, &index_cache.buffer);
+			state_element_array_buffer(index_cache.buffer);
+			glBufferData(GL_ELEMENT_ARRAY_BUFFER, INDEX_CACHE_BUFFER_SIZE, NULL, GL_STATIC_DRAW);
+		}
+		rebased = malloc(size + 2);
+		if (!rebased)
+			return FALSE;
+		for (index = 0; index < count; index++)
+			rebased[index] = (WORD)(indices[index] - entry->minimum);
+		state_element_array_buffer(index_cache.buffer);
+		host_gl_buffer_write(GL_ELEMENT_ARRAY_BUFFER, (unsigned int)index_cache.used, (unsigned int)size, rebased);
+		free(rebased);
+		entry->offset = index_cache.used;
+		entry->kept = index_cache.epoch;
+		index_cache.used += (size + 15) & ~15UL;
+		*minimum = entry->minimum;
+		*maximum = entry->maximum;
+		*offset = entry->offset;
+		return TRUE;
+	}
+	/* seen for the first time, or changed: remembered */
+	if (!entry)
+		entry = oldest;
+	if (entry->capacity < count)
+	{
+		WORD *grown = realloc(entry->copy, size);
+
+		if (!grown)
+		{
+			entry->address = NULL;
+			return FALSE;
+		}
+		entry->copy = grown;
+		entry->capacity = count;
+	}
+	memcpy(entry->copy, indices, size);
+	entry->address = indices;
+	entry->count = count;
+	entry->kept = 0;
+	index_extent(indices, count, 0, FALSE, minimum, maximum);
+	entry->minimum = (WORD)*minimum;
+	entry->maximum = (WORD)*maximum;
+	return FALSE;
+}
+#endif
+
 void WINAPI D3DDevice_DrawIndexedVertices(D3DPRIMITIVETYPE primitive_type, UINT vertex_count, CONST WORD *index_data)
 {
 	unsigned long minimum, maximum, index, count, generation = 0, index_offset = 0, first_vertex;
@@ -3795,6 +3921,22 @@ void WINAPI D3DDevice_DrawIndexedVertices(D3DPRIMITIVETYPE primitive_type, UINT 
 		xgpu_capabilities.base_vertex &&
 #endif
 		mirror_range((unsigned long)index_data, vertex_count * sizeof(WORD), &index_buffer, &index_offset, &generation);
+#ifdef HALO_WEB
+	if (!mirrored && primitive_type != D3DPT_QUADLIST &&
+		index_cache_get(index_data, vertex_count, &minimum, &maximum, &index_offset))
+	{
+		trace_draw("indexed", primitive_type, vertex_count, NULL);
+		/* (the web's streams always start at vertex 0: web_setup_streams,
+		stream_upload) */
+		if (!setup_streams(device.base_vertex_index + minimum, maximum - minimum + 1))
+		{
+			state_element_array_buffer(index_cache.buffer);
+			glDrawElements(primitive_mode(primitive_type), (GLsizei)vertex_count, GL_UNSIGNED_SHORT,
+				(const void *)index_offset);
+			return;
+		}
+	}
+#endif
 	index_extent(index_data, vertex_count, generation, mirrored, &minimum, &maximum);
 	trace_draw("indexed", primitive_type, vertex_count, NULL);
 	/* (the streams from the base vertex on: index i is vertex base + i) */
@@ -4065,6 +4207,19 @@ void WINAPI D3DDevice_SetVertexDataColor(INT reg, D3DCOLOR color)
 
 /* ---------- clearing */
 
+/* the state a clear changed, no longer what the shadows say: the masks it
+cleared through, the scissor (left disabled) and its rectangle. The rest of
+the state is as it was, so the next draw sets only these again (all of it
+again, at every clear, was hundreds of calls a frame; upstream a3277d94) */
+static void clear_state_forget(void)
+{
+	gl_state.color_mask = 0xff;
+	gl_state.depth_mask = 0xff;
+	gl_state.stencil_write_mask = (GLuint)-1;
+	gl_state.scissor_test = 0;
+	memset(gl_state.scissor, 0xff, sizeof(gl_state.scissor));
+}
+
 void WINAPI D3DDevice_Clear(DWORD count, CONST D3DRECT *rectangles, DWORD flags, D3DCOLOR color, float z, DWORD stencil)
 {
 	float rgba[4];
@@ -4116,7 +4271,7 @@ void WINAPI D3DDevice_Clear(DWORD count, CONST D3DRECT *rectangles, DWORD flags,
 			target_pixel((float)(device.viewport.Y + device.viewport.Height), 1) - y0);
 		glClear(mask);
 		glDisable(GL_SCISSOR_TEST);
-		xgpu_gl_state_invalidate();
+		clear_state_forget();
 		return;
 	}
 	glEnable(GL_SCISSOR_TEST);
@@ -4139,7 +4294,7 @@ void WINAPI D3DDevice_Clear(DWORD count, CONST D3DRECT *rectangles, DWORD flags,
 		glClear(mask);
 	}
 	glDisable(GL_SCISSOR_TEST);
-	xgpu_gl_state_invalidate();
+	clear_state_forget();
 }
 
 /* ---------- presentation */
