@@ -229,6 +229,9 @@ struct program_entry
 	GLint bump_matrix, bump_luminance, texture_scale;
 	GLint texture_lod_bias;
 	GLint screen_offset;
+	/* nv2a_pixel_shader_key's source_blend's color, and what it last had */
+	GLint blend_constant;
+	float blend_constant_value[4];
 
 	/* the vertex constants c[0..constant_count) the program uses; with
 	consecutive locations, a changed range is uploaded by itself */
@@ -2135,6 +2138,7 @@ static struct program_entry *program_get(GLuint vertex_shader, GLuint fragment_s
 	entry->texture_scale = glGetUniformLocation(entry->program, "texture_scale");
 	entry->texture_lod_bias = glGetUniformLocation(entry->program, "texture_lod_bias");
 	entry->screen_offset = glGetUniformLocation(entry->program, "screen_offset");
+	entry->blend_constant = glGetUniformLocation(entry->program, "blend_constant");
 	for (stage = 0; stage < D3DTSS_MAXSTAGES; stage++)
 	{
 		char name[8];
@@ -2489,8 +2493,14 @@ static void bind_textures(struct nv2a_pixel_shader_key *key, float texture_scale
 				gl_target == GL_TEXTURE_3D ? _xgpu_sampler_3d : _xgpu_sampler_2d;
 		}
 	}
+	/* (a stage the pixel shader does not sample keeps what it had: unbinding
+	it, to bind it again at the next draw that has it, is two calls; upstream
+	a3277d94. A texture deleted invalidates the shadows: xbox_textures.c) */
 	for (stage = 0; stage < D3DTSS_MAXSTAGES; stage++)
-		state_texture(stage, gl_targets[stage], gl_textures[stage]);
+	{
+		if (gl_textures[stage] || key->sampler_type[stage] != _xgpu_sampler_none)
+			state_texture(stage, gl_targets[stage], gl_textures[stage]);
+	}
 }
 
 static GLenum stencil_operation(DWORD operation)
@@ -2512,49 +2522,30 @@ static GLenum blend_equation(DWORD operation)
 	}
 }
 
+/* the source blend factor the pixel shader applies (nv2a_pixel_shader_key's
+source_blend), when the draw's blend mixes a constant color factor with a
+constant alpha one, which WebGL refuses (INVALID_OPERATION, and the draw
+blends with the previous function): the transparent meter shaders (the
+ammo counters, the plasma weapons' heat meters) blend so; 0 otherwise.
+(Upstream 5cd65a0c, in place of this fork's nearest WebGL factors.) */
+static unsigned char source_blend_in_shader(void)
+{
 #ifdef HALO_WEB
-static BOOL blend_factor_is_constant_color(GLenum factor)
-{
-	return factor == GL_CONSTANT_COLOR || factor == GL_ONE_MINUS_CONSTANT_COLOR;
-}
+	DWORD source = D3D__RenderState[D3DRS_SRCBLEND], destination = D3D__RenderState[D3DRS_DESTBLEND];
+	int source_kind = source == D3DBLEND_CONSTANTCOLOR || source == D3DBLEND_INVCONSTANTCOLOR ? 1 :
+		source == D3DBLEND_CONSTANTALPHA || source == D3DBLEND_INVCONSTANTALPHA ? 2 : 0;
+	int destination_kind = destination == D3DBLEND_CONSTANTCOLOR || destination == D3DBLEND_INVCONSTANTCOLOR ? 1 :
+		destination == D3DBLEND_CONSTANTALPHA || destination == D3DBLEND_INVCONSTANTALPHA ? 2 : 0;
 
-static BOOL blend_factor_is_constant_alpha(GLenum factor)
-{
-	return factor == GL_CONSTANT_ALPHA || factor == GL_ONE_MINUS_CONSTANT_ALPHA;
-}
-
-/* WebGL refuses a blend function that mixes the constant colour with the
-constant alpha (INVALID_OPERATION, and the draw blends with the previous
-function). The transparent meter shaders (the plasma weapons' heat meters,
-rasterizer_xbox_transparent_geometry.c) blend so: the alpha factor becomes
-the constant it is (the tints use an alpha of 0 or 1), else the colour
-factor of the constant's alpha as a grey, when the colour is grey too. */
-static void web_blend_factors(GLenum *source, GLenum *destination, DWORD blend_color)
-{
-	GLenum *alpha_factor;
-	unsigned long alpha = blend_color >> 24;
-
-	if (blend_factor_is_constant_alpha(*source) && blend_factor_is_constant_color(*destination))
-		alpha_factor = source;
-	else if (blend_factor_is_constant_alpha(*destination) && blend_factor_is_constant_color(*source))
-		alpha_factor = destination;
-	else
-		return;
-	if (alpha == 0xff || alpha == 0)
+	if (D3D__RenderState[D3DRS_ALPHABLENDENABLE] && source_kind && destination_kind && source_kind != destination_kind)
 	{
-		BOOL one = (alpha == 0xff) == (*alpha_factor == GL_CONSTANT_ALPHA);
-
-		*alpha_factor = one ? GL_ONE : GL_ZERO;
+		return source == D3DBLEND_CONSTANTCOLOR ? 1 : source == D3DBLEND_INVCONSTANTCOLOR ? 2 :
+			source == D3DBLEND_CONSTANTALPHA ? 3 : 4;
 	}
-	else
-	{
-		/* (right when the constant is a grey of its alpha; the nearest
-		WebGL has otherwise) */
-		*alpha_factor = *alpha_factor == GL_CONSTANT_ALPHA ? GL_CONSTANT_COLOR : GL_ONE_MINUS_CONSTANT_COLOR;
-	}
-}
-
 #endif
+	return 0;
+}
+
 static void apply_raster_state(BOOL has_depth)
 {
 	DWORD *rs = D3D__RenderState;
@@ -2649,12 +2640,10 @@ static void apply_raster_state(BOOL has_depth)
 		GLenum equation = blend_equation(rs[D3DRS_BLENDOP]);
 		float blend_color[4];
 
-		GLenum source = (GLenum)rs[D3DRS_SRCBLEND];
+		/* (a constant factor the pixel shader applies: source_blend_in_shader) */
+		GLenum source = source_blend_in_shader() ? GL_ONE : (GLenum)rs[D3DRS_SRCBLEND];
 		GLenum destination = (GLenum)rs[D3DRS_DESTBLEND];
 
-#ifdef HALO_WEB
-		web_blend_factors(&source, &destination, rs[D3DRS_BLENDCOLOR]);
-#endif
 		if (gl_state.blend_source != source || gl_state.blend_destination != destination)
 		{
 			gl_state.blend_source = source;
@@ -2909,6 +2898,7 @@ static struct program_entry *prepare_draw(BOOL immediate)
 	}
 	key.alpha_test_function = D3D__RenderState[D3DRS_ALPHATESTENABLE] ? D3D__RenderState[D3DRS_ALPHAFUNC] : 0;
 	key.fog_enable = D3D__RenderState[D3DRS_FOGENABLE] != 0;
+	key.source_blend = source_blend_in_shader();
 	key.fog_table_mode = (unsigned char)D3D__RenderState[D3DRS_FOGTABLEMODE];
 #ifdef HALO_ANDROID
 	key.count_samples = device.visibility_test_active && xgpu_capabilities.atomic_counters;
@@ -2940,6 +2930,17 @@ static struct program_entry *prepare_draw(BOOL immediate)
 	else
 		stats.draws++;
 	state_program(entry->program);
+	if (key.source_blend && entry->blend_constant >= 0)
+	{
+		float blend_constant[4];
+
+		color_to_vec4(D3D__RenderState[D3DRS_BLENDCOLOR], blend_constant);
+		if (memcmp(entry->blend_constant_value, blend_constant, sizeof(blend_constant)))
+		{
+			memcpy(entry->blend_constant_value, blend_constant, sizeof(blend_constant));
+			glUniform4fv(entry->blend_constant, 1, blend_constant);
+		}
+	}
 #ifdef HALO_ANDROID
 	if (key.count_samples)
 		glBindBufferRange(GL_ATOMIC_COUNTER_BUFFER, 0, device.visibility_counters,
@@ -3880,6 +3881,126 @@ void WINAPI D3DDevice_DrawVertices(D3DPRIMITIVETYPE primitive_type, UINT start_v
 	gl_check_errors("draw");
 }
 
+#ifdef HALO_WEB
+/* WebGL has no base vertex, so the indices of a draw are rebased (less their
+smallest) and uploaded with it, a call into the browser each and a check of
+their range by it. An index array drawn twice the same is kept instead,
+rebased, in a buffer of its own: a draw of it compares its indices with a
+copy and draws from the buffer. Arrays that change (the structure's visible
+triangles, made each frame) are never the same twice, and are uploaded as
+before. When the buffer is full, everything kept is forgotten. (Upstream
+a3277d94.) */
+#define INDEX_CACHE_BUFFER_SIZE (8 * 1024 * 1024)
+#define INDEX_CACHE_SLOTS 8192
+#define INDEX_CACHE_PROBES 4
+
+struct index_cache_entry
+{
+	const WORD *address;
+	unsigned long count;
+	/* the indices as last drawn from address, and room for them */
+	WORD *copy;
+	unsigned long capacity;
+	WORD minimum, maximum;
+	/* in the buffer (when kept is the epoch), or not yet: seen once */
+	unsigned long offset;
+	unsigned long kept;
+};
+
+static struct
+{
+	GLuint buffer;
+	unsigned long used;
+	/* entries kept in an earlier epoch are not in the buffer */
+	unsigned long epoch;
+	struct index_cache_entry entries[INDEX_CACHE_SLOTS];
+} index_cache = { 0, 0, 1 };
+
+/* the buffer offset of the rebased indices kept for the array, with their
+extent; FALSE if it is not kept (yet) */
+static BOOL index_cache_get(const WORD *indices, unsigned long count, unsigned long *minimum, unsigned long *maximum,
+	unsigned long *offset)
+{
+	unsigned long slot = (((unsigned long)indices >> 1) ^ (count * 2654435761UL)) % INDEX_CACHE_SLOTS;
+	unsigned long probe, size = count * sizeof(WORD), index;
+	struct index_cache_entry *entry = NULL, *oldest = NULL;
+	WORD *rebased;
+
+	for (probe = 0; probe < INDEX_CACHE_PROBES; probe++)
+	{
+		struct index_cache_entry *candidate = &index_cache.entries[(slot + probe) % INDEX_CACHE_SLOTS];
+
+		if (candidate->address == indices && candidate->count == count)
+		{
+			entry = candidate;
+			break;
+		}
+		if (!oldest || candidate->kept < oldest->kept)
+			oldest = candidate;
+	}
+	if (entry && entry->copy && !memcmp(entry->copy, indices, size))
+	{
+		if (entry->kept == index_cache.epoch)
+		{
+			*minimum = entry->minimum;
+			*maximum = entry->maximum;
+			*offset = entry->offset;
+			return TRUE;
+		}
+		/* the second time the same: kept from now on */
+		if (index_cache.used + ((size + 15) & ~15UL) > INDEX_CACHE_BUFFER_SIZE)
+		{
+			index_cache.epoch++;
+			index_cache.used = 0;
+		}
+		if (!index_cache.buffer)
+		{
+			glGenBuffers(1, &index_cache.buffer);
+			state_element_array_buffer(index_cache.buffer);
+			glBufferData(GL_ELEMENT_ARRAY_BUFFER, INDEX_CACHE_BUFFER_SIZE, NULL, GL_STATIC_DRAW);
+		}
+		rebased = malloc(size + 2);
+		if (!rebased)
+			return FALSE;
+		for (index = 0; index < count; index++)
+			rebased[index] = (WORD)(indices[index] - entry->minimum);
+		state_element_array_buffer(index_cache.buffer);
+		host_gl_buffer_write(GL_ELEMENT_ARRAY_BUFFER, (unsigned int)index_cache.used, (unsigned int)size, rebased);
+		free(rebased);
+		entry->offset = index_cache.used;
+		entry->kept = index_cache.epoch;
+		index_cache.used += (size + 15) & ~15UL;
+		*minimum = entry->minimum;
+		*maximum = entry->maximum;
+		*offset = entry->offset;
+		return TRUE;
+	}
+	/* seen for the first time, or changed: remembered */
+	if (!entry)
+		entry = oldest;
+	if (entry->capacity < count)
+	{
+		WORD *grown = realloc(entry->copy, size);
+
+		if (!grown)
+		{
+			entry->address = NULL;
+			return FALSE;
+		}
+		entry->copy = grown;
+		entry->capacity = count;
+	}
+	memcpy(entry->copy, indices, size);
+	entry->address = indices;
+	entry->count = count;
+	entry->kept = 0;
+	index_extent(indices, count, 0, FALSE, minimum, maximum);
+	entry->minimum = (WORD)*minimum;
+	entry->maximum = (WORD)*maximum;
+	return FALSE;
+}
+#endif
+
 void WINAPI D3DDevice_DrawIndexedVertices(D3DPRIMITIVETYPE primitive_type, UINT vertex_count, CONST WORD *index_data)
 {
 	unsigned long minimum, maximum, index, count, generation = 0, index_offset = 0, first_vertex;
@@ -3896,6 +4017,22 @@ void WINAPI D3DDevice_DrawIndexedVertices(D3DPRIMITIVETYPE primitive_type, UINT 
 		xgpu_capabilities.base_vertex &&
 #endif
 		mirror_range((unsigned long)index_data, vertex_count * sizeof(WORD), &index_buffer, &index_offset, &generation);
+#ifdef HALO_WEB
+	if (!mirrored && primitive_type != D3DPT_QUADLIST &&
+		index_cache_get(index_data, vertex_count, &minimum, &maximum, &index_offset))
+	{
+		trace_draw("indexed", primitive_type, vertex_count, NULL);
+		/* (the web's streams always start at vertex 0: web_setup_streams,
+		stream_upload) */
+		if (!setup_streams(device.base_vertex_index + minimum, maximum - minimum + 1))
+		{
+			state_element_array_buffer(index_cache.buffer);
+			glDrawElements(primitive_mode(primitive_type), (GLsizei)vertex_count, GL_UNSIGNED_SHORT,
+				(const void *)index_offset);
+			return;
+		}
+	}
+#endif
 	index_extent(index_data, vertex_count, generation, mirrored, &minimum, &maximum);
 	trace_draw("indexed", primitive_type, vertex_count, NULL);
 	/* (the streams from the base vertex on: index i is vertex base + i) */
@@ -4166,6 +4303,19 @@ void WINAPI D3DDevice_SetVertexDataColor(INT reg, D3DCOLOR color)
 
 /* ---------- clearing */
 
+/* the state a clear changed, no longer what the shadows say: the masks it
+cleared through, the scissor (left disabled) and its rectangle. The rest of
+the state is as it was, so the next draw sets only these again (all of it
+again, at every clear, was hundreds of calls a frame; upstream a3277d94) */
+static void clear_state_forget(void)
+{
+	gl_state.color_mask = 0xff;
+	gl_state.depth_mask = 0xff;
+	gl_state.stencil_write_mask = (GLuint)-1;
+	gl_state.scissor_test = 0;
+	memset(gl_state.scissor, 0xff, sizeof(gl_state.scissor));
+}
+
 void WINAPI D3DDevice_Clear(DWORD count, CONST D3DRECT *rectangles, DWORD flags, D3DCOLOR color, float z, DWORD stencil)
 {
 	float rgba[4];
@@ -4217,7 +4367,7 @@ void WINAPI D3DDevice_Clear(DWORD count, CONST D3DRECT *rectangles, DWORD flags,
 			target_pixel((float)(device.viewport.Y + device.viewport.Height), 1) - y0);
 		glClear(mask);
 		glDisable(GL_SCISSOR_TEST);
-		xgpu_gl_state_invalidate();
+		clear_state_forget();
 		return;
 	}
 	glEnable(GL_SCISSOR_TEST);
@@ -4240,7 +4390,7 @@ void WINAPI D3DDevice_Clear(DWORD count, CONST D3DRECT *rectangles, DWORD flags,
 		glClear(mask);
 	}
 	glDisable(GL_SCISSOR_TEST);
-	xgpu_gl_state_invalidate();
+	clear_state_forget();
 }
 
 /* ---------- presentation */
