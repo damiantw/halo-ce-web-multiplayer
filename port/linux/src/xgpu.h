@@ -68,9 +68,12 @@ void xgpu_text_append(struct xgpu_text *text, const char *format, ...) __attribu
 /* GLSL for an NV2A vertex program (the instruction words after the program
 header). Attributes whose bit is set in packed_attribute_mask are fed as
 NORMPACKED3 32-bit integers and unpacked in the shader. Returns a malloc'd
-string. */
+string. With constant_block the constants c[] are the uniform block
+XGPU_VERTEX_CONSTANT_BLOCK (std140, a buffer d3d8_gl.c keeps) rather than a
+uniform array. */
+#define XGPU_VERTEX_CONSTANT_BLOCK "vertex_constants"
 char *nv2a_vertex_shader_to_glsl(const DWORD *instructions, unsigned long instruction_count,
-	unsigned long packed_attribute_mask);
+	unsigned long packed_attribute_mask, BOOL constant_block);
 
 /* ---------- pixel shaders */
 

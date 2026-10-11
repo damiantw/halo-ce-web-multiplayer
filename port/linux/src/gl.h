@@ -120,6 +120,8 @@ this list to generate the guest's entry points */
 	X(glGetProgramInfoLog) \
 	X(glUseProgram) \
 	X(glGetUniformLocation) \
+	X(glGetUniformBlockIndex) \
+	X(glUniformBlockBinding) \
 	X(glUniform1i) \
 	X(glUniform1iv) \
 	X(glUniform1f) \
@@ -225,6 +227,8 @@ this list to generate the guest's entry points */
 	X(glGetProgramInfoLog) \
 	X(glUseProgram) \
 	X(glGetUniformLocation) \
+	X(glGetUniformBlockIndex) \
+	X(glUniformBlockBinding) \
 	X(glUniform1i) \
 	X(glUniform1iv) \
 	X(glUniform1f) \
@@ -335,6 +339,8 @@ pointers, sees the declarations without these aliases */
 #define glGetProgramInfoLog halo_glGetProgramInfoLog
 #define glUseProgram halo_glUseProgram
 #define glGetUniformLocation halo_glGetUniformLocation
+#define glGetUniformBlockIndex halo_glGetUniformBlockIndex
+#define glUniformBlockBinding halo_glUniformBlockBinding
 #define glUniform1i halo_glUniform1i
 #define glUniform1iv halo_glUniform1iv
 #define glUniform1f halo_glUniform1f
@@ -438,6 +444,8 @@ pointers, sees the declarations without these aliases */
 #define glGetProgramInfoLog halo_glGetProgramInfoLog
 #define glUseProgram halo_glUseProgram
 #define glGetUniformLocation halo_glGetUniformLocation
+#define glGetUniformBlockIndex halo_glGetUniformBlockIndex
+#define glUniformBlockBinding halo_glUniformBlockBinding
 #define glUniform1i halo_glUniform1i
 #define glUniform1iv halo_glUniform1iv
 #define glUniform1f halo_glUniform1f
