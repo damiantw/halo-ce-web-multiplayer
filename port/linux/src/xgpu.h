@@ -100,7 +100,11 @@ struct nv2a_pixel_shader_key
 	unsigned char fog_table_mode;
 	/* inside a visibility test: count the samples that pass (Android) */
 	unsigned char count_samples;
-	unsigned char pad;
+	/* the source's blend factor, applied here instead (1 the blend color, 2
+	one less it, 3 its alpha, 4 one less that; 0 none): WebGL refuses a
+	blend of a constant color factor with a constant alpha one, as the
+	meters' (shader_transparent_meter; upstream 5cd65a0c) */
+	unsigned char source_blend;
 };
 
 char *nv2a_pixel_shader_to_glsl(const struct nv2a_pixel_shader_key *key);

@@ -224,6 +224,9 @@ struct program_entry
 	GLint bump_matrix, bump_luminance, texture_scale;
 	GLint texture_lod_bias;
 	GLint screen_offset;
+	/* nv2a_pixel_shader_key's source_blend's color, and what it last had */
+	GLint blend_constant;
+	float blend_constant_value[4];
 
 	/* the vertex constants c[0..constant_count) the program uses; with
 	consecutive locations, a changed range is uploaded by itself */
@@ -2091,6 +2094,7 @@ static struct program_entry *program_get(GLuint vertex_shader, GLuint fragment_s
 	entry->texture_scale = glGetUniformLocation(entry->program, "texture_scale");
 	entry->texture_lod_bias = glGetUniformLocation(entry->program, "texture_lod_bias");
 	entry->screen_offset = glGetUniformLocation(entry->program, "screen_offset");
+	entry->blend_constant = glGetUniformLocation(entry->program, "blend_constant");
 	for (stage = 0; stage < D3DTSS_MAXSTAGES; stage++)
 	{
 		char name[8];
@@ -2474,49 +2478,30 @@ static GLenum blend_equation(DWORD operation)
 	}
 }
 
+/* the source blend factor the pixel shader applies (nv2a_pixel_shader_key's
+source_blend), when the draw's blend mixes a constant color factor with a
+constant alpha one, which WebGL refuses (INVALID_OPERATION, and the draw
+blends with the previous function): the transparent meter shaders (the
+ammo counters, the plasma weapons' heat meters) blend so; 0 otherwise.
+(Upstream 5cd65a0c, in place of this fork's nearest WebGL factors.) */
+static unsigned char source_blend_in_shader(void)
+{
 #ifdef HALO_WEB
-static BOOL blend_factor_is_constant_color(GLenum factor)
-{
-	return factor == GL_CONSTANT_COLOR || factor == GL_ONE_MINUS_CONSTANT_COLOR;
-}
+	DWORD source = D3D__RenderState[D3DRS_SRCBLEND], destination = D3D__RenderState[D3DRS_DESTBLEND];
+	int source_kind = source == D3DBLEND_CONSTANTCOLOR || source == D3DBLEND_INVCONSTANTCOLOR ? 1 :
+		source == D3DBLEND_CONSTANTALPHA || source == D3DBLEND_INVCONSTANTALPHA ? 2 : 0;
+	int destination_kind = destination == D3DBLEND_CONSTANTCOLOR || destination == D3DBLEND_INVCONSTANTCOLOR ? 1 :
+		destination == D3DBLEND_CONSTANTALPHA || destination == D3DBLEND_INVCONSTANTALPHA ? 2 : 0;
 
-static BOOL blend_factor_is_constant_alpha(GLenum factor)
-{
-	return factor == GL_CONSTANT_ALPHA || factor == GL_ONE_MINUS_CONSTANT_ALPHA;
-}
-
-/* WebGL refuses a blend function that mixes the constant colour with the
-constant alpha (INVALID_OPERATION, and the draw blends with the previous
-function). The transparent meter shaders (the plasma weapons' heat meters,
-rasterizer_xbox_transparent_geometry.c) blend so: the alpha factor becomes
-the constant it is (the tints use an alpha of 0 or 1), else the colour
-factor of the constant's alpha as a grey, when the colour is grey too. */
-static void web_blend_factors(GLenum *source, GLenum *destination, DWORD blend_color)
-{
-	GLenum *alpha_factor;
-	unsigned long alpha = blend_color >> 24;
-
-	if (blend_factor_is_constant_alpha(*source) && blend_factor_is_constant_color(*destination))
-		alpha_factor = source;
-	else if (blend_factor_is_constant_alpha(*destination) && blend_factor_is_constant_color(*source))
-		alpha_factor = destination;
-	else
-		return;
-	if (alpha == 0xff || alpha == 0)
+	if (D3D__RenderState[D3DRS_ALPHABLENDENABLE] && source_kind && destination_kind && source_kind != destination_kind)
 	{
-		BOOL one = (alpha == 0xff) == (*alpha_factor == GL_CONSTANT_ALPHA);
-
-		*alpha_factor = one ? GL_ONE : GL_ZERO;
+		return source == D3DBLEND_CONSTANTCOLOR ? 1 : source == D3DBLEND_INVCONSTANTCOLOR ? 2 :
+			source == D3DBLEND_CONSTANTALPHA ? 3 : 4;
 	}
-	else
-	{
-		/* (right when the constant is a grey of its alpha; the nearest
-		WebGL has otherwise) */
-		*alpha_factor = *alpha_factor == GL_CONSTANT_ALPHA ? GL_CONSTANT_COLOR : GL_ONE_MINUS_CONSTANT_COLOR;
-	}
-}
-
 #endif
+	return 0;
+}
+
 static void apply_raster_state(BOOL has_depth)
 {
 	DWORD *rs = D3D__RenderState;
@@ -2611,12 +2596,10 @@ static void apply_raster_state(BOOL has_depth)
 		GLenum equation = blend_equation(rs[D3DRS_BLENDOP]);
 		float blend_color[4];
 
-		GLenum source = (GLenum)rs[D3DRS_SRCBLEND];
+		/* (a constant factor the pixel shader applies: source_blend_in_shader) */
+		GLenum source = source_blend_in_shader() ? GL_ONE : (GLenum)rs[D3DRS_SRCBLEND];
 		GLenum destination = (GLenum)rs[D3DRS_DESTBLEND];
 
-#ifdef HALO_WEB
-		web_blend_factors(&source, &destination, rs[D3DRS_BLENDCOLOR]);
-#endif
 		if (gl_state.blend_source != source || gl_state.blend_destination != destination)
 		{
 			gl_state.blend_source = source;
@@ -2797,6 +2780,7 @@ static struct program_entry *prepare_draw(BOOL immediate)
 	}
 	key.alpha_test_function = D3D__RenderState[D3DRS_ALPHATESTENABLE] ? D3D__RenderState[D3DRS_ALPHAFUNC] : 0;
 	key.fog_enable = D3D__RenderState[D3DRS_FOGENABLE] != 0;
+	key.source_blend = source_blend_in_shader();
 	key.fog_table_mode = (unsigned char)D3D__RenderState[D3DRS_FOGTABLEMODE];
 #ifdef HALO_ANDROID
 	key.count_samples = device.visibility_test_active && xgpu_capabilities.atomic_counters;
@@ -2815,6 +2799,17 @@ static struct program_entry *prepare_draw(BOOL immediate)
 	else
 		stats.draws++;
 	state_program(entry->program);
+	if (key.source_blend && entry->blend_constant >= 0)
+	{
+		float blend_constant[4];
+
+		color_to_vec4(D3D__RenderState[D3DRS_BLENDCOLOR], blend_constant);
+		if (memcmp(entry->blend_constant_value, blend_constant, sizeof(blend_constant)))
+		{
+			memcpy(entry->blend_constant_value, blend_constant, sizeof(blend_constant));
+			glUniform4fv(entry->blend_constant, 1, blend_constant);
+		}
+	}
 #ifdef HALO_ANDROID
 	if (key.count_samples)
 		glBindBufferRange(GL_ATOMIC_COUNTER_BUFFER, 0, device.visibility_counters,
