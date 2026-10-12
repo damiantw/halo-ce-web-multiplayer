@@ -14630,7 +14630,7 @@ static void scenario_switch_structure_bsp_evaluate(
 		else if (!scripted_multiplayer_bsp_reported)
 		{
 			scripted_multiplayer_bsp_reported = TRUE;
-			error(_error_silent, "switch_bsp from a script is ignored after the multiplayer game has chosen its bsp");
+			error(2 /* _error_silent */, "switch_bsp from a script is ignored after the multiplayer game has chosen its bsp");
 		}
 		hs_return(thread_index, 0);
 	}
