@@ -37,6 +37,10 @@ unsigned int host_gl_read_buffer_word(unsigned int buffer, unsigned int offset);
 void host_gl_buffer_write(unsigned int target, unsigned int offset, unsigned int size, const void *data);
 void host_gl_fence_frame(unsigned int slot);
 void host_gl_wait_frame(unsigned int slot);
+#ifdef HALO_WEB
+/* the GPU WebGL names (WEBGL_debug_renderer_info), or "" (web_host.c) */
+void web_gl_renderer(char *text, int size);
+#endif
 #endif
 
 /* ---------- GL state
