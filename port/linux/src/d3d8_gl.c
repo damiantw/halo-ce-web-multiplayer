@@ -3694,12 +3694,12 @@ static GLuint web_chunk_get(int indices, unsigned long size, unsigned long *capa
 	return buffer;
 }
 
-/* the ring's next frame: its buffers are free again */
+/* the ring's next frame (device.buffer_ring, advanced at Present): its
+buffers are free again */
 static void web_chunks_begin_frame(void)
 {
 	int indices, chunk_class;
 
-	device.buffer_ring = (device.buffer_ring + 1) % STREAM_BUFFER_RING;
 	for (indices = 0; indices < 2; indices++)
 	{
 		for (chunk_class = 0; chunk_class < WEB_CHUNK_CLASSES; chunk_class++)
@@ -3707,8 +3707,6 @@ static void web_chunks_begin_frame(void)
 	}
 	device.stream_capacity = 0;
 	device.index_capacity = 0;
-	device.stream_offset = 0;
-	device.index_offset = 0;
 }
 
 /* size bytes of data into a pooled buffer no queued draw reads, which
@@ -5018,8 +5016,10 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 		device.index_buffer = device.index_buffers[device.buffer_ring];
 		device.stream_offset = 0;
 		device.index_offset = 0;
-#elif defined(HALO_WEB)
+#ifdef HALO_WEB
+		/* (the web build is HALO_ANDROID too) */
 		web_chunks_begin_frame();
+#endif
 #else
 		device.stream_offset = STREAM_BUFFER_SIZE; /* orphan next frame */
 		device.index_offset = INDEX_BUFFER_SIZE;
