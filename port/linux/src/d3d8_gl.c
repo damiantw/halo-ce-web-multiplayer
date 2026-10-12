@@ -377,6 +377,15 @@ struct gl_device
 	unsigned long stream_offset;
 	GLuint index_buffer;
 	unsigned long index_offset;
+#ifdef HALO_WEB
+	/* (web_chunk_get) the room in the stream and index buffers, the draws
+	made so far, and the count at each buffer's latest write */
+	unsigned long stream_capacity;
+	unsigned long index_capacity;
+	unsigned long draw_serial;
+	unsigned long stream_serial;
+	unsigned long index_serial;
+#endif
 	GLuint samplers[D3DTSS_MAXSTAGES];
 
 	GLuint queries[VISIBILITY_TEST_SLOTS];
@@ -435,6 +444,9 @@ static struct
 	unsigned long target_changes;
 	/* vertex and index bytes drawn from the mirror, and streamed */
 	unsigned long mirrored_bytes, streamed_bytes;
+	/* buffer storage (re)specified (glBufferData) and written into
+	(glBufferSubData) by the draws' uploads */
+	unsigned long buffer_allocations, buffer_writes;
 } stats;
 
 static D3DDevice *device_pointer(void)
@@ -2040,6 +2052,22 @@ static unsigned long hash_words(const void *data, unsigned long size)
 	return hash;
 }
 
+/* size is a multiple of 4. Every draw compares its pixel shader key and its
+uniforms' inputs (about 300 bytes each) with recent ones: the loop has no
+early exit, so that the compiler compares several words at once, where the
+C library's memcmp (the Windows build's) compares them one at a time */
+static BOOL words_equal(const void *a, const void *b, unsigned long size)
+{
+	const DWORD *words_a = a;
+	const DWORD *words_b = b;
+	DWORD difference = 0;
+	unsigned long index;
+
+	for (index = 0; index < size / 4; index++)
+		difference |= words_a[index] ^ words_b[index];
+	return difference == 0;
+}
+
 static GLuint vertex_shader_get(struct vertex_shader_object *program, BOOL immediate, BOOL constant_block)
 {
 	int variant = (immediate ? 1 : 0) | (constant_block ? 2 : 0);
@@ -2082,13 +2110,13 @@ static GLuint fragment_shader_get(const struct nv2a_pixel_shader_key *key)
 	struct fragment_entry *entry;
 	char *source;
 
-	if (last && !memcmp(&last->key, key, sizeof(*key)))
+	if (last && words_equal(&last->key, key, sizeof(*key)))
 		return last->shader;
 	hash = hash_words(key, sizeof(*key));
 	bucket = &fragment_buckets[hash % FRAGMENT_BUCKETS];
 	for (entry = *bucket; entry; entry = entry->next)
 	{
-		if (entry->hash == hash && !memcmp(&entry->key, key, sizeof(*key)))
+		if (entry->hash == hash && words_equal(&entry->key, key, sizeof(*key)))
 		{
 			last = entry;
 			return entry->shader;
@@ -3096,6 +3124,9 @@ static struct program_entry *prepare_draw(BOOL immediate)
 		stats.immediate_draws++;
 	else
 		stats.draws++;
+#ifdef HALO_WEB
+	device.draw_serial++;
+#endif
 	state_program(entry->program);
 	if (key.source_blend && entry->blend_constant >= 0)
 	{
@@ -3168,7 +3199,7 @@ static struct program_entry *prepare_draw(BOOL immediate)
 			inputs[count++] = state[D3DTSS_BUMPENVLOFFSET];
 			inputs[count++] = state[D3DTSS_MIPMAPLODBIAS];
 		}
-		if (!draw_uniforms_serial || memcmp(inputs, draw_uniform_inputs, sizeof(inputs)))
+		if (!draw_uniforms_serial || !words_equal(inputs, draw_uniform_inputs, sizeof(inputs)))
 		{
 			struct draw_uniforms *converted = &draw_uniforms;
 
@@ -3596,10 +3627,23 @@ streams (web_setup_streams) and the immediate mode each have buffers of
 their own, which keep the attribute pointers where they are; anything else
 takes the next buffer of a ring (as in fucktrevor/halo-ce-universal
 c9aedaab, CC0). The offset of such an upload is always 0. */
-#define WEB_UPLOAD_RING 256
+/* (upstream 568f8c1f) The draws' own streams (web_setup_streams) and the
+immediate mode keep their buffers and replace their storage as above. Any
+other upload goes into a buffer no queued draw reads, without new storage
+each time: a buffer taken from pools of power-of-two sizes (4 KB to 32 MB),
+one set for each frame of a ring of STREAM_BUFFER_RING, written again only
+when its frame comes round again, by which time the GPU is done with it.
+Uploads between two draws share a buffer (draw_serial). */
+#define WEB_CHUNK_SHIFT 12 /* 4 KB */
+#define WEB_CHUNK_CLASSES 14 /* to 32 MB */
 
-static GLuint web_upload_ring[WEB_UPLOAD_RING];
-static unsigned long web_upload_next;
+static struct web_chunks
+{
+	GLuint *buffers;
+	unsigned long count;
+	unsigned long capacity;
+	unsigned long next;
+} web_chunks[2][STREAM_BUFFER_RING][WEB_CHUNK_CLASSES];
 
 /* new storage for buffer, bound to target, holding size bytes of data */
 static void web_buffer_replace(GLenum target, GLuint buffer, const void *data, unsigned long size)
@@ -3609,6 +3653,99 @@ static void web_buffer_replace(GLenum target, GLuint buffer, const void *data, u
 	else
 		state_element_array_buffer(buffer);
 	glBufferData(target, (GLsizeiptr)size, data, GL_STREAM_DRAW);
+	stats.buffer_allocations++;
+}
+
+/* a buffer of at least size bytes for this frame's vertices (indices 0)
+or indices (indices 1), bound, and its size; 0 when out of memory */
+static GLuint web_chunk_get(int indices, unsigned long size, unsigned long *capacity)
+{
+	struct web_chunks *chunks;
+	int chunk_class = 0;
+	GLuint buffer;
+
+	while (chunk_class < WEB_CHUNK_CLASSES - 1 && (1UL << (WEB_CHUNK_SHIFT + chunk_class)) < size)
+		chunk_class++;
+	chunks = &web_chunks[indices][device.buffer_ring][chunk_class];
+	*capacity = 1UL << (WEB_CHUNK_SHIFT + chunk_class);
+	if (size > *capacity)
+		return 0;
+	if (chunks->next == chunks->count)
+	{
+		if (chunks->count == chunks->capacity)
+		{
+			unsigned long grown_capacity = chunks->capacity ? chunks->capacity * 2 : 64;
+			GLuint *grown = realloc(chunks->buffers, grown_capacity * sizeof(*grown));
+
+			if (!grown)
+				return 0;
+			chunks->buffers = grown;
+			chunks->capacity = grown_capacity;
+		}
+		glGenBuffers(1, &chunks->buffers[chunks->count]);
+		buffer = chunks->buffers[chunks->count++];
+		web_buffer_replace(indices ? GL_ELEMENT_ARRAY_BUFFER : GL_ARRAY_BUFFER, buffer, NULL, *capacity);
+	}
+	buffer = chunks->buffers[chunks->next++];
+	if (indices)
+		state_element_array_buffer(buffer);
+	else
+		state_array_buffer(buffer);
+	return buffer;
+}
+
+/* the ring's next frame (device.buffer_ring, advanced at Present): its
+buffers are free again */
+static void web_chunks_begin_frame(void)
+{
+	int indices, chunk_class;
+
+	for (indices = 0; indices < 2; indices++)
+	{
+		for (chunk_class = 0; chunk_class < WEB_CHUNK_CLASSES; chunk_class++)
+			web_chunks[indices][device.buffer_ring][chunk_class].next = 0;
+	}
+	device.stream_capacity = 0;
+	device.index_capacity = 0;
+}
+
+/* size bytes of data into a pooled buffer no queued draw reads, which
+becomes *buffer; the offset in it. (Out of memory, or over 32 MB: a buffer
+of its own given new storage, as before, at offset 0.) */
+static unsigned long web_chunk_upload(int indices, GLuint *buffer, unsigned long *buffer_offset,
+	unsigned long *buffer_capacity, unsigned long *buffer_serial, const void *data, unsigned long size)
+{
+	static GLuint fallback[2];
+	GLenum target = indices ? GL_ELEMENT_ARRAY_BUFFER : GL_ARRAY_BUFFER;
+	unsigned long room = (size + 15) & ~15UL, offset;
+
+	if (!*buffer_capacity || *buffer_offset + room > *buffer_capacity || *buffer_serial != device.draw_serial)
+	{
+		GLuint chunk = web_chunk_get(indices, room, buffer_capacity);
+
+		if (!chunk)
+		{
+			if (!fallback[indices])
+				glGenBuffers(1, &fallback[indices]);
+			*buffer = fallback[indices];
+			*buffer_capacity = 0;
+			*buffer_offset = 0;
+			web_buffer_replace(target, *buffer, data, (size + 3) & ~3UL);
+			return 0;
+		}
+		*buffer = chunk;
+		*buffer_offset = 0;
+	}
+	else if (indices)
+		state_element_array_buffer(*buffer);
+	else
+		state_array_buffer(*buffer);
+	offset = *buffer_offset;
+	glBufferSubData(target, (GLintptr)offset, (GLsizeiptr)size, data);
+	stats.buffer_writes++;
+	*buffer_serial = device.draw_serial;
+	*buffer_offset += room;
+	return offset;
 }
 
 static void stream_reserve(unsigned long size)
@@ -3616,15 +3753,11 @@ static void stream_reserve(unsigned long size)
 	(void)size;
 }
 
-/* the upload goes into the next buffer of the ring, which becomes
-device.stream_buffer; the offset is 0 */
+/* the upload's offset in device.stream_buffer, which it may change */
 static unsigned long stream_upload(const void *data, unsigned long size)
 {
-	if (!web_upload_ring[0])
-		glGenBuffers(WEB_UPLOAD_RING, web_upload_ring);
-	device.stream_buffer = web_upload_ring[web_upload_next++ % WEB_UPLOAD_RING];
-	web_buffer_replace(GL_ARRAY_BUFFER, device.stream_buffer, data, (size + 3) & ~3UL);
-	return 0;
+	return web_chunk_upload(0, &device.stream_buffer, &device.stream_offset, &device.stream_capacity,
+		&device.stream_serial, data, size);
 }
 #else
 static void stream_reserve(unsigned long size)
@@ -3701,11 +3834,11 @@ static unsigned long stream_upload_swizzled(const struct vertex_shader_object *d
 #endif
 
 #ifdef HALO_WEB
-/* the index buffer gets new storage for each upload (see stream_upload) */
+/* (as stream_upload) the upload's offset in device.index_buffer */
 static unsigned long index_upload(const void *data, unsigned long size)
 {
-	web_buffer_replace(GL_ELEMENT_ARRAY_BUFFER, device.index_buffer, data, (size + 3) & ~3UL);
-	return 0;
+	return web_chunk_upload(1, &device.index_buffer, &device.index_offset, &device.index_capacity,
+		&device.index_serial, data, size);
 }
 #else
 static unsigned long index_upload(const void *data, unsigned long size)
@@ -4883,6 +5016,10 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 		device.index_buffer = device.index_buffers[device.buffer_ring];
 		device.stream_offset = 0;
 		device.index_offset = 0;
+#ifdef HALO_WEB
+		/* (the web build is HALO_ANDROID too) */
+		web_chunks_begin_frame();
+#endif
 #else
 		device.stream_offset = STREAM_BUFFER_SIZE; /* orphan next frame */
 		device.index_offset = INDEX_BUFFER_SIZE;
@@ -4893,10 +5030,11 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 	if (debug_settings.statistics && device.frame % 60 == 0)
 	{
 		platform_log("frame %lu: %lu draws, %lu immediate, %lu clears, %lu target changes; skipped %lu no program, %lu no target, %lu link; "
-			"%lu KB mirrored, %lu KB streamed",
+			"%lu KB mirrored, %lu KB streamed; %lu buffer allocations, %lu buffer writes",
 			device.frame, stats.draws / stats.presents, stats.immediate_draws / stats.presents, stats.clears / stats.presents,
 			stats.target_changes / stats.presents, stats.skipped_no_program, stats.skipped_no_target, stats.skipped_link,
-			stats.mirrored_bytes / stats.presents / 1024, stats.streamed_bytes / stats.presents / 1024);
+			stats.mirrored_bytes / stats.presents / 1024, stats.streamed_bytes / stats.presents / 1024,
+			stats.buffer_allocations / stats.presents, stats.buffer_writes / stats.presents);
 		memset(&stats, 0, sizeof(stats));
 		{
 			/* (R relative c[a0], P NORMPACKED3, S shorts, B bytes: draws
