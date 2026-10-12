@@ -182,6 +182,18 @@ struct vertex_shader_object
 	/* the variants (bits 0 and 1, as shader[]) that index c[] with a0
 	(skinning: node matrices picked by a vertex's node indices) */
 	unsigned char relative;
+	/* declaration_decoded: 0 not yet known, 1 no, 2 yes */
+	unsigned char decoded;
+};
+
+enum
+{
+	_decode_vertices_none,
+	/* declarations with an element narrower than 4 bytes or off 4-byte
+	alignment: the models' PBYTE2 node indices and NORMSHORT1 weights */
+	_decode_vertices_small,
+	/* every declaration with an element that is not a float */
+	_decode_vertices_all
 };
 
 /* ---------- programs */
@@ -456,7 +468,28 @@ static struct
 	const char *dump_shaders;
 	BOOL statistics;
 	BOOL constant_buffer;
+	/* debug.web_cpu_decode_vertices: which declarations' vertices are
+	decoded into floats (vertex_decode, declaration_decoded) */
+	int decode_vertices;
 } debug_settings;
+
+/* draws by the kind of vertices they read (debug.gpu_stats, and the web's
+debug overlay): a bit each for NORMPACKED3, shorts, bytes or colours, and
+a vertex program indexing c[] with a0 (skinned and rigid models) */
+enum
+{
+	_draw_format_packed = 1,
+	_draw_format_short = 2,
+	_draw_format_byte = 4,
+	_draw_format_relative = 8,
+	DRAW_FORMAT_CLASSES = 16
+};
+
+static struct
+{
+	unsigned long draws[DRAW_FORMAT_CLASSES];
+	unsigned long skipped[DRAW_FORMAT_CLASSES];
+} format_stats;
 
 /* ---------- GL state cache
 
@@ -954,6 +987,11 @@ static void gl_initialize(void)
 		platform_log("OpenGL ES %d.%d: copy image %d, border clamp %d, anisotropy %d, S3TC %d, sample counting %d",
 			(int)major, (int)minor, xgpu_capabilities.copy_image, xgpu_capabilities.border_clamp,
 			xgpu_capabilities.anisotropy, xgpu_capabilities.s3tc, xgpu_capabilities.atomic_counters);
+		if (xgpu_capabilities.s3tc && config_boolean("debug.web_force_dxt_decode"))
+		{
+			xgpu_capabilities.s3tc = FALSE;
+			platform_log("DXT textures decompressed on the CPU (HALO_WEB_FORCE_DXT_DECODE)");
+		}
 	}
 #else
 	if (config_boolean("debug.gl_debug"))
@@ -1029,6 +1067,30 @@ static void gl_initialize(void)
 		config_string("debug.gpu_dump_shaders") : NULL;
 	debug_settings.statistics = config_boolean("debug.gpu_stats");
 	debug_settings.constant_buffer = config_boolean("debug.gpu_constant_buffer");
+#ifdef HALO_WEB
+	{
+		/* auto: on PowerVR (the Pixel 10's Tensor G5), whose WebGL draws
+		the models (their PBYTE2 node indices and NORMSHORT1 weights at
+		bytes 28 and 30 of 32) as nothing */
+		const char *mode = config_string("debug.web_cpu_decode_vertices");
+		char renderer[256];
+		BOOL powervr;
+
+		web_gl_renderer(renderer, sizeof(renderer));
+		powervr = strstr(renderer, "PowerVR") || strstr(renderer, "Imagination") || strstr(renderer, "IMG ");
+		if (!*mode || !strcasecmp(mode, "auto"))
+			debug_settings.decode_vertices = powervr ? _decode_vertices_small : _decode_vertices_none;
+		else if (!strcmp(mode, "0") || !strcasecmp(mode, "off") || !strcasecmp(mode, "false") || !strcasecmp(mode, "none"))
+			debug_settings.decode_vertices = _decode_vertices_none;
+		else if (!strcasecmp(mode, "small"))
+			debug_settings.decode_vertices = _decode_vertices_small;
+		else
+			debug_settings.decode_vertices = _decode_vertices_all;
+		platform_log("web: GPU %s; vertices decoded into floats on the CPU: %s (HALO_WEB_CPU_DECODE_VERTICES=%s)", renderer,
+			debug_settings.decode_vertices == _decode_vertices_all ? "all non-float" :
+			debug_settings.decode_vertices == _decode_vertices_small ? "small elements" : "none", *mode ? mode : "auto");
+	}
+#endif
 	xgpu_gl_state_invalidate();
 	device.gl_ready = TRUE;
 }
@@ -1932,6 +1994,39 @@ static struct vertex_shader_object *current_program(void)
 	return program ? program : device.vertex_shader;
 }
 
+/* whether a declaration's vertices are decoded into floats
+(debug.web_cpu_decode_vertices; the web build's only) */
+static BOOL declaration_decoded(struct vertex_shader_object *declaration)
+{
+#ifdef HALO_WEB
+	if (!declaration || debug_settings.decode_vertices == _decode_vertices_none)
+		return FALSE;
+	if (!declaration->decoded)
+	{
+		unsigned long index;
+		BOOL decoded = FALSE;
+
+		for (index = 0; index < declaration->element_count; index++)
+		{
+			const struct vertex_element *element = &declaration->elements[index];
+
+			if (element->type == D3DVSDT_NONE)
+				continue;
+			if (debug_settings.decode_vertices == _decode_vertices_all ? (element->type & 0xf) != 2 :
+				(element->bytes & 3) || (element->offset & 3))
+			{
+				decoded = TRUE;
+			}
+		}
+		declaration->decoded = decoded ? 2 : 1;
+	}
+	return declaration->decoded == 2;
+#else
+	(void)declaration;
+	return FALSE;
+#endif
+}
+
 /* ---------- program cache */
 
 /* size is a multiple of 4 */
@@ -1953,7 +2048,7 @@ static GLuint vertex_shader_get(struct vertex_shader_object *program, BOOL immed
 	if (!program->shader[variant] && !(program->shaders_tried & tried))
 	{
 		char *source = nv2a_vertex_shader_to_glsl(program->instructions, program->instruction_count,
-			immediate ? 0 : device.vertex_shader->packed_mask, constant_block);
+			immediate || declaration_decoded(device.vertex_shader) ? 0 : device.vertex_shader->packed_mask, constant_block);
 
 		program->shaders_tried |= tried;
 		if (strstr(source, "c[clamp("))
@@ -2850,6 +2945,68 @@ static void constant_buffer_sync(void)
 	constant_buffer_serial = constants_serial;
 }
 
+/* the draw's format class (format_stats) */
+static unsigned format_class(const struct vertex_shader_object *declaration, const struct vertex_shader_object *program,
+	BOOL immediate)
+{
+	unsigned kind = program && ((program->relative >> (immediate ? 1 : 0)) & 1) ? _draw_format_relative : 0;
+	unsigned long index;
+
+	if (immediate || !declaration)
+		return kind;
+	for (index = 0; index < declaration->element_count; index++)
+	{
+		const struct vertex_element *element = &declaration->elements[index];
+
+		if (!device.streams[element->stream].data || element->type == D3DVSDT_NONE)
+			continue;
+		/* the low nibble is the kind (xdk_d3d8.h) */
+		switch (element->type & 0xf)
+		{
+		case 6: kind |= _draw_format_packed; break;
+		case 1: case 5: kind |= _draw_format_short; break;
+		case 0: case 4: kind |= _draw_format_byte; break;
+		default: break;
+		}
+	}
+	return kind;
+}
+
+/* debug.gpu_stats: each vertex program and declaration pair, the first time
+it draws: what it reads, for the web's debug overlay */
+static void format_note(const struct vertex_shader_object *declaration, const struct vertex_shader_object *program,
+	BOOL immediate, unsigned kind, BOOL drawn)
+{
+	static struct { const void *declaration, *program; unsigned char immediate; } seen[256];
+	static unsigned long seen_count;
+	char text[512];
+	unsigned long index, length;
+
+	for (index = 0; index < seen_count; index++)
+	{
+		if (seen[index].declaration == declaration && seen[index].program == program && seen[index].immediate == immediate)
+			return;
+	}
+	if (seen_count >= sizeof(seen) / sizeof(seen[0]))
+		return;
+	seen[seen_count].declaration = declaration;
+	seen[seen_count].program = program;
+	seen[seen_count].immediate = (unsigned char)immediate;
+	seen_count++;
+	length = (unsigned long)snprintf(text, sizeof(text), "%s", immediate ? "immediate (floats)" : "");
+	for (index = 0; !immediate && declaration && index < declaration->element_count && length < sizeof(text) - 32; index++)
+	{
+		const struct vertex_element *element = &declaration->elements[index];
+
+		length += (unsigned long)snprintf(text + length, sizeof(text) - length, "%sv%u:%02x@%u+%u/%lu", index ? " " : "",
+			element->reg, element->type, element->stream, element->offset, (unsigned long)device.streams[element->stream].stride);
+	}
+	platform_log("draw format: vertex program %lu, %s%s%s%s [%s]%s", program ? program->id : 0UL,
+		kind & _draw_format_relative ? "relative c[a0] " : "", kind & _draw_format_packed ? "NORMPACKED3 " : "",
+		kind & _draw_format_short ? "shorts " : "", kind & _draw_format_byte ? "bytes " : "", text,
+		drawn ? "" : " NOT DRAWN (no program: compile or link failed)");
+}
+
 static struct program_entry *prepare_draw(BOOL immediate)
 {
 	struct vertex_shader_object *program = current_program();
@@ -2917,6 +3074,16 @@ static struct program_entry *prepare_draw(BOOL immediate)
 			if (entry->block_program)
 				entry = entry->block_program;
 		}
+	}
+	{
+		unsigned kind = format_class(device.vertex_shader, program, immediate);
+
+		if (entry)
+			format_stats.draws[kind]++;
+		else
+			format_stats.skipped[kind]++;
+		if (debug_settings.statistics)
+			format_note(device.vertex_shader, program, immediate, kind, entry != NULL);
 	}
 	if (!entry)
 	{
@@ -3598,6 +3765,128 @@ static void attribute_format(const struct vertex_element *element, GLint *size, 
 	}
 }
 
+/* ---------- vertices decoded into floats (debug.web_cpu_decode_vertices)
+
+A diagnostic and workaround for drivers that mishandle the attributes the
+Xbox's compressed vertices become: NORMPACKED3 as a uint attribute
+(vertexAttribIPointer) unpacked with integer shifts in the shader, and the
+normalized shorts and bytes. Each element of a stream is decoded into 1 to
+4 floats, packed in declaration order (decoded_offset), and the shaders are
+generated without integer attributes (vertex_shader_get). */
+
+static unsigned long vertex_decoded_components(unsigned char type)
+{
+	switch (type)
+	{
+	case D3DVSDT_NORMPACKED3: case D3DVSDT_FLOAT2H: return 3;
+	case D3DVSDT_D3DCOLOR: return 4;
+	case D3DVSDT_NONE: return 0;
+	default: return (type >> 4) & 0xf;
+	}
+}
+
+static void vertex_decode_element(unsigned char type, const unsigned char *in, float *out, BOOL swizzled_colors)
+{
+	unsigned long count = vertex_decoded_components(type), index;
+
+	switch (type & 0xf)
+	{
+	case 2: /* floats */
+		memcpy(out, in, count * sizeof(float));
+		break;
+	case 6: /* 11:11:10, as unpack_normpacked3 (nv2a_vsh.c) */
+	{
+		DWORD packed;
+		long x, y, z;
+
+		memcpy(&packed, in, sizeof(packed));
+		x = (long)(packed & 0x7ff);
+		y = (long)((packed >> 11) & 0x7ff);
+		z = (long)((packed >> 22) & 0x3ff);
+		if (x & 0x400) x -= 0x800;
+		if (y & 0x400) y -= 0x800;
+		if (z & 0x200) z -= 0x400;
+		out[0] = x / 1023.0f;
+		out[1] = y / 1023.0f;
+		out[2] = z / 511.0f;
+		break;
+	}
+	case 1: /* normalized shorts (WebGL's: max(s / 32767, -1)) */
+	case 5: /* shorts */
+		for (index = 0; index < count; index++)
+		{
+			short value;
+
+			memcpy(&value, in + index * 2, sizeof(value));
+			out[index] = (type & 0xf) == 1 ? (value < -32767 ? -1.0f : value / 32767.0f) : (float)value;
+		}
+		break;
+	case 4: /* bytes */
+		for (index = 0; index < count; index++)
+			out[index] = in[index] / 255.0f;
+		break;
+	case 0: /* D3DCOLOR: read as the attribute would be (attribute_format) */
+		out[0] = in[swizzled_colors ? 2 : 0] / 255.0f;
+		out[1] = in[1] / 255.0f;
+		out[2] = in[swizzled_colors ? 0 : 2] / 255.0f;
+		out[3] = in[3] / 255.0f;
+		break;
+	default:
+		for (index = 0; index < count; index++)
+			out[index] = 0.0f;
+		break;
+	}
+}
+
+static float *vertex_decode_buffer;
+static unsigned long vertex_decode_capacity;
+
+/* count vertices of a stream into floats; returns the buffer and its
+stride, and each element's offset in it (by element index) */
+static const float *vertex_decode(const struct vertex_shader_object *declaration, unsigned long stream,
+	const unsigned char *data, unsigned long count, unsigned long stride, BOOL swizzled_colors,
+	unsigned long *decoded_stride, unsigned long decoded_offset[XGPU_VERTEX_ATTRIBUTE_COUNT])
+{
+	unsigned long index, vertex, floats = 0;
+
+	for (index = 0; index < declaration->element_count; index++)
+	{
+		const struct vertex_element *element = &declaration->elements[index];
+
+		decoded_offset[index] = floats * sizeof(float);
+		if (element->stream == stream && element->type != D3DVSDT_NONE)
+			floats += vertex_decoded_components(element->type);
+	}
+	if (!floats)
+		floats = 1;
+	/* (and a vertex of zeros past the end: vertex_upload_padding) */
+	if ((count + 1) * floats > vertex_decode_capacity)
+	{
+		float *grown = realloc(vertex_decode_buffer, (count + 1) * floats * sizeof(float));
+
+		if (!grown)
+			return NULL;
+		vertex_decode_buffer = grown;
+		vertex_decode_capacity = (count + 1) * floats;
+	}
+	memset(vertex_decode_buffer + count * floats, 0, floats * sizeof(float));
+	for (vertex = 0; vertex < count; vertex++)
+	{
+		const unsigned char *in = data + vertex * stride;
+		float *out = vertex_decode_buffer + vertex * floats;
+
+		for (index = 0; index < declaration->element_count; index++)
+		{
+			const struct vertex_element *element = &declaration->elements[index];
+
+			if (element->stream == stream && element->type != D3DVSDT_NONE)
+				vertex_decode_element(element->type, in + element->offset, out + decoded_offset[index] / sizeof(float), swizzled_colors);
+		}
+	}
+	*decoded_stride = floats * sizeof(float);
+	return vertex_decode_buffer;
+}
+
 /* upload vertices [first, first + count) of every stream the declaration
 uses and point the attributes at them; attribute data then starts at
 vertex 0 of the uploaded range */
@@ -3641,6 +3930,8 @@ static BOOL web_setup_streams(unsigned long first, unsigned long count, unsigned
 	struct vertex_shader_object *declaration = device.vertex_shader;
 	BOOL used[WEB_STREAMS] = { FALSE };
 	BOOL enabled[XGPU_VERTEX_ATTRIBUTE_COUNT] = { FALSE };
+	unsigned long decoded_stride[WEB_STREAMS] = { 0 };
+	unsigned long decoded_offset[WEB_STREAMS][XGPU_VERTEX_ATTRIBUTE_COUNT];
 	unsigned long index, stream;
 
 	for (index = 0; index < declaration->element_count; index++)
@@ -3665,7 +3956,23 @@ static BOOL web_setup_streams(unsigned long first, unsigned long count, unsigned
 		if (!used[stream])
 			continue;
 		base = PLATFORM_PHYSICAL_TO_VIRTUAL(device.streams[stream].data);
-		web_buffer_replace(GL_ARRAY_BUFFER, web_stream_buffers[stream], base + first * stride, count * stride);
+		if (declaration_decoded(declaration))
+		{
+			const float *decoded = vertex_decode(declaration, stream, base + first * stride, count, stride, FALSE,
+				&decoded_stride[stream], decoded_offset[stream]);
+
+			if (!decoded)
+				return FALSE;
+			web_buffer_replace(GL_ARRAY_BUFFER, web_stream_buffers[stream], decoded, (count + 1) * decoded_stride[stream]);
+			stats.streamed_bytes += count * decoded_stride[stream];
+			continue;
+		}
+		/* with the decoding on (PowerVR), a vertex more than the draw
+		reads, in case the driver's robust buffer access counts a last
+		vertex that ends at the buffer's end as out of bounds (ANGLE pads
+		vertex buffers so on some GPUs: padBuffersToMaxVertexAttribStride) */
+		web_buffer_replace(GL_ARRAY_BUFFER, web_stream_buffers[stream], base + first * stride,
+			(count + (debug_settings.decode_vertices != _decode_vertices_none ? 1 : 0)) * stride);
 		stats.streamed_bytes += count * stride;
 	}
 	for (index = 0; index < declaration->element_count; index++)
@@ -3678,7 +3985,12 @@ static BOOL web_setup_streams(unsigned long first, unsigned long count, unsigned
 		stream = element->stream;
 		if (!device.streams[stream].data || element->type == D3DVSDT_NONE)
 			continue;
-		if (element->type == D3DVSDT_NORMPACKED3)
+		if (declaration_decoded(declaration))
+		{
+			state_attribute_pointer(element->reg, web_stream_buffers[stream], (GLint)vertex_decoded_components(element->type),
+				GL_FLOAT, GL_FALSE, FALSE, (GLsizei)decoded_stride[stream], decoded_offset[stream][index]);
+		}
+		else if (element->type == D3DVSDT_NORMPACKED3)
 		{
 			state_attribute_pointer(element->reg, web_stream_buffers[stream], 1, GL_UNSIGNED_INT, GL_FALSE, TRUE,
 				(GLsizei)device.streams[stream].stride, element->offset);
@@ -3694,7 +4006,8 @@ static BOOL web_setup_streams(unsigned long first, unsigned long count, unsigned
 	for (index = 0; index < XGPU_VERTEX_ATTRIBUTE_COUNT; index++)
 	{
 		if (!enabled[index])
-			state_attribute_value(index, declaration->packed_mask & (1UL << index) ? NULL : device.attributes[index]);
+			state_attribute_value(index, declaration->packed_mask & (1UL << index) && !declaration_decoded(declaration) ?
+				NULL : device.attributes[index]);
 	}
 	*first_vertex = 0;
 	return TRUE;
@@ -3710,6 +4023,11 @@ static unsigned long setup_streams(unsigned long first, unsigned long count)
 	BOOL placed[16] = { FALSE };
 	BOOL enabled[XGPU_VERTEX_ATTRIBUTE_COUNT] = { FALSE };
 	unsigned long index, total = 0;
+#ifdef HALO_WEB
+	BOOL fallback_decoded[16] = { FALSE };
+	unsigned long fallback_decoded_stride[16];
+	unsigned long fallback_decoded_offset[16][XGPU_VERTEX_ATTRIBUTE_COUNT];
+#endif
 
 #ifdef HALO_WEB
 	{
@@ -3758,6 +4076,24 @@ static unsigned long setup_streams(unsigned long first, unsigned long count)
 			const unsigned char *base = PLATFORM_PHYSICAL_TO_VIRTUAL(device.streams[stream].data);
 			unsigned long bytes = stride ? stride * count : 64;
 
+#ifdef HALO_WEB
+			if (declaration_decoded(declaration))
+			{
+				unsigned long vertices = stride ? count : 1;
+				const float *decoded = vertex_decode(declaration, stream, base + first * stride, vertices, stride, TRUE,
+					&fallback_decoded_stride[stream], fallback_decoded_offset[stream]);
+
+				if (decoded)
+				{
+					stream_offsets[stream] = stream_upload(decoded, (vertices + 1) * fallback_decoded_stride[stream]);
+					stream_buffers[stream] = device.stream_buffer;
+					fallback_decoded[stream] = TRUE;
+					if (!stride)
+						fallback_decoded_stride[stream] = 0;
+				}
+			}
+			if (!stream_buffers[stream])
+#endif
 #ifdef HALO_ANDROID
 			stream_offsets[stream] = stream_upload_swizzled(declaration, stream, base + first * stride, bytes, stride);
 #else
@@ -3766,6 +4102,16 @@ static unsigned long setup_streams(unsigned long first, unsigned long count)
 			stream_buffers[stream] = device.stream_buffer;
 			stats.streamed_bytes += bytes;
 		}
+#ifdef HALO_WEB
+		if (fallback_decoded[stream])
+		{
+			state_attribute_pointer(element->reg, stream_buffers[stream], (GLint)vertex_decoded_components(element->type),
+				GL_FLOAT, GL_FALSE, FALSE, (GLsizei)fallback_decoded_stride[stream],
+				stream_offsets[stream] + fallback_decoded_offset[stream][index]);
+			enabled[element->reg] = TRUE;
+			continue;
+		}
+#endif
 		if (element->type == D3DVSDT_NORMPACKED3)
 		{
 			state_attribute_pointer(element->reg, stream_buffers[stream], 1, GL_UNSIGNED_INT, GL_FALSE, TRUE,
@@ -3782,7 +4128,8 @@ static unsigned long setup_streams(unsigned long first, unsigned long count)
 	for (index = 0; index < XGPU_VERTEX_ATTRIBUTE_COUNT; index++)
 	{
 		if (!enabled[index])
-			state_attribute_value(index, declaration->packed_mask & (1UL << index) ? NULL : device.attributes[index]);
+			state_attribute_value(index, declaration->packed_mask & (1UL << index) && !declaration_decoded(declaration) ?
+				NULL : device.attributes[index]);
 	}
 	return 0;
 }
@@ -4551,6 +4898,27 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 			stats.target_changes / stats.presents, stats.skipped_no_program, stats.skipped_no_target, stats.skipped_link,
 			stats.mirrored_bytes / stats.presents / 1024, stats.streamed_bytes / stats.presents / 1024);
 		memset(&stats, 0, sizeof(stats));
+		{
+			/* (R relative c[a0], P NORMPACKED3, S shorts, B bytes: draws
+			and those skipped, over the 60 frames) */
+			char text[512];
+			unsigned long length = 0, kind;
+
+			for (kind = 0; kind < DRAW_FORMAT_CLASSES; kind++)
+			{
+				if (!format_stats.draws[kind] && !format_stats.skipped[kind])
+					continue;
+				length += (unsigned long)snprintf(text + length, sizeof(text) - length, " %s%s%s%s%s %lu/%lu",
+					kind ? "" : "F", kind & _draw_format_relative ? "R" : "", kind & _draw_format_packed ? "P" : "",
+					kind & _draw_format_short ? "S" : "", kind & _draw_format_byte ? "B" : "",
+					format_stats.draws[kind], format_stats.skipped[kind]);
+				if (length >= sizeof(text) - 40)
+					break;
+			}
+			text[length < sizeof(text) ? length : sizeof(text) - 1] = 0;
+			platform_log("draw formats (drawn/skipped):%s", text);
+			memset(&format_stats, 0, sizeof(format_stats));
+		}
 	}
 	platform_pump_events();
 

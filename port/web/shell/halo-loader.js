@@ -39,6 +39,14 @@
 //   HALO_GPU_CONSTANT_BUFFER=1   vertex shaders read their constants from a
 //                      uniform buffer, as they do by themselves where the
 //                      driver drops part of the c[] array (d3d8_gl.c)
+//   HALO_WEB_GPU_OVERLAY=1 (or HALO_GL_DEBUG=1)  the GPU overlay over the
+//                      game (below: the GPU, its extensions and limits, the
+//                      GPU check, GL errors, shader failures, draws by
+//                      vertex format); a tap folds it
+//   HALO_WEB_CPU_DECODE_VERTICES=<auto|small|1|0>  vertices decoded into
+//                      floats on the CPU (d3d8_gl.c; auto: small on PowerVR)
+//   HALO_WEB_FORCE_DXT_DECODE=1  DXT textures decompressed on the CPU
+//   HALO_WEB_GPU_CHECK=0   no GPU check (below) and none of its workarounds
 // Player settings, given with env= or by the site's game bridge:
 //   HALO_WEB_PLAYER_NAME=<name>    the player's name in network games
 //   HALO_WEB_PLAYER_COLOR=<color>  the player's colour: 0-17 or its name
@@ -87,6 +95,375 @@
 // "touch-fullscreen" and "chat-key" {touch: true} messages to the wrapper).
 window.haloFeatures = Object.assign(window.haloFeatures || {}, { webJoin: true, playerColor: true, playerTeam: true, leave: true,
 	inputSettings: true, gamepadEvents: true, versionMismatch: true, touchControls: true });
+
+// The GPU check and the debug overlay (docs/wasm-spike.md "GPU check").
+// Before the game starts, a small WebGL 2 context of its own draws what the
+// game's models need and reads it back: the models' vertex layout (32 bytes:
+// a float3 position, three NORMPACKED3 uints unpacked with integer shifts,
+// NORMSHORT2 texture coordinates, PBYTE2 node indices and a NORMSHORT1
+// weight at bytes 24, 28 and 30), c[] indexed by a node index (skinning; a
+// uniform array and a uniform block) and a DXT1 texture. A failed check
+// turns on the game's workaround for it unless env= names that setting:
+//   vertex formats (shorts, bytes)  HALO_WEB_CPU_DECODE_VERTICES=small
+//   NORMPACKED3 (integer attributes)  HALO_WEB_CPU_DECODE_VERTICES=1
+//   c[] indexed (array; block works)  HALO_GPU_CONSTANT_BUFFER=1
+//   DXT1                            HALO_WEB_FORCE_DXT_DECODE=1
+// (HALO_WEB_GPU_CHECK=0: no check). The overlay, with env=HALO_GL_DEBUG=1 or
+// HALO_WEB_GPU_OVERLAY=1, shows the GPU, its extensions and limits, the
+// check, and from the game's log its GL errors, shader compile and link
+// failures and draws by vertex format (HALO_GPU_STATS, which it turns on).
+window.haloGpuCheck = (() => {
+	const glsl = (body) => "#version 300 es\nprecision highp float;\nprecision highp int;\n" + body;
+	function compile(gl, type, source, log) {
+		const shader = gl.createShader(type);
+		gl.shaderSource(shader, source);
+		gl.compileShader(shader);
+		if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS))
+			log.push(`compile: ${gl.getShaderInfoLog(shader)}`);
+		return shader;
+	}
+	function program(gl, vertex, log, bind) {
+		const p = gl.createProgram();
+		gl.attachShader(p, compile(gl, gl.VERTEX_SHADER, glsl(vertex), log));
+		gl.attachShader(p, compile(gl, gl.FRAGMENT_SHADER, glsl("in vec4 color;\nout vec4 fragment;\nvoid main() { fragment = color; }\n"), log));
+		if (bind) bind(p);
+		gl.linkProgram(p);
+		if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+			log.push(`link: ${gl.getProgramInfoLog(p)}`);
+			return null;
+		}
+		return p;
+	}
+	// one point per vertex at pixel x = vertex of a 16x1 target; the colours read back
+	function drawPoints(gl, count, draw) {
+		// (on a unit of its own: unit 0 has checkDxt's texture)
+		gl.activeTexture(gl.TEXTURE7);
+		const target = gl.createTexture();
+		gl.bindTexture(gl.TEXTURE_2D, target);
+		gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, 16, 1);
+		gl.activeTexture(gl.TEXTURE0);
+		const framebuffer = gl.createFramebuffer();
+		gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+		gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, target, 0);
+		gl.viewport(0, 0, 16, 1);
+		gl.clearColor(0, 0, 0, 0);
+		gl.clear(gl.COLOR_BUFFER_BIT);
+		draw();
+		const pixels = new Uint8Array(16 * 4);
+		gl.readPixels(0, 0, 16, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+		gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+		gl.deleteFramebuffer(framebuffer);
+		gl.deleteTexture(target);
+		return Array.from({ length: count }, (_, i) => Array.from(pixels.subarray(i * 4, i * 4 + 4)));
+	}
+	const near = (got, want, tolerance = 3) => got.every((value, i) => Math.abs(value - want[i]) <= tolerance);
+	const pointX = "gl_PointSize = 1.0;\n\tgl_Position = vec4((position.x + 0.5) / 8.0 - 1.0, 0.0, 0.0, 1.0);\n";
+	const COUNT = 8;
+	const packed = (x, y, z) => ((x & 0x7ff) | ((y & 0x7ff) << 11) | ((z & 0x3ff) << 22)) >>> 0;
+
+	// the models' vertices, read as the game reads them (d3d8_gl.c
+	// web_setup_streams, nv2a_vsh.c unpack_normpacked3)
+	function checkVertices(gl, log) {
+		const stride = 32, data = new ArrayBuffer(COUNT * stride), view = new DataView(data);
+		const want = { packed: [], short2: [], byte2: [], short1: [] };
+		for (let i = 0; i < COUNT; i++) {
+			const o = i * stride;
+			view.setFloat32(o, i, true);
+			view.setFloat32(o + 4, 0, true);
+			view.setFloat32(o + 8, 0, true);
+			const nx = -1000 + i * 250, ny = 900 - i * 230, nz = -500 + i * 140;
+			for (const at of [12, 16, 20]) view.setUint32(o + at, packed(nx, ny, nz), true);
+			want.packed.push([nx / 1023, ny / 1023, nz / 511].map((v) => Math.round((v * 0.5 + 0.5) * 255)).concat(255));
+			const s0 = -32000 + i * 9000, s1 = 30000 - i * 7000;
+			view.setInt16(o + 24, s0, true);
+			view.setInt16(o + 26, s1, true);
+			want.short2.push([s0 / 32767, s1 / 32767].map((v) => Math.round((v * 0.5 + 0.5) * 255)).concat(0, 255));
+			view.setUint8(o + 28, i * 3);
+			view.setUint8(o + 29, 255 - i * 30);
+			want.byte2.push([i * 3, 255 - i * 30, 0, 255]);
+			const w = 4000 * i;
+			view.setInt16(o + 30, w, true);
+			want.short1.push([Math.round((w / 32767) * 255), 0, 0, 255]);
+		}
+		const vertex = `layout(location = 0) in vec4 position;
+layout(location = 1) in uint v1_packed;
+layout(location = 2) in uint v2_packed;
+layout(location = 3) in uint v3_packed;
+layout(location = 4) in vec4 v4;
+layout(location = 5) in vec4 v5;
+layout(location = 6) in vec4 v6;
+uniform int which;
+out vec4 color;
+vec4 unpack_normpacked3(uint p)
+{
+	int x = int(p << 21) >> 21;
+	int y = int(p << 10) >> 21;
+	int z = int(p) >> 22;
+	return vec4(float(x) / 1023.0, float(y) / 1023.0, float(z) / 511.0, 1.0);
+}
+void main()
+{
+	vec4 n = unpack_normpacked3(which == 0 ? v1_packed : which == 1 ? v2_packed : v3_packed);
+	if (which <= 2) color = vec4(n.xyz * 0.5 + 0.5, 1.0);
+	else if (which == 3) color = vec4(v4.xy * 0.5 + 0.5, 0.0, 1.0);
+	else if (which == 4) color = vec4(v5.xy, 0.0, 1.0);
+	else color = vec4(v6.x, 0.0, 0.0, 1.0);
+	${pointX}}
+`;
+		const p = program(gl, vertex, log);
+		if (!p) return { ok: false, detail: "the program did not link" };
+		const vao = gl.createVertexArray();
+		gl.bindVertexArray(vao);
+		const buffer = gl.createBuffer();
+		gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+		// exactly the vertices, as the game uploads them (no padding)
+		gl.bufferData(gl.ARRAY_BUFFER, data, gl.STREAM_DRAW);
+		gl.enableVertexAttribArray(0);
+		gl.vertexAttribPointer(0, 3, gl.FLOAT, false, stride, 0);
+		for (const [index, at] of [[1, 12], [2, 16], [3, 20]]) {
+			gl.enableVertexAttribArray(index);
+			gl.vertexAttribIPointer(index, 1, gl.UNSIGNED_INT, stride, at);
+		}
+		gl.enableVertexAttribArray(4);
+		gl.vertexAttribPointer(4, 2, gl.SHORT, true, stride, 24);
+		gl.enableVertexAttribArray(5);
+		gl.vertexAttribPointer(5, 2, gl.UNSIGNED_BYTE, true, stride, 28);
+		gl.enableVertexAttribArray(6);
+		gl.vertexAttribPointer(6, 1, gl.SHORT, true, stride, 30);
+		const indices = gl.createBuffer();
+		gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indices);
+		gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array([...Array(COUNT).keys()]), gl.STREAM_DRAW);
+		gl.useProgram(p);
+		const results = {}, names = ["packed", "packed", "packed", "short2", "byte2", "short1"];
+		for (let which = 0; which < 6; which++) {
+			const got = drawPoints(gl, COUNT, () => {
+				gl.uniform1i(gl.getUniformLocation(p, "which"), which);
+				gl.drawElements(gl.POINTS, COUNT, gl.UNSIGNED_SHORT, 0);
+			});
+			const name = names[which], ok = got.every((pixel, i) => near(pixel, want[name][i]));
+			if (!ok) log.push(`${name}${which <= 2 ? "@" + (12 + which * 4) : ""}: got ${JSON.stringify(got.slice(0, 3))} want ${JSON.stringify(want[name].slice(0, 3))}`);
+			results[name] = results[name] === false ? false : ok;
+		}
+		gl.bindVertexArray(null);
+		gl.deleteVertexArray(vao);
+		gl.deleteBuffer(buffer);
+		gl.deleteBuffer(indices);
+		gl.deleteProgram(p);
+		return results;
+	}
+
+	// c[] (192 vec4s, as nv2a_vsh.c declares it) indexed by a node index
+	// from a PBYTE2 attribute, as the models' vertex shaders do
+	function checkRelative(gl, log, block) {
+		const constants = new Float32Array(192 * 4);
+		const nodes = [0, 9, 20, 31, 40, 52, 60, 63];
+		for (let r = 0; r < 192; r++) constants.set([(r % 7) / 6, (r % 11) / 10, (r % 5) / 4, 1], r * 4);
+		const data = new Float32Array(COUNT * 2);
+		nodes.forEach((node, i) => { data[i * 2] = i; data[i * 2 + 1] = node; });
+		const vertex = `layout(location = 0) in vec4 position;
+${block ? "layout(std140) uniform vertex_constants { vec4 c[192]; };" : "uniform vec4 c[192];"}
+out vec4 color;
+void main()
+{
+	float a0 = position.y * 3.0 + 1.0;
+	color = c[clamp(int(floor(a0 + 0.5)), 0, 191)] + c[clamp(int(floor(a0 + 0.5)) + 2, 0, 191)] * 0.0;
+	${pointX}}
+`;
+		const p = program(gl, vertex, log);
+		if (!p) return { ok: false, detail: "the program did not link" };
+		gl.useProgram(p);
+		let ubo = null;
+		if (block) {
+			ubo = gl.createBuffer();
+			gl.bindBuffer(gl.UNIFORM_BUFFER, ubo);
+			gl.bufferData(gl.UNIFORM_BUFFER, constants, gl.DYNAMIC_DRAW);
+			gl.uniformBlockBinding(p, gl.getUniformBlockIndex(p, "vertex_constants"), 0);
+			gl.bindBufferBase(gl.UNIFORM_BUFFER, 0, ubo);
+		} else {
+			gl.uniform4fv(gl.getUniformLocation(p, "c"), constants);
+		}
+		const vao = gl.createVertexArray();
+		gl.bindVertexArray(vao);
+		const buffer = gl.createBuffer();
+		gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+		gl.bufferData(gl.ARRAY_BUFFER, data, gl.STREAM_DRAW);
+		gl.enableVertexAttribArray(0);
+		gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 8, 0);
+		const got = drawPoints(gl, COUNT, () => gl.drawArrays(gl.POINTS, 0, COUNT));
+		const want = nodes.map((node) => { const r = node * 3 + 1; return [(r % 7) / 6, (r % 11) / 10, (r % 5) / 4, 1].map((v) => Math.round(v * 255)); });
+		const ok = got.every((pixel, i) => near(pixel, want[i]));
+		if (!ok) log.push(`c[a0] ${block ? "block" : "array"}: got ${JSON.stringify(got.slice(0, 4))} want ${JSON.stringify(want.slice(0, 4))}`);
+		const uniforms = !block && gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+		let size = 0;
+		for (let u = 0; !block && u < uniforms; u++) {
+			const info = gl.getActiveUniform(p, u);
+			if (info && /^c(\[0\])?$/.test(info.name)) size = info.size;
+		}
+		gl.bindVertexArray(null);
+		gl.deleteVertexArray(vao);
+		gl.deleteBuffer(buffer);
+		if (ubo) gl.deleteBuffer(ubo);
+		gl.deleteProgram(p);
+		return block ? { ok } : { ok, size };
+	}
+
+	// a red DXT1 block, sampled
+	function checkDxt(gl, log) {
+		const s3tc = gl.getExtension("WEBGL_compressed_texture_s3tc");
+		if (!s3tc) return { ok: null, detail: "no WEBGL_compressed_texture_s3tc (the game decodes DXT on the CPU)" };
+		const texture = gl.createTexture();
+		gl.bindTexture(gl.TEXTURE_2D, texture);
+		gl.compressedTexImage2D(gl.TEXTURE_2D, 0, s3tc.COMPRESSED_RGBA_S3TC_DXT1_EXT, 4, 4, 0, new Uint8Array([0x00, 0xf8, 0x00, 0xf8, 0, 0, 0, 0]));
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+		const error = gl.getError();
+		const p = program(gl, `layout(location = 0) in vec4 position;
+uniform sampler2D map;
+out vec4 color;
+void main() { color = textureLod(map, vec2(0.5), 0.0); ${pointX}}
+`, log);
+		if (!p) return { ok: false, detail: "the program did not link" };
+		gl.useProgram(p);
+		const vao = gl.createVertexArray();
+		gl.bindVertexArray(vao);
+		const buffer = gl.createBuffer();
+		gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+		gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0]), gl.STREAM_DRAW);
+		gl.enableVertexAttribArray(0);
+		gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 8, 0);
+		const got = drawPoints(gl, 1, () => gl.drawArrays(gl.POINTS, 0, 1))[0];
+		const ok = !error && near(got, [255, 0, 0, 255], 8);
+		if (!ok) log.push(`DXT1: error ${error}, got ${JSON.stringify(got)} want [255,0,0,255]`);
+		gl.bindVertexArray(null);
+		gl.deleteVertexArray(vao);
+		gl.deleteBuffer(buffer);
+		gl.deleteTexture(texture);
+		gl.deleteProgram(p);
+		return { ok };
+	}
+
+	function run() {
+		const report = { renderer: "", vendor: "", version: "", extensions: [], limits: {}, precision: {}, checks: {}, log: [], fixes: {} };
+		let gl = null;
+		try {
+			const canvas = typeof OffscreenCanvas === "function" ? new OffscreenCanvas(16, 1) : document.createElement("canvas");
+			gl = canvas.getContext("webgl2", { antialias: false, depth: false, stencil: false, preserveDrawingBuffer: true });
+			if (!gl) {
+				report.log.push("no WebGL 2 context");
+				return report;
+			}
+			const info = gl.getExtension("WEBGL_debug_renderer_info");
+			report.renderer = String(info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER));
+			report.vendor = String(info ? gl.getParameter(info.UNMASKED_VENDOR_WEBGL) : gl.getParameter(gl.VENDOR));
+			report.version = String(gl.getParameter(gl.VERSION));
+			report.extensions = gl.getSupportedExtensions() || [];
+			for (const name of ["MAX_VERTEX_ATTRIBS", "MAX_VERTEX_UNIFORM_VECTORS", "MAX_FRAGMENT_UNIFORM_VECTORS", "MAX_VARYING_VECTORS",
+				"MAX_VERTEX_UNIFORM_BLOCKS", "MAX_UNIFORM_BLOCK_SIZE", "MAX_TEXTURE_SIZE", "MAX_COMBINED_TEXTURE_IMAGE_UNITS"])
+				report.limits[name] = gl.getParameter(gl[name]);
+			for (const [stage, type] of [["vs", gl.VERTEX_SHADER], ["fs", gl.FRAGMENT_SHADER]]) {
+				for (const [kind, format] of [["float", gl.HIGH_FLOAT], ["int", gl.HIGH_INT]]) {
+					const p = gl.getShaderPrecisionFormat(type, format);
+					report.precision[`${stage} highp ${kind}`] = p ? `${p.precision}/${p.rangeMax}` : "?";
+				}
+			}
+			const vertices = checkVertices(gl, report.log);
+			report.checks.packed = vertices.packed;
+			report.checks.short2 = vertices.short2;
+			report.checks.byte2 = vertices.byte2;
+			report.checks.short1 = vertices.short1;
+			const array = checkRelative(gl, report.log, false);
+			report.checks.relativeArray = array.ok;
+			report.limits.cArraySize = array.size;
+			report.checks.relativeBlock = checkRelative(gl, report.log, true).ok;
+			const dxt = checkDxt(gl, report.log);
+			report.checks.dxt1 = dxt.ok;
+			if (dxt.detail) report.log.push(dxt.detail);
+			const error = gl.getError();
+			if (error) report.log.push(`GL error ${error} after the check`);
+		} catch (error) {
+			report.log.push(`check: ${error}`);
+		} finally {
+			const lose = gl && gl.getExtension("WEBGL_lose_context");
+			if (lose) lose.loseContext();
+		}
+		const c = report.checks;
+		if (c.packed === false) report.fixes.HALO_WEB_CPU_DECODE_VERTICES = "1";
+		else if (c.short2 === false || c.byte2 === false || c.short1 === false) report.fixes.HALO_WEB_CPU_DECODE_VERTICES = "small";
+		if (c.relativeArray === false && c.relativeBlock !== false) report.fixes.HALO_GPU_CONSTANT_BUFFER = "1";
+		if (c.dxt1 === false) report.fixes.HALO_WEB_FORCE_DXT_DECODE = "1";
+		return report;
+	}
+
+	// the overlay
+	let panel = null, report = null;
+	const seen = { errors: [], shaders: [], formats: [], notes: [] };
+	let lastFormats = "", lastFrame = "", decoding = "";
+	function overlay(r) {
+		report = r;
+		if (!document.body) return;
+		// below the touch controls' Menu, Score and Chat (top centre), and
+		// taking no touches (the look swipe goes through it); its tab folds it
+		panel = document.createElement("div");
+		panel.id = "halo-gpu-overlay";
+		panel.style.cssText = "position:fixed;top:max(64px,14vh);left:50%;transform:translateX(-50%);z-index:2147483000;" +
+			"width:min(62vw,760px);max-height:44vh;overflow:hidden;background:rgba(6,10,14,0.8);color:#9fe3ff;font:10px/1.3 monospace;" +
+			"padding:4px 6px;border:1px solid #2f5f7a;border-radius:4px;white-space:pre-wrap;word-break:break-word;pointer-events:none;box-sizing:border-box";
+		const tab = document.createElement("button");
+		tab.textContent = "GPU";
+		tab.style.cssText = "position:fixed;top:max(64px,14vh);right:calc(50% - min(31vw,380px));z-index:2147483001;font:10px monospace;" +
+			"color:#9fe3ff;background:rgba(6,10,14,0.8);border:1px solid #2f5f7a;border-radius:4px;padding:4px 6px;touch-action:manipulation";
+		let folded = false;
+		const fold = (event) => { event.preventDefault(); event.stopPropagation(); folded = !folded; panel.style.display = folded ? "none" : ""; };
+		tab.addEventListener("click", fold);
+		tab.addEventListener("touchend", fold);
+		document.body.appendChild(panel);
+		document.body.appendChild(tab);
+		render();
+		setInterval(render, 1000);
+	}
+	const mark = (value) => value === true ? "ok" : value === false ? "FAIL" : "n/a";
+	function render() {
+		if (!panel || !report) return;
+		const want = ["WEBGL_compressed_texture_s3tc", "WEBGL_compressed_texture_s3tc_srgb", "WEBGL_compressed_texture_etc1",
+			"WEBGL_compressed_texture_etc", "WEBGL_compressed_texture_astc", "EXT_color_buffer_float", "EXT_texture_filter_anisotropic",
+			"OES_texture_float_linear", "WEBGL_debug_renderer_info"];
+		const c = report.checks;
+		// (what matters most first: a phone shows the top of it)
+		const lines = [
+			`GPU ${report.renderer} (${report.vendor})`,
+			`check: NORMPACKED3 ${mark(c.packed)}, NORMSHORT2 ${mark(c.short2)}, PBYTE2@28 ${mark(c.byte2)}, NORMSHORT1@30 ${mark(c.short1)}, ` +
+				`c[a0] array ${mark(c.relativeArray)}, c[a0] block ${mark(c.relativeBlock)}, DXT1 ${mark(c.dxt1)}`,
+			`fixes: ${Object.keys(report.applied || {}).length ? Object.entries(report.applied).map(([k, v]) => `${k}=${v}`).join(" ") : "none"}` +
+				(report.env ? `  env: ${report.env}` : ""),
+			...report.log.slice(0, 8).map((line) => `  ${line}`),
+		];
+		if (decoding) lines.push(decoding);
+		if (lastFrame) lines.push(lastFrame);
+		if (lastFormats) lines.push(lastFormats + "  (F floats, R c[a0], P NORMPACKED3, S shorts, B bytes)");
+		if (seen.errors.length) lines.push(`GL errors (${seen.errors.length} unique):`, ...seen.errors.map((line) => `  ${line}`));
+		if (seen.shaders.length) lines.push("shader failures:", ...seen.shaders.map((line) => `  ${line}`));
+		lines.push(`${report.version}; ext: ${want.map((name) => (report.extensions.includes(name) ? "+" : "-") + name.replace(/^(WEBGL|EXT|OES)_/, "")).join(" ")}`,
+			`limits: ${Object.entries(report.limits).map(([k, v]) => `${k.replace(/^MAX_/, "")}=${v}`).join(" ")}`,
+			`precision: ${Object.entries(report.precision).map(([k, v]) => `${k} ${v}`).join(", ")}`);
+		if (seen.notes.length) lines.push("game:", ...seen.notes.map((line) => `  ${line}`));
+		if (seen.formats.length) lines.push("vertex formats:", ...seen.formats.map((line) => `  ${line}`));
+		panel.textContent = lines.join("\n");
+	}
+	// a line of the game's log
+	function line(text) {
+		if (!panel || typeof text !== "string") return;
+		const add = (list, value, max) => { if (!list.includes(value) && list.length < max) list.push(value); };
+		let match;
+		if (/GL error|gl error/i.test(text)) add(seen.errors, text.slice(0, 200), 20);
+		else if (/cannot (compile|link)/.test(text)) add(seen.shaders, text.slice(0, 600), 6);
+		else if ((match = /draw formats \(drawn\/skipped\):(.*)/.exec(text))) lastFormats = `draws/60 frames (drawn/skipped):${match[1]}`;
+		else if ((match = /^.*?(frame \d+: .*)$/.exec(text)) && /skipped/.test(text)) lastFrame = match[1];
+		else if ((match = /draw format: (.*)/.exec(text))) add(seen.formats, match[1].slice(0, 220), 40);
+		else if ((match = /web: GPU .*; (vertices decoded .*)$/.exec(text))) decoding = match[1];
+		else if (/OpenGL|S3TC|DXT|vertices decoded|constants|uniform buffer|trimmed/i.test(text)) add(seen.notes, text.slice(0, 240), 12);
+	}
+	return { run, overlay, line };
+})();
 (() => {
 	const params = new URLSearchParams(location.search);
 	const envParam = (name) => {
@@ -120,6 +497,7 @@ window.haloFeatures = Object.assign(window.haloFeatures || {}, { webJoin: true, 
 		console.log(text);
 		lines.push(text);
 		if (lines.length > 400) lines.shift();
+		window.haloGpuCheck.line(text);
 		if (logElement) logElement.textContent = lines.join("\n");
 	};
 	window.haloLog = lines;
@@ -158,6 +536,29 @@ window.haloFeatures = Object.assign(window.haloFeatures || {}, { webJoin: true, 
 			for (const pair of (params.get("env") || "").split(",").filter(Boolean)) {
 				const [name, ...value] = pair.split("=");
 				Module.ENV[name] = value.join("=");
+			}
+			// the GPU check (above): its workarounds where env= does not
+			// name the setting
+			if (envParam("HALO_WEB_GPU_CHECK") !== "0") {
+				const report = window.haloGpuCheck.run();
+				report.applied = {};
+				for (const [name, value] of Object.entries(report.fixes)) {
+					if (envParam(name) === null) {
+						Module.ENV[name] = value;
+						report.applied[name] = value;
+					}
+				}
+				report.env = Object.entries(Module.ENV).filter(([name]) => /^HALO_(WEB_CPU|WEB_FORCE|GPU_|GL_)/.test(name))
+					.map(([name, value]) => `${name}=${value}`).join(" ");
+				const c = report.checks;
+				print(`[web] GPU check on ${report.renderer}: ${Object.entries(c).map(([name, ok]) => `${name} ${ok === true ? "ok" : ok === false ? "FAIL" : "n/a"}`).join(", ")}` +
+					`${Object.keys(report.applied).length ? "; turned on " + Object.entries(report.applied).map(([k, v]) => `${k}=${v}`).join(" ") : ""}`);
+				for (const line of report.log) print(`[web] GPU check: ${line}`);
+				window.haloGpuReport = report;
+				if (envParam("HALO_GL_DEBUG") === "1" || envParam("HALO_WEB_GPU_OVERLAY") === "1") {
+					if (envParam("HALO_GPU_STATS") === null) Module.ENV.HALO_GPU_STATS = "1";
+					window.haloGpuCheck.overlay(report);
+				}
 			}
 			Module.addRunDependency("maps-index");
 			const preload = (params.get("preload") || "ui").toLowerCase();

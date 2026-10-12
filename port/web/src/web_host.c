@@ -120,6 +120,32 @@ as the pregame lobby names it (network_game_globals.c), and waits for it
 when the map loads (cache_files_windows.c). */
 
 #include <emscripten.h>
+
+/* the GPU (d3d8_gl.c's PowerVR workarounds, the log): WebGL's renderer
+string is "WebKit WebGL" without WEBGL_debug_renderer_info */
+EM_JS(void, web_gl_renderer_js, (char *text, int size), {
+	let name = "";
+	try {
+		const gl = typeof GLctx !== "undefined" ? GLctx : null;
+		const info = gl && gl.getExtension("WEBGL_debug_renderer_info");
+		name = String((info && gl.getParameter(info.UNMASKED_RENDERER_WEBGL)) || (gl && gl.getParameter(gl.RENDERER)) || "");
+	} catch (error) {
+	}
+	let index = 0;
+	for (; index < name.length && index < size - 1; index++) {
+		const code = name.charCodeAt(index);
+		HEAPU8[text + index] = code < 128 ? code : 63;
+	}
+	HEAPU8[text + index] = 0;
+});
+
+void web_gl_renderer(char *text, int size)
+{
+	if (size <= 0)
+		return;
+	text[0] = 0;
+	web_gl_renderer_js(text, size);
+}
 #include <stdlib.h>
 #include <time.h>
 
