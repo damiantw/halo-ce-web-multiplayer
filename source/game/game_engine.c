@@ -5857,7 +5857,9 @@ struct game_variant *build_game_variant_oddball(
 struct game_variant *build_game_variant_team_oddball(
 	struct game_variant *variant)
 {
-	struct game_variant result;
+	/* port: cleared, as every other builder's is: only some of its fields
+	are set below, and the rest were the stack's */
+	struct game_variant result = { 0 };
 
 	result.universal_variant.flags = (result.universal_variant.flags & ~0x1C) | 0x23;
 	result.universal_variant.goal_radar = 1;
