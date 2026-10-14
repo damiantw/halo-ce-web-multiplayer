@@ -224,3 +224,8 @@ static void crash_reports_install(void)
 {
 	SetUnhandledExceptionFilter(crash_filter);
 }
+
+/* nothing to do per frame (memory_watch.c checks its crash handler) */
+void memory_watch_begin_frame(void)
+{
+}

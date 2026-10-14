@@ -39,3 +39,8 @@ void memory_watch_forget(void *address, unsigned long size)
 {
 	host_memory_watch_forget((unsigned int)address, size);
 }
+
+/* nothing to do per frame (memory_watch.c checks its crash handler) */
+void memory_watch_begin_frame(void)
+{
+}

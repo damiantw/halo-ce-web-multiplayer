@@ -90,6 +90,9 @@ jobs:
       - name: Texture cache idle time test
         run: python3 -m pytest -q tools/test_texture_idle.py
 
+      - name: Crash handler test
+        run: python3 -m pytest -q tools/test_memory_watch.py
+
       - name: Dedicated server control test
         run: python3 tools/dedicated_control_test.py --binary build/linux/halo
 
