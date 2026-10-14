@@ -87,6 +87,9 @@ jobs:
       - name: Unicode string parser test
         run: python3 -m pytest -q tools/test_unicode_line_breaks.py
 
+      - name: Texture cache idle time test
+        run: python3 -m pytest -q tools/test_texture_idle.py
+
       - name: Dedicated server control test
         run: python3 tools/dedicated_control_test.py --binary build/linux/halo
 
