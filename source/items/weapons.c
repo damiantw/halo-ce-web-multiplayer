@@ -362,6 +362,14 @@ struct trigger_firing_effect
 
 /* ---------- prototypes */
 
+#ifdef HALO_LINUX
+/* port/linux/game/network_objects.c's: whether a client of the distributed
+netcode is deleting the host's object on the host's word */
+boolean network_objects_client_deleting(void);
+#else
+#define network_objects_client_deleting() FALSE
+#endif
+
 real transition_function_evaluate(
 	short function_type,
 	real value);
@@ -794,7 +802,9 @@ void weapon_set_total_rounds(
 void weapon_delete(
 	long weapon_index)
 {
-	if (game_engine_running())
+	/* (port: but a client's copy of the host's flag or ball, deleted on the
+	host's word: objects.c's object_delete_initial_recursive) */
+	if (game_engine_running() && !network_objects_client_deleting())
 	{
 		match_assert("c:\\halo\\SOURCE\\items\\weapons.c", 234, !weapon_is_flag(weapon_index));
 	}
