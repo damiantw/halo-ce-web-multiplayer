@@ -84,6 +84,9 @@ jobs:
       - name: Linux port tests
         run: python3 -m pytest -q tools/test_linux_port.py
 
+      - name: Unicode string parser test
+        run: python3 -m pytest -q tools/test_unicode_line_breaks.py
+
       - name: Dedicated server control test
         run: python3 tools/dedicated_control_test.py --binary build/linux/halo
 
