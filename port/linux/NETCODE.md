@@ -455,7 +455,8 @@ machines' views of one game can be compared. `debug.network_test_kill`,
 `debug.network_test_pickup` script kills, hits, a vehicle ride and a weapon
 swap the bots' wandering does not reach, and `debug.network_test_walkover` a
 second weapon picked up by walking over it (the log marks the weapon in hand
-with `*` and the one being switched to with `+`). `debug.network_latency` and
+with `*` and the one being switched to with `+`). `debug.network_test_powerup` stands the last player on a powerup
+(`debug.network_test_powerup_name` picks it, "over shield" by default). `debug.network_latency` and
 `debug.network_loss` hold back what a machine receives and drop some of its
 datagrams, to test as over the internet.
 
