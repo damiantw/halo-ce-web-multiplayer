@@ -53,6 +53,7 @@ Called from the main loop every frame (main.c).
 #include "objects/damage.h"
 #include "scenario/scenario.h"
 #include "camera/director.h"
+#include "tag_files/tag_files.h"
 
 #include <math.h>
 #include <stdarg.h>
@@ -105,6 +106,8 @@ static struct
 	real vehicle_time;
 	real pickup_time;
 	real walkover_time;
+	real powerup_time;
+	char powerup_name[64];
 	long logged_time;
 } network_test;
 
@@ -138,6 +141,9 @@ static void network_test_read_settings(
 	network_test.vehicle_time = (real)config_real("debug.network_test_vehicle");
 	network_test.pickup_time = (real)config_real("debug.network_test_pickup");
 	network_test.walkover_time = (real)config_real("debug.network_test_walkover");
+	network_test.powerup_time = (real)config_real("debug.network_test_powerup");
+	snprintf(network_test.powerup_name, sizeof(network_test.powerup_name), "%s",
+		config_string("debug.network_test_powerup_name"));
 	network_test.log = network_test.mode != _network_test_off || config_boolean("debug.network_log");
 	if (network_test.mode != _network_test_off)
 		platform_log("network test: %s", setting);
@@ -663,6 +669,57 @@ static void network_test_pickup(
 	}
 }
 
+/* both machines stand the last player on the first powerup lying about
+whose tag name has debug.network_test_powerup_name in it (a powerup is picked
+up by standing on it; the host decides the pickup, and the client sees it as
+the host says) */
+static void network_test_powerup(
+	void)
+{
+	struct data_iterator iterator;
+	struct player_datum *player;
+	struct player_datum *last = NULL;
+	struct object_iterator equipment;
+	long nearest_index = NONE;
+	real nearest_distance = 0.0f;
+
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+		last = player;
+	if (!last || last->unit_index == NONE)
+		return;
+	object_iterator_new(&equipment, _object_mask_equipment, 0);
+	while (object_iterator_next(&equipment))
+	{
+		struct object_datum *powerup = object_get(equipment.index);
+		real distance;
+
+		if (powerup->object.parent_object_index != NONE ||
+			!TEST_FLAG(powerup->object.flags, _object_connected_to_map_bit) ||
+			(network_test.powerup_name[0] && !strstr(tag_get_name(powerup->definition_index), network_test.powerup_name)))
+		{
+			continue;
+		}
+		distance = (real)DATUM_INDEX_TO_ABSOLUTE_INDEX(equipment.index);
+		if (nearest_index == NONE || distance < nearest_distance)
+		{
+			nearest_index = equipment.index;
+			nearest_distance = distance;
+		}
+	}
+	if (nearest_index != NONE)
+	{
+		real_point3d position = object_get(nearest_index)->object.position;
+
+		position.z += 0.1f;
+		object_set_position(last->unit_index, &position, NULL, NULL);
+		platform_log("network test: the last player stands on powerup %lx (%s)", nearest_index,
+			tag_get_name(object_get(nearest_index)->definition_index));
+	}
+	else
+		platform_log("network test: no powerup with \"%s\" in its name lies about", network_test.powerup_name);
+}
+
 void network_test_update(
 	boolean main_menu_loaded,
 	real seconds)
@@ -746,6 +803,13 @@ void network_test_update(
 
 			if (game_time_get() >= walkover_time && game_time_get() - walkover_time < TICKS_PER_SECOND)
 				network_test_pickup();
+		}
+		if (network_test.powerup_time > 0.0f)
+		{
+			long powerup_time = (long)(network_test.powerup_time * TICKS_PER_SECOND);
+
+			if (game_time_get() >= powerup_time && game_time_get() - powerup_time < TICKS_PER_SECOND)
+				network_test_powerup();
 		}
 		if (network_test.mode == _network_test_host && network_test.vehicle_time > 0.0f)
 		{
