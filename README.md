@@ -251,9 +251,11 @@ changed. To use it again, set `SolutionConfig.matching` in
   2026; CC0-1.0 before).
 - [bnunu/halo-1](https://github.com/bnunu/halo-1): the fork of the
   decompilation that the port starts from (CC0-1.0).
-- [cybersecurity/halo-ce-universal](https://github.com/cybersecurity/halo-ce-universal):
-  the port to Linux, Windows and Android (Direct3D 8 on OpenGL, SDL3 input
-  and sound, the system link netcode), which this repository forks (CC0-1.0).
+- [OpenCommunityEdition/OpenCE](https://github.com/OpenCommunityEdition/OpenCE)
+  (formerly cybersecurity/halo-ce-universal): the port to Linux, Windows and
+  Android (Direct3D 8 on OpenGL, SDL3 input and sound, the system link
+  netcode), which this repository forks (AGPL-3.0-or-later from 4b09168e;
+  CC0-1.0 before).
 - Everyone credited in those projects, and the third-party code in
   [port/third_party](port/third_party) (each directory has its license).
 - Tools and libraries: [Emscripten](https://github.com/emscripten-core/emscripten),
