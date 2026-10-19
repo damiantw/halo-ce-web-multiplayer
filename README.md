@@ -264,5 +264,13 @@ changed. To use it again, set `SolutionConfig.matching` in
 
 ## License
 
-[CC0-1.0](LICENSE.md), as upstream. Third-party code keeps its own license
-(see each directory under `port/third_party`).
+The game as built from this repository is under the
+[GNU Affero General Public License, version 3 or later](LICENSE)
+(AGPL-3.0-or-later), because it includes fixes ported from upstream OpenCE
+after upstream switched from CC0 1.0 to the AGPL at its commit `4b09168e`
+(19 October 2026). Code from before that switch, upstream's and this fork's
+own up to main `2d7c2077`, was released under [CC0 1.0](LICENSES/CC0-1.0.txt)
+and stays so. [NOTICE.md](NOTICE.md) lists what was ported from after the
+switch. The source is this repository,
+<https://github.com/damiantw/halo-ce-web-multiplayer>. Third-party code keeps
+its own license (see each directory under `port/third_party`).
