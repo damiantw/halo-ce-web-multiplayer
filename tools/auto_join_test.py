@@ -19,6 +19,18 @@ web build does; under xvfb-run, without audio), and checks:
   countdown runs out keeps the game going and is in it;
 - a real match keeps its scores: end_game with players in shows them for
   server.postgame_seconds;
+- the next game has every machine's player, the one that joined as the
+  previous game ended included (the server is asked for up to 20 s: a
+  player missing then is missing for good);
+- the lobby's start: a machine taken into the lobby just before the game
+  starts has its player in the game. Forced: the client is stopped (SIGSTOP)
+  as it sends its join, so that the lobby takes the machine without its
+  player; a second client then starts the countdown, and the first goes on
+  (SIGCONT) in the countdown's last 100 ms, and, in the next game, once the
+  start has reached the second, so that its request for its player crosses
+  the start, or comes after it (the server dropped it, or the machine,
+  given the start with its acceptance, never asked: it played the game
+  without a player);
 - CTF teams: with bloodgulch:ctf, two clients end up on different teams.
 
     python3 tools/auto_join_test.py --binary build/linux/halo \\
@@ -46,12 +58,15 @@ CLIENT_ADDRESSES = ["127.0.0.%d" % n for n in range(212, 222)]
 class Process:
     """A game process whose output lines are kept with the time they came."""
 
-    def __init__(self, name, args, env, cwd, started):
+    def __init__(self, name, args, env, cwd, started, freeze_on=None):
         self.name = name
         self.lines = []
         self.events = []
         self.lock = threading.Lock()
         self.started = started
+        # (stopped, SIGSTOP, as soon as a line has this text: resume())
+        self.freeze_on = freeze_on
+        self.frozen = None
         # (its own process group: xvfb-run's game and X server go with it)
         self.process = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                         stderr=subprocess.STDOUT, env=env, cwd=cwd, start_new_session=True)
@@ -70,6 +85,19 @@ class Process:
                     except ValueError:
                         pass
                 self.lines.append((now, line))
+            if self.freeze_on and self.frozen is None and self.freeze_on in line:
+                self.signal(signal.SIGSTOP)
+                self.frozen = now
+
+    def signal(self, number):
+        try:
+            os.killpg(self.process.pid, number)
+        except ProcessLookupError:
+            pass
+
+    def resume(self):
+        self.signal(signal.SIGCONT)
+        return time.monotonic()
 
     def find(self, text, after=0.0):
         with self.lock:
@@ -111,10 +139,7 @@ class Process:
         """Ends the process and its group (xvfb-run's game and X server) at
         once, as closing the browser's tab does: the server sees the
         connection go."""
-        try:
-            os.killpg(self.process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        self.signal(signal.SIGKILL)
         try:
             self.process.wait(10)
         except subprocess.TimeoutExpired:
@@ -183,7 +208,7 @@ def main():
 
     client_count = [0]
 
-    def client(name):
+    def client(name, freeze_on=None):
         address = CLIENT_ADDRESSES[client_count[0] % len(CLIENT_ADDRESSES)]
         client_count[0] += 1
         folder = os.path.join(root, name)
@@ -191,7 +216,9 @@ def main():
         env = dict(base)
         env.update({"HOME": folder, "XDG_DATA_HOME": folder, "HALO_SAVE_ROOT": folder, "HALO_NET_ADDRESS": address,
                     "HALO_WEB_JOIN": "first"})
-        process = Process(name, ["xvfb-run", "-a", "-s", "-screen 0 800x600x24", options.binary], env, folder, started)
+        process = Process(name, ["xvfb-run", "-a", "-s", "-screen 0 800x600x24", options.binary], env, folder, started,
+                          freeze_on)
+        process.address = address
         processes.append(process)
         return process
 
@@ -205,6 +232,59 @@ def main():
 
     def players(state):
         return (state.get("game") or {}).get("players") or (state.get("lobby") or {}).get("players") or []
+
+    def all_players(host, count, tag, seconds=20.0):
+        """The game's players once it has count of them, asked of the server
+        once a second for up to seconds (a player missing then is missing for
+        good: the server dropped its request), and the seconds it took."""
+        since = time.monotonic()
+        names = []
+        for attempt in range(int(seconds) + 1):
+            names = players(status(host, "%s-%d" % (tag, attempt)))
+            if len(names) >= count or attempt == int(seconds):
+                break
+            time.sleep(1)
+        return names, time.monotonic() - since
+
+    def forced_start_race(host, first, tag, resume_after_start):
+        """A machine taken into the lobby without its player just before the
+        game starts (see the docstring): the lobby has first's player and waits
+        for a second."""
+        joiner = client(tag + "-joiner", freeze_on="auto join: joining")
+        frozen = joiner.wait(lambda: joiner.frozen, 120)
+        check(frozen is not None and joiner.find("auto join: player added") is None,
+              "%s was stopped as it joined, without its player" % joiner.name)
+        time.sleep(0.5)
+        lobby = players(status(host, tag + "-lobby"))
+        check(len(lobby) == 1, "the lobby took the machine without its player (%d players)" % len(lobby))
+        second = client(tag + "-second")
+        countdown = host.wait(lambda: host.event(
+            lambda e: e.get("event") == "lobby" and e.get("reason") == "countdown_started", frozen), 120)
+        check(countdown is not None and countdown[1].get("countdown") == 1.0,
+              "%s started the countdown (%s s)" % (second.name, countdown and countdown[1].get("countdown")))
+        if resume_after_start:
+            # (the others are in the game once the start has come: the
+            # game itself waits for the stopped machine to load it)
+            begun = second.wait(lambda: second.find("auto join: in the game"), 30)
+            resumed = joiner.resume()
+            log("%s resumed %.2f s after the start reached %s" % (joiner.name, resumed - begun if begun else -1, second.name))
+        else:
+            end = (countdown[0] if countdown else time.monotonic()) + 1.0 - 0.1
+            time.sleep(max(0.0, end - time.monotonic()))
+            resumed = joiner.resume()
+            log("%s resumed %.2f s after the countdown started (1 s)" % (
+                joiner.name, resumed - countdown[0] if countdown else -1))
+        check(joiner.wait(lambda: joiner.find("auto join: in the game"), 120) is not None and
+              joiner.process.poll() is None, "%s is in the game" % joiner.name)
+        names, took = all_players(host, 3, tag + "-game")
+        addresses = [p.get("address") for p in names]
+        check(len(names) == 3 and joiner.address in addresses,
+              "the game has the machine's player, taken just before the start (%d players, %.1f s; %s)" % (
+                  len(names), took, ", ".join(line for line in (
+                      "asked for in game" if joiner.find("in the game without this machine's player") else "",
+                      "its lobby request taken" if joiner.find("auto join: player added") else "") if line)))
+        for c in (joiner, second):
+            c.stop()
 
     def add_delay(c):
         joining = c.find("auto join: joining")
@@ -252,9 +332,8 @@ def main():
         # ---- empty game: the game ends at once, straight to the lobby
         restarted = host.wait(lambda: host.event(lambda e: e.get("event") == "game_started", reopened[0] if reopened else 0), 90)
         check(restarted is not None, "the next game started with the players")
-        time.sleep(3)
-        names = players(status(host, "four"))
-        check(len(names) == 4, "the next game has all four players, joiner included (%d)" % len(names))
+        names, took = all_players(host, 4, "four")
+        check(len(names) == 4, "the next game has all four players, joiner included (%d, after %.1f s)" % (len(names), took))
         for c in (a, b, late, joiner):
             c.stop()
         empty_from = time.monotonic()
@@ -298,6 +377,24 @@ def main():
         host.stop()
         time.sleep(1)
 
+        # ---- the lobby's start: a machine taken into the lobby in the
+        # countdown's last moment, its player's request crossing the start
+        race = server("race", "bloodgulch:slayer", 2, True)
+        check(race.wait(lambda: lobby_open(race), 90) is not None, "the race server opened its lobby")
+        first = client("first")
+        check(first.wait(lambda: first.find("auto join: player added"), 120) is not None and
+              race.wait(lambda: len(players(status(race, "first"))) == 1, 10), "first is in the lobby")
+        forced_start_race(race, first, "countdown", False)
+        ended_at = time.monotonic()
+        race.command(json.dumps({"cmd": "end_game", "id": "race-end"}))
+        check(race.wait(lambda: lobby_open(race, ended_at), 60) is not None, "the race server's lobby opened again")
+        forced_start_race(race, first, "started", True)
+        first.stop()
+        race.command(json.dumps({"cmd": "quit"}))
+        race.wait(lambda: race.process.poll() is not None, 15)
+        race.stop()
+        time.sleep(1)
+
         # ---- CTF: the teams
         ctf = server("ctf", "bloodgulch:ctf", 2, True)
         check(ctf.wait(lambda: lobby_open(ctf), 90) is not None, "the CTF server opened its lobby")
@@ -311,7 +408,7 @@ def main():
             check(delay is not None and delay < 1.5, "%s added its player %.2f s after joining" % (c.name, delay if delay is not None else -1))
     finally:
         for process in processes:
-            if process.name in ("slayer", "ctf"):
+            if process.name in ("slayer", "race", "ctf"):
                 process.command(json.dumps({"cmd": "quit"}))
         for process in processes:
             process.stop()

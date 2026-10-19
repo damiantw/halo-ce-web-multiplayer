@@ -2213,8 +2213,12 @@ static boolean network_game_server_handle_message_client_add_player_request_preg
 	}
 #ifdef HALO_LINUX
 	/* a machine joining the game in progress: its players are added as in
-	game (network_game_server_start_late_joiner then starts it) */
-	else if (network_game_server_takes_late_joiner(server, client_machine))
+	game (network_game_server_start_late_joiner then starts it). And a
+	machine that was in the lobby as the game started, whose player's request
+	came after the start: added to the game once it is in progress, not
+	dropped (network_game_server_takes_started_machine_player) */
+	else if (network_game_server_takes_late_joiner(server, client_machine) ||
+		network_game_server_takes_started_machine_player(server, client_machine))
 	{
 		struct network_player player;
 		short packet_type = _message_client_add_player_request_pregame;
@@ -2229,6 +2233,10 @@ static boolean network_game_server_handle_message_client_add_player_request_preg
 			&packet_version,
 			_network_game_packet_class_client_pregame))
 		{
+			if (!network_game_server_takes_late_joiner(server, client_machine))
+			{
+				network_event("a machine asked for its player in the lobby after the game started: queued for the game");
+			}
 			network_game_server_clean_name(player.name, NUMBEROF(player.name), L"Player");
 			network_game_server_queue_client_player(server, client_machine, &player);
 		}
@@ -2654,7 +2662,14 @@ static boolean network_game_server_handle_message_client_add_player_request_inga
 	word *message,
 	short message_size)
 {
+#ifdef HALO_LINUX
+	/* (and from a machine in the game, which loaded it before the others:
+	queued, network_game_server_takes_started_machine_player) */
+	if (network_game_server_get_state(server, NULL) == _network_game_server_state_ingame ||
+		network_game_server_takes_started_machine_player(server, client_machine))
+#else
 	if (network_game_server_get_state(server, NULL) == _network_game_server_state_ingame)
+#endif
 	{
 		struct network_player player;
 		short packet_type = _message_client_add_player_request_ingame;

@@ -46,6 +46,11 @@ boolean network_game_server_client_machine_is_loaded(
 boolean network_game_server_takes_late_joiner(
 	struct network_game_server *server,
 	struct network_game_server_client_machine *machine);
+/* a player asked for in the lobby by a machine that is in the game that
+has started since: queued for the game (network_server_manager.c) */
+boolean network_game_server_takes_started_machine_player(
+	struct network_game_server *server,
+	struct network_game_server_client_machine *machine);
 boolean network_game_server_client_machine_let_go(
 	struct network_game_server *server,
 	struct network_game_server_client_machine *machine);

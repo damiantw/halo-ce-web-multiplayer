@@ -2558,6 +2558,31 @@ boolean network_game_server_takes_late_joiner(
 		!network_game_server_client_machine_let_go(server, machine);
 }
 
+/* whether a player a machine asks for in the pregame, after the game it is
+in has started, is taken into that game: a machine accepted into the lobby
+just before the start (the countdown's last moment) loads the game with the
+others, and its player's request, sent from its lobby, comes after the start
+(or crosses it). The lobby no longer takes it (every machine loads the game
+from the settings sent with the start), so it was dropped, and the machine
+played the game with no player of its own, with nothing said on either side.
+Its player is queued instead, and added once the game is in progress as a
+player asked for in game is (network_game_server_update): every machine is
+told of it (network_game_server_send_player_joined_info_ingame) and spawns
+it. Not once the game is ending, nor for a machine let go. */
+boolean network_game_server_takes_started_machine_player(
+	struct network_game_server *server,
+	struct network_game_server_client_machine *machine)
+{
+	if (!network_game_server_client_machine_is_joined_to_game(server, machine) ||
+		network_game_server_client_machine_let_go(server, machine))
+	{
+		return FALSE;
+	}
+	if (server->state == _network_game_server_state_pregame)
+		return server->sent_start_game_message;
+	return server->state == _network_game_server_state_ingame && !game_engine_game_is_ending();
+}
+
 /* whether players of the machine are still waiting to be added (after the
 one being added) */
 static boolean network_game_server_machine_has_waiting_players(

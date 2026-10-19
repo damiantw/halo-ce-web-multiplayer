@@ -42,6 +42,8 @@ short network_game_client_join_progress(
 	void);
 short network_game_client_lobby_local_player(
 	void);
+short network_game_client_game_local_player(
+	void);
 void network_game_client_set_let_go(
 	void);
 boolean network_game_client_take_let_go(
