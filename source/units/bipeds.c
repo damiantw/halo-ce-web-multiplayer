@@ -276,6 +276,14 @@ symbols in this file:
 #include "scenario/scenario.h"
 #include "structures/structure_bsp_definitions.h"
 
+#ifdef HALO_LINUX
+/* port: port/linux/game/network_objects.c's (a client deletes the host's
+objects on the host's word alone) */
+boolean network_objects_may_delete(long object_index);
+#else
+#define network_objects_may_delete(object_index) TRUE
+#endif
+
 /* ---------- constants */
 
 enum
@@ -4124,10 +4132,13 @@ static boolean biped_check_discard(
 {
 	struct biped_datum *biped = biped_get(biped_index);
 
+	/* port: not the host's biped on a client, which the host erases: the
+	delete was refused, and logged as done every tick as it fell */
 	if (!game_engine_running() &&
 		(TEST_FLAG(biped->object.flags, _object_outside_of_map_bit) ||
 		biped->object.location.cluster_index==NONE) &&
-		biped->object.position.z<-2000.f)
+		biped->object.position.z<-2000.f &&
+		network_objects_may_delete(biped_index))
 	{
 		long actor_index = biped->unit.swarm_actor_index;
 

@@ -140,6 +140,9 @@ unsigned long memory_watch_serial(void);
 void memory_watch_prepare_write(void *address, unsigned long size);
 /* the range was remapped or reprotected: treat it as written and unwatched */
 void memory_watch_forget(void *address, unsigned long size);
+/* a new frame starts (Present): on Linux the crash handler is checked to
+be the one installed (memory_watch.c); nothing elsewhere */
+void memory_watch_begin_frame(void);
 
 /* ---------- time */
 

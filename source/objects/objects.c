@@ -120,6 +120,9 @@ on the host's word */
 long network_objects_new_object_index(void);
 boolean network_objects_creating_host_object(void);
 boolean network_objects_may_delete(long object_index);
+boolean network_objects_client_deleting(void);
+#else
+#define network_objects_client_deleting() FALSE
 #endif
 
 static void object_connect_lights(long object_index, boolean disconnect, boolean reconnect);
@@ -1722,7 +1725,11 @@ static void object_delete_initial_recursive(
 	struct object_header_datum *header = object_header_get(object_index);
 	struct object_datum *object = object_get(object_index);
 
-	if (game_engine_running() && object->object.type == _object_type_weapon)
+	/* (port: but on a client of the distributed netcode, which deletes the
+	host's objects on the host's word, a flag or ball among them: the game
+	deletes none, but a host may, and the client lets go of it first,
+	network_objects.c's distributed_client_delete) */
+	if (game_engine_running() && object->object.type == _object_type_weapon && !network_objects_client_deleting())
 	{
 		match_assert("c:\\halo\\SOURCE\\objects\\objects.c", 829, !(weapon_is_flag(object_index)));
 	}

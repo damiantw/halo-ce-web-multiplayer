@@ -75,3 +75,8 @@ void memory_watch_forget(void *address, unsigned long size)
 {
 	touch((unsigned long)address, size);
 }
+
+/* nothing to do per frame (memory_watch.c checks its crash handler) */
+void memory_watch_begin_frame(void)
+{
+}
