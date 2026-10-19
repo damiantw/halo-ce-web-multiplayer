@@ -247,7 +247,8 @@ changed. To use it again, set `SolutionConfig.matching` in
 ## Credits
 
 - [punpckhdq/halo](https://github.com/punpckhdq/halo): the Halo: Combat
-  Evolved decompilation and its byte-matching build (CC0-1.0).
+  Evolved decompilation and its byte-matching build (AGPL-3.0 from 17 October
+  2026; CC0-1.0 before).
 - [bnunu/halo-1](https://github.com/bnunu/halo-1): the fork of the
   decompilation that the port starts from (CC0-1.0).
 - [cybersecurity/halo-ce-universal](https://github.com/cybersecurity/halo-ce-universal):
