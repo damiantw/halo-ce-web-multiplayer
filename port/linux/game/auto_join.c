@@ -93,6 +93,10 @@ static struct
 	/* in a game, or the game lost: done */
 	boolean finished;
 	short attempts;
+	/* in the game it joined, and still its client: the machine's player is
+	asked for while the game has none of it (auto_join_ask_for_player) */
+	boolean in_game;
+	boolean in_game_asked;
 } auto_join;
 
 /* how long the web build looks for the game before giving up and leaving */
@@ -231,9 +235,61 @@ static void auto_join_restart(
 	auto_join.player_added = FALSE;
 	auto_join.add_seconds = 0.0f;
 	auto_join.finished = FALSE;
+	auto_join.in_game = FALSE;
+	auto_join.in_game_asked = FALSE;
 	auto_join.searching_seconds = 0.0f;
 	/* (the join starts over: the page stays) */
 	web_menu_request.pending = FALSE;
+}
+
+/* the machine's player, asked for until the game it plays has it: in the
+lobby (as pressing A there), once the lobby has sent its settings, and again
+every half second (network_game_client_add_player takes one request every
+half second) until they have it; and in a game that has started without it,
+with the in-game request a player joining the game in progress sends. A
+machine taken into the lobby just before the game started can load the game
+with no player of its own: its request crossed the start (the host takes it
+for the game since, network_game_server_takes_started_machine_player), or it
+had not sent one yet (it went from joining to the game without the lobby's
+settings). Nothing is waited out: the request goes again only while the
+machine's player is missing, and stops once the game has it, or is full. */
+static void auto_join_ask_for_player(
+	short progress,
+	real seconds)
+{
+	struct network_game_client *client = global_network_game_client_get();
+	boolean requested;
+
+	if (progress == 2)
+	{
+		auto_join.add_seconds += seconds;
+		if (network_game_client_lobby_local_player() != 0 ||
+			auto_join.player_added && auto_join.add_seconds < 0.5f)
+		{
+			return;
+		}
+		requested = network_game_client_add_player(client, 0);
+		auto_join.add_seconds = 0.0f;
+		if (requested && !auto_join.player_added)
+			platform_log("auto join: player added");
+		auto_join.player_added |= requested;
+	}
+	else if (progress == 3)
+	{
+		if (network_game_client_game_local_player() != 0)
+		{
+			auto_join.in_game_asked = FALSE;
+			return;
+		}
+		auto_join.add_seconds += seconds;
+		if (auto_join.in_game_asked && auto_join.add_seconds < 0.5f)
+			return;
+		requested = network_game_client_add_player(client, 0);
+		auto_join.add_seconds = 0.0f;
+		if (requested && !auto_join.in_game_asked)
+			platform_log("auto join: in the game without this machine's player; asking for it");
+		auto_join.in_game_asked |= requested;
+	}
 }
 
 void auto_join_update(
@@ -262,7 +318,13 @@ void auto_join_update(
 		}
 	}
 	if (auto_join.finished)
+	{
+		if (auto_join.in_game && !global_network_game_client_get())
+			auto_join.in_game = FALSE;
+		if (auto_join.in_game)
+			auto_join_ask_for_player(network_game_client_join_progress(), seconds);
 		return;
+	}
 	if (!auto_join.searching)
 	{
 		if (!main_menu_loaded)
@@ -339,7 +401,11 @@ void auto_join_update(
 	if (progress >= 3)
 	{
 		auto_join.finished = TRUE;
+		auto_join.in_game = TRUE;
+		auto_join.in_game_asked = FALSE;
+		auto_join.add_seconds = 0.0f;
 		platform_log("auto join: in the game");
+		auto_join_ask_for_player(progress, 0.0f);
 	}
 	else if (progress == 0 && auto_join.joined_seconds >= 1.0f)
 	{
@@ -352,22 +418,10 @@ void auto_join_update(
 	}
 	else if (progress == 2)
 	{
-		/* the player (as pressing A in the lobby), once the lobby has sent
-		its settings, and again until they have the player: a request the
-		lobby did not take (it was starting the game, or a game in progress
-		was not yet taking this machine's players) is not lost */
-		short lobby = network_game_client_lobby_local_player();
-
-		auto_join.add_seconds += seconds;
-		if (lobby == 0 && (!auto_join.player_added || auto_join.add_seconds >= 0.5f))
-		{
-			boolean requested = network_game_client_add_player(global_network_game_client_get(), 0);
-
-			auto_join.add_seconds = 0.0f;
-			if (requested && !auto_join.player_added)
-				platform_log("auto join: player added");
-			auto_join.player_added |= requested;
-		}
+		/* (a request the lobby did not take: it was starting the game, or a
+		game in progress was not yet taking this machine's players, is not
+		lost) */
+		auto_join_ask_for_player(progress, seconds);
 	}
 }
 

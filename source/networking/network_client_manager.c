@@ -3228,6 +3228,32 @@ short network_game_client_lobby_local_player(
 	return 0;
 }
 
+/* auto_join.c's: whether this machine has a player in the game it plays
+(NONE: not playing one, or the game is full and could take none), 1 or 0.
+A machine taken into the lobby as the game started can be in the game with
+no player of its own: it had not asked for one yet, or its request came to
+the host after the start. Asked for in game then (network_game_client_add_player
+sends the in-game request), as a player joining the game in progress is. */
+short network_game_client_game_local_player(
+	void)
+{
+	struct network_game_client *client = global_network_game_client_get();
+	short player_index;
+
+	if (!client || client->state != _network_game_client_state_ingame)
+		return NONE;
+	for (player_index = 0; player_index < MAXIMUM_NUMBER_OF_PLAYERS; player_index++)
+	{
+		struct network_player const *player = &client->game.players[player_index];
+
+		if (network_player_is_valid(player) && player->machine_index == (char)client->machine_index)
+			return 1;
+	}
+	if (client->game.player_count >= client->game.maximum_player_count)
+		return NONE;
+	return 0;
+}
+
 boolean network_game_client_join_first_available_game(
 	void)
 {
