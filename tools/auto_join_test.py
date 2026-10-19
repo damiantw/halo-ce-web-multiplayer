@@ -16,7 +16,10 @@ web build does; under xvfb-run, without audio), and checks:
 - empty game: once every client has gone, the game ends after
   server.empty_seconds and the lobby opens at once (no end sequence, no
   scores; the postgame event says 0 seconds), but a client joining as the
-  countdown runs out keeps the game going and is in it;
+  countdown runs out keeps the game going and is in it (the client is
+  stopped, SIGSTOP, as it starts looking for the game, and goes on 0.5 s
+  before the countdown would end: its join lands then however long the
+  client took to start);
 - a real match keeps its scores: end_game with players in shows them for
   server.postgame_seconds;
 - the next game has every machine's player, the one that joined as the
@@ -225,7 +228,12 @@ def main():
     def lobby_open(host, after=0.0):
         return host.event(lambda e: e.get("event") == "lobby" and e.get("reason") == "opened", after)
 
+    status_count = [0]
+
     def status(host, tag):
+        # (each request its own id: a reply is not taken for a later one's)
+        status_count[0] += 1
+        tag = "%s-%d" % (tag, status_count[0])
         host.command(json.dumps({"cmd": "status", "id": tag}))
         found = host.wait(lambda: host.event(lambda e: e.get("event") == "status" and e.get("id") == tag), 10)
         return found[1] if found else {}
@@ -240,7 +248,7 @@ def main():
         since = time.monotonic()
         names = []
         for attempt in range(int(seconds) + 1):
-            names = players(status(host, "%s-%d" % (tag, attempt)))
+            names = players(status(host, tag))
             if len(names) >= count or attempt == int(seconds):
                 break
             time.sleep(1)
@@ -352,15 +360,22 @@ def main():
         pair = [client("solo"), client("duo")]
         for c in pair:
             check(c.wait(lambda c=c: c.find("auto join: in the game"), 120) is not None, "%s is in a new game" % c.name)
-        boot = pair[0].find("auto join: joining") - pair[0].spawned
+        # (the racer starts now, and is stopped, SIGSTOP, as it starts
+        # looking for the game: it goes on 0.5 s before the empty countdown
+        # would end, so that its join lands then however long it took to
+        # start)
+        racer = client("racer", freeze_on="auto join: searching for games")
         game_from = time.monotonic()
         for c in pair:
             c.stop()
         left = host.wait(lambda: len([e for e in host.events if e[0] >= game_from and e[1].get("event") == "player_left"]) >= 2
                          and [e for e in host.events if e[0] >= game_from and e[1].get("event") == "player_left"][-1], 30)
-        racer_start = (left[0] if left else time.monotonic()) + 8.0 - boot - 0.3
+        frozen = racer.wait(lambda: racer.frozen, 120)
+        check(frozen is not None and racer.find("auto join: joining") is None and (not left or frozen < left[0] + 7.5),
+              "racer was stopped as it started looking for the game")
+        racer_start = (left[0] if left else time.monotonic()) + 8.0 - 0.5
         time.sleep(max(0.0, racer_start - time.monotonic()))
-        racer = client("racer")
+        racer.resume()
         check(racer.wait(lambda: racer.find("auto join: in the game"), 120) is not None, "racer is in the game")
         early_end = host.event(lambda e: e.get("event") == "game_ended", game_from)
         check(early_end is None or not left or early_end[0] - left[0] > 8.5,
