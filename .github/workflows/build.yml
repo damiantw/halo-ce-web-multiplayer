@@ -93,6 +93,9 @@ jobs:
       - name: DXT1 as ASTC test
         run: python3 -m pytest -q tools/test_dxt1_astc.py
 
+      - name: Static damage targets test
+        run: python3 -m pytest -q tools/test_static_target.py
+
       - name: Crash handler test
         run: python3 -m pytest -q tools/test_memory_watch.py
 
