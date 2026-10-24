@@ -95,7 +95,18 @@ is dead; version 8 checks how fast a client's player moves and fires
 against the host's time; version 9 sends every player's ping, as the host
 measures it, for the scoreboard; version 10 gives a player who joins the
 slot of one who quit once his unit is gone (a client of 9 would find that
-slot held), and readies a weapon walked over into an empty slot.
+slot held), and readies a weapon walked over into an empty slot; version 11
+takes clients' hits on, and sends the host's damage to, the map's scenery
+and devices that damage can destroy (lights, panels) or whose shield it can
+break (Rat Race's energy shields, a Custom Edition map's tripmines), and has
+every machine run those shields' stun and recharge itself; and the host
+deals what such an object deals itself (its shield or body breaking: a
+tripmine a client's player threw going off under the host's vehicle), which
+a client no longer reports and the host took from no one. One made in the
+game, a tripmine, is at an index of its own on each machine: the host takes
+a client's hit on its copy as one on the host's nearest where the client had
+it, and a client the host's damage to one as damage to its own copy nearest
+the damage (upstream OpenCE 7a1ffca2 and #450).
 
 ## Joining a game in progress
 
