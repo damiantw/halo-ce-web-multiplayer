@@ -46,6 +46,9 @@
 //   HALO_WEB_CPU_DECODE_VERTICES=<auto|small|1|0>  vertices decoded into
 //                      floats on the CPU (d3d8_gl.c; auto: small on PowerVR)
 //   HALO_WEB_FORCE_DXT_DECODE=1  DXT textures decompressed on the CPU
+//   HALO_WEB_NO_ASTC=1   where there is ASTC and no S3TC (PowerVR, Mali), DXT1
+//                      textures decompressed on the CPU instead of given
+//                      as ASTC 4x4 (port/linux/src/dxt1_astc.h)
 //   HALO_WEB_GPU_CHECK=0   no GPU check (below) and none of its workarounds
 // Player settings, given with env= or by the site's game bridge:
 //   HALO_WEB_PLAYER_NAME=<name>    the player's name in network games
@@ -310,7 +313,7 @@ void main()
 	// a red DXT1 block, sampled
 	function checkDxt(gl, log) {
 		const s3tc = gl.getExtension("WEBGL_compressed_texture_s3tc");
-		if (!s3tc) return { ok: null, detail: "no WEBGL_compressed_texture_s3tc (the game decodes DXT on the CPU)" };
+		if (!s3tc) return { ok: null, detail: "no WEBGL_compressed_texture_s3tc (the game decodes DXT on the CPU, or gives DXT1 as ASTC where there is WEBGL_compressed_texture_astc)" };
 		const texture = gl.createTexture();
 		gl.bindTexture(gl.TEXTURE_2D, texture);
 		gl.compressedTexImage2D(gl.TEXTURE_2D, 0, s3tc.COMPRESSED_RGBA_S3TC_DXT1_EXT, 4, 4, 0, new Uint8Array([0x00, 0xf8, 0x00, 0xf8, 0, 0, 0, 0]));
@@ -460,7 +463,7 @@ void main() { color = textureLod(map, vec2(0.5), 0.0); ${pointX}}
 		else if ((match = /^.*?(frame \d+: .*)$/.exec(text)) && /skipped/.test(text)) lastFrame = match[1];
 		else if ((match = /draw format: (.*)/.exec(text))) add(seen.formats, match[1].slice(0, 220), 40);
 		else if ((match = /web: GPU .*; (vertices decoded .*)$/.exec(text))) decoding = match[1];
-		else if (/OpenGL|S3TC|DXT|vertices decoded|constants|uniform buffer|trimmed/i.test(text)) add(seen.notes, text.slice(0, 240), 12);
+		else if (/OpenGL|S3TC|ASTC|DXT|vertices decoded|constants|uniform buffer|trimmed/i.test(text)) add(seen.notes, text.slice(0, 240), 12);
 	}
 	return { run, overlay, line };
 })();

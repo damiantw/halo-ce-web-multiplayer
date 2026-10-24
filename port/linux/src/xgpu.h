@@ -21,6 +21,10 @@ struct xgpu_capabilities
 	BOOL border_clamp;
 	BOOL anisotropy;
 	BOOL s3tc;
+	/* WebGL 2's WEBGL_compressed_texture_astc (or ES's
+	KHR_texture_compression_astc_ldr), set only where there is no S3TC and
+	not turned off (debug.web_no_astc): DXT1 as ASTC 4x4 (dxt1_astc.h) */
+	BOOL astc;
 	/* ES 3.2: glDrawElementsBaseVertex */
 	BOOL base_vertex;
 	/* ES 3.1 with fragment atomic counters: exact visibility test counts */

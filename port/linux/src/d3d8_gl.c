@@ -996,9 +996,21 @@ static void gl_initialize(void)
 			(host_gl_has_extension("GL_EXT_texture_compression_dxt1") &&
 			host_gl_has_extension("GL_ANGLE_texture_compression_dxt3") &&
 			host_gl_has_extension("GL_ANGLE_texture_compression_dxt5"));
-		platform_log("OpenGL ES %d.%d: copy image %d, border clamp %d, anisotropy %d, S3TC %d, sample counting %d",
+		/* DXT1 as ASTC only where there is no S3TC: a driver with S3TC
+		(every desktop browser's) takes DXT as it is, and one whose S3TC
+		the page's check found broken (HALO_WEB_FORCE_DXT_DECODE, below)
+		keeps the CPU decode */
+		if (!xgpu_capabilities.s3tc && (host_gl_has_extension("GL_KHR_texture_compression_astc_ldr") ||
+			host_gl_has_extension("GL_WEBGL_compressed_texture_astc")))
+		{
+			if (config_boolean("debug.web_no_astc"))
+				platform_log("DXT1 textures decompressed on the CPU, not given as ASTC (HALO_WEB_NO_ASTC)");
+			else
+				xgpu_capabilities.astc = TRUE;
+		}
+		platform_log("OpenGL ES %d.%d: copy image %d, border clamp %d, anisotropy %d, S3TC %d, ASTC %d, sample counting %d",
 			(int)major, (int)minor, xgpu_capabilities.copy_image, xgpu_capabilities.border_clamp,
-			xgpu_capabilities.anisotropy, xgpu_capabilities.s3tc, xgpu_capabilities.atomic_counters);
+			xgpu_capabilities.anisotropy, xgpu_capabilities.s3tc, xgpu_capabilities.astc, xgpu_capabilities.atomic_counters);
 		if (xgpu_capabilities.s3tc && config_boolean("debug.web_force_dxt_decode"))
 		{
 			xgpu_capabilities.s3tc = FALSE;
