@@ -397,6 +397,11 @@ static void decode_level(const struct xgpu_texture_description *description, uns
 }
 
 #ifdef HALO_ANDROID
+/* ---------- DXT1 as ASTC 4x4, for ES and WebGL 2 drivers with ASTC and no
+S3TC: its bits moved instead of decoded (dxt1_astc.h) */
+
+#include "dxt1_astc.h"
+
 /* ---------- DXT decoding, for ES drivers without S3TC (Mali) */
 
 static unsigned long color565(unsigned long value)
@@ -582,10 +587,25 @@ static void upload(GLuint texture, GLenum target, const struct xgpu_texture_desc
 	unsigned long largest = description->width * description->height * description->depth;
 	BOOL decode_compressed = FALSE;
 	unsigned long *converted;
+	unsigned char *astc = NULL;
 	unsigned long face, level;
 
 #ifdef HALO_ANDROID
 	decode_compressed = description->compressed && !xgpu_capabilities.s3tc;
+	/* DXT1 as ASTC 4x4 where the driver has ASTC and no S3TC (the
+	capability is set only then, d3d8_gl.c; HALO_WEB_NO_ASTC=1 turns it
+	off); 3D textures, which ASTC does not take here, are still decoded */
+	if (decode_compressed && information.kind == _texel_dxt1 && target != GL_TEXTURE_3D && xgpu_capabilities.astc)
+	{
+		astc = malloc(((description->width + 3) / 4) * ((description->height + 3) / 4) * 16);
+		if (!astc)
+		{
+			platform_log("textures: no memory to convert a %lux%lux%lu texture; it is not drawn",
+				description->width, description->height, description->depth);
+			return;
+		}
+		decode_compressed = FALSE;
+	}
 #endif
 	converted = description->compressed && !decode_compressed ? NULL : malloc(largest * sizeof(unsigned long));
 	glBindTexture(target, texture);
@@ -610,7 +630,15 @@ static void upload(GLuint texture, GLenum target, const struct xgpu_texture_desc
 			GLsizei height = (GLsizei)level_dimension(description->height, level);
 			GLsizei depth = (GLsizei)level_dimension(description->depth, level);
 
-			if (description->compressed && !decode_compressed)
+			if (astc)
+			{
+#ifdef HALO_ANDROID
+				dxt1_astc_level(source, (unsigned long)width, (unsigned long)height, astc);
+				glCompressedTexImage2D(image_target, (GLint)level, GL_COMPRESSED_RGBA_ASTC_4x4_KHR, width, height, 0,
+					(GLsizei)(((width + 3) / 4) * ((height + 3) / 4) * 16), astc);
+#endif
+			}
+			else if (description->compressed && !decode_compressed)
 			{
 				if (target == GL_TEXTURE_3D)
 					glCompressedTexImage3D(image_target, (GLint)level, compressed_format(information.kind), width, height, depth, 0,
@@ -657,6 +685,7 @@ static void upload(GLuint texture, GLenum target, const struct xgpu_texture_desc
 		}
 	}
 	free(converted);
+	free(astc);
 	texture_dump(target, description);
 }
 

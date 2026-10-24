@@ -328,6 +328,8 @@ static const struct config_setting config_settings[] =
 		"Web: vertices decoded into floats on the CPU. 1 (all): every declaration with an element that is not a float (NORMPACKED3, shorts, bytes, colours), and the shaders read floats only; small: those with an element narrower than 4 bytes or off 4-byte alignment (the models' node indices and weights); 0: none; auto: small on PowerVR GPUs, else none." },
 	{ "debug.web_force_dxt_decode", _config_boolean, "false", "HALO_WEB_FORCE_DXT_DECODE", _environment_set_is_true, _platform_all,
 		"DXT textures are decompressed on the CPU even where the driver has S3TC." },
+	{ "debug.web_no_astc", _config_boolean, "false", "HALO_WEB_NO_ASTC", _environment_value, _platform_all,
+		"Where the driver has ASTC and no S3TC (the Pixel's PowerVR, Mali), DXT1 textures are decompressed on the CPU instead of given to the GPU as ASTC 4x4." },
 	{ "debug.gpu_dump_shaders", _config_string, "\"\"", "HALO_GPU_DUMP_SHADERS", _environment_value, _platform_all,
 		"A folder to write the generated GLSL to; empty none." },
 	{ "debug.gpu_debug_expression", _config_string, "\"\"", "HALO_GPU_DEBUG_EXPR", _environment_value, _platform_all,
