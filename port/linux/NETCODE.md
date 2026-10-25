@@ -211,7 +211,10 @@ a pregame keep-alive every five seconds from the host
      players' ammunition and grenade counts from the host only once a
      round trip has passed since it last fired, reloaded or threw (what
      the host says before then is from before). How old what a unit
-     carries is travels in 16 bits.
+     carries is travels in 16 bits. A client keeps an inventory whose
+     unit or weapons have not come yet (the stream can trail the datagram)
+     and applies it in full once they have, the newest of a unit's winning;
+     one is dropped `EMPTY_INVENTORY_TICKS` after the newest came.
    - Players take the units the host spawns them with, seats are the
      host's (a client's own player's once it has ridden otherwise for
      longer than a round trip), and the CTF flags and oddballs are the same
@@ -280,6 +283,15 @@ a pregame keep-alive every five seconds from the host
      unit or vehicle: the host keeps a second of where they were) or of
      where it is (more for a fast one; also for one that is no longer a
      player's, a body or a vehicle left);
+     a hit at a point (not a melee blow, a vehicle's, or an explosion's
+     area damage) only with a line through the level's structure (the
+     BSP alone: not objects or scenery, and not invisible, breakable or
+     two-sided surfaces such as glass and fences) to the target's centre
+     where the host had it, straight or by way of the hit point on its
+     bounding sphere, from the shooter's eye at one of their last few
+     trail points within the shot's time (two seconds of them at most; a
+     driver's or gunner's also from their vehicle's weapon), unless it is
+     the detonation of a projectile the host saw stuck to the target;
      and no more reports than the weapon that deals them fires (its rate of
      fire and projectiles a shot, with a margin; an explosion's hits count
      as one, when its damage has a reach, and no object is hit twice by

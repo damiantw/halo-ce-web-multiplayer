@@ -96,6 +96,9 @@ jobs:
       - name: Static damage targets test
         run: python3 -m pytest -q tools/test_static_target.py
 
+      - name: Retried inventories test
+        run: python3 -m pytest -q tools/test_retried_inventories.py
+
       - name: Crash handler test
         run: python3 -m pytest -q tools/test_memory_watch.py
 
