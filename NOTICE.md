@@ -40,6 +40,7 @@ AGPL-3.0-or-later all the same.
 | [PR #474](https://github.com/OpenCommunityEdition/OpenCE/pull/474) (`933cad12`) | The host refuses a client's reported point hit with no line through the level's structure from the shooter to the target | `port/linux/game/network_damage.c`, `port/linux/NETCODE.md` |
 | [PR #466](https://github.com/OpenCommunityEdition/OpenCE/pull/466) (`667c2f29`, `07c8430b`, `32604c8e`) | A client keeps an inventory whose unit or weapons have not come yet, and applies it once they have | `port/linux/game/network_objects.c`, `port/linux/NETCODE.md`, `tools/test_retried_inventories.py`, `tools/fixtures/retried_inventories.c`, `.github/workflows/build.yml` |
 | [PR #490](https://github.com/OpenCommunityEdition/OpenCE/pull/490) (`1fc3a350` only) | A failed `SDL_Init` is logged once, and again only when its reason changes, rather than on every frame that asks for SDL | `port/linux/src/sdl_platform.c` |
+| [PR #487](https://github.com/OpenCommunityEdition/OpenCE/pull/487) (`b3641162`) | A light the window has no room for (past `MAXIMUM_LIGHTS_PER_WINDOW`) no longer zeroes the submitted-light count or lands in an object's lights, and "too many lights" is logged once in a while instead of for each light | `source/objects/object_lights.c`, `source/rasterizer/rasterizer_lights.c` |
 
 The text of the AGPL 3.0 is in [LICENSE](LICENSE).
 
