@@ -524,6 +524,9 @@ static void biped_update_jumping(
 	struct unit_animation_update_data *animation);
 static void biped_update_physics(
 	struct biped_physics *physics);
+/* units.c's (port): whether a player biped turns with the aim where the
+original did not */
+boolean unit_turns_with_aim(long unit_index);
 static void biped_snap_facing(
 	long biped_index);
 
@@ -3305,6 +3308,15 @@ static void biped_update_turning(
 	{
 		boolean flaming =
 			biped->unit.animation.base_seat_index==_unit_base_seat_flaming;
+		/* port: a player in the air turns with the aim, as one running
+		does: the original never turned the airborne state, and clipped the
+		aim to its aiming screen about the body left facing where the jump
+		began, so a shot after a turn in the air missed the crosshair
+		(unit_turns_with_aim, units.c) */
+		boolean airborne_turn =
+			biped->unit.player_index!=NONE &&
+			biped->unit.animation.state==_unit_state_airborne &&
+			unit_turns_with_aim(biped_index);
 		real_vector3d turn_axis;
 		real turn_error;
 		real facing_alignment;
@@ -3368,7 +3380,8 @@ static void biped_update_turning(
 		}
 
 		if (biped->biped.state==biped_state_moving ||
-			TEST_FLAG(flags, _biped_turns_without_animating_bit))
+			TEST_FLAG(flags, _biped_turns_without_animating_bit) ||
+			airborne_turn)
 		{
 			if (!TEST_FLAG(biped->unit.control_flags, _unit_control_look_dont_turn_bit))
 			{
