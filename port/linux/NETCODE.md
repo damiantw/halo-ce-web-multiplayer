@@ -108,6 +108,16 @@ a client's hit on its copy as one on the host's nearest where the client had
 it, and a client the host's damage to one as damage to its own copy nearest
 the damage (upstream OpenCE 7a1ffca2 and #450).
 
+Changes that leave what the machines send alone keep the version. The
+lobby's START NOW is the same faster request from a client as before: the
+host maps it by the machine that sent it, so the host's own starts the game
+at once and a client's starts the countdown or takes five seconds off it,
+and on a dedicated server it only takes time off the server's own running
+countdown (upstream OpenCE #481, #502). A player's body turns with the aim
+in the air on every machine, from the aim each already has, as it does
+while running (upstream #482, fc247a81: always, with no setting, for the
+player bipeds).
+
 ## Joining a game in progress
 
 A game stays open when it starts (on the Xbox it closed, since every
