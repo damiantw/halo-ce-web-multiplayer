@@ -11828,3 +11828,31 @@ void unit_network_forget_weapon(
 		unit->unit.desired_weapon_index = unit_weapon_next_index(unit_index, NONE, 0);
 }
 #endif
+
+/* port (upstream OpenCE #482, fc247a81): whether a player biped turns with
+the aim where the original left its body facing (in the air: bipeds.c's
+biped_update_turning). It moves where a shot goes, not only how the body
+looks, so every machine does it the same, with no setting: the player
+bipeds the port's enhancements were made for (cyborg, cyborg_mp). */
+boolean unit_turns_with_aim(
+	long unit_index)
+{
+	static char const *const turning_units[] =
+	{
+		"cyborg",
+		"cyborg_mp",
+	};
+	struct unit_datum *unit = unit_get(unit_index);
+	char const *name = tag_name_strip_path(tag_get_name(unit->definition_index));
+	long name_index;
+
+	for (name_index = 0; name_index < NUMBEROF(turning_units); name_index++)
+	{
+		if (!_stricmp(name, turning_units[name_index]))
+		{
+			return TRUE;
+		}
+	}
+
+	return FALSE;
+}
