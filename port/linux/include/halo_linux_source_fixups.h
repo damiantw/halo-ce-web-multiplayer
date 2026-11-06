@@ -30,6 +30,10 @@ void render_interpolation_frame_begin(void);
 void render_interpolation_frame_end(void);
 float render_interpolation_fraction(void);
 struct real_matrix4x3 *render_interpolation_object_node_matrices(long object_index);
+/* a point the tick placed on the object, moved with its root to where this
+frame draws it (render_interpolation.c) */
+union real_point3d;
+void render_interpolation_object_point(long object_index, union real_point3d *point);
 struct observer_result const *render_interpolation_camera(short local_player_index,
 	struct observer_result const *observer);
 void render_interpolation_first_person(short local_player_index, struct real_matrix4x3 *node_matrices,

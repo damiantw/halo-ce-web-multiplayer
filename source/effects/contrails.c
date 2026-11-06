@@ -71,6 +71,7 @@ symbols in this file:
 #include "bitmaps/bitmap_group.h"
 #include "cseries/errors.h"
 #include "effects/contrail_definitions.h"
+#include "game/game.h" /* port: game_time_get, game_players_are_double_speed */
 #include "memory/data.h"
 #include "objects/object_definitions.h"
 #include "physics/point_physics.h"
@@ -373,31 +374,47 @@ long contrail_new(
 	return contrail_index;
 }
 
+#ifdef HALO_LINUX
+/* port: the time contrail points are made and aged by this frame. The native
+builds update contrails every frame, several frames per tick
+(port/linux/game/render_interpolation.c), but objects and their markers move
+only on ticks: points due on a frame that ran no tick would land on the last
+point, be skipped and be lost. Emit on the first frame after each tick. The
+time is the ticks' own, a 30th of a second each, as the Xbox's frames were,
+not the frames' time since the last tick (four or five frames' at 144 frames
+a second): those uneven steps made a short trail's fades change from tick to
+tick. A game time gone back or jumping (a new map, a checkpoint) counts as a
+tick. A tick is half as long while the players are double speed, as
+game_frame halves the frame's time. A point's state that ends drops the rest
+of the step, so aging by the frame's own time at a high frame rate lived a
+Shade's or a Spirit's points (states of 0.01, 0.05 and 0.005 seconds) about
+half of the four ticks, 133 ms, they lived on the Xbox (upstream OpenCE
+08efb40e and cf3f709f, PR #546). */
+static real contrail_point_dt(void)
+{
+	static long last_point_game_time = NONE;
+	long ticks;
+	real point_dt;
+
+	if (last_point_game_time == game_time_get())
+		return 0.0f;
+	ticks = game_time_get() - last_point_game_time;
+	if (last_point_game_time == NONE || ticks < 1 || ticks > TICKS_PER_SECOND)
+		ticks = 1;
+	last_point_game_time = game_time_get();
+	point_dt = (real)ticks / (real)TICKS_PER_SECOND;
+	if (game_players_are_double_speed())
+		point_dt *= 0.5f;
+	return point_dt;
+}
+#endif
+
 void contrails_update(
 	real dt)
 {
 	long contrail_index;
 #ifdef HALO_LINUX
-	/* The native builds update contrails every frame, several frames per
-	tick (port/linux/game/render_interpolation.c), but objects and their
-	markers move only on ticks: points due on a frame that ran no tick would
-	land on the last point, be skipped and be lost. Emit on the first frame
-	after each tick, for all the time since the last emission. */
-	static long last_point_game_time = NONE;
-	static real pending_point_dt = 0.0f;
-	real point_dt;
-
-	pending_point_dt += dt;
-	if (last_point_game_time != game_time_get())
-	{
-		last_point_game_time = game_time_get();
-		point_dt = pending_point_dt;
-		pending_point_dt = 0.0f;
-	}
-	else
-	{
-		point_dt = 0.0f;
-	}
+	real point_dt = contrail_point_dt();
 #endif
 
 	for (contrail_index = data_next_index(contrail_data, NONE);
@@ -483,7 +500,16 @@ void contrails_update(
 			texture_animation_v = texture_animation_v * contrail->density;
 		contrail->texture_offset_v = texture_animation_v * frame_dt + contrail->texture_offset_v;
 
+#ifdef HALO_LINUX
+		/* port: the points' physics and their states' fades step with the
+		ticks (contrail_point_dt), so at a high frame rate a point moves and
+		fades once a tick, as on the Xbox, not on every frame. The texture
+		animation above stays every frame. */
+		if (point_dt > 0.0f)
+			contrail_update_points(contrail_index, point_dt);
+#else
 		contrail_update_points(contrail_index, dt);
+#endif
 
 		for (instance_index = 0;
 			instance_index < MAXIMUM_CONTRAIL_INSTANCES;

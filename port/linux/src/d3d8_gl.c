@@ -402,6 +402,13 @@ struct gl_device
 	lights makes hundreds of tests. */
 	GLuint visibility_known[VISIBILITY_TEST_SLOTS];
 	BOOL visibility_unread[VISIBILITY_TEST_SLOTS];
+	/* the tests ended at each slot so far, dropped ones too, and the number
+	(from 1) of the one whose count the slot gives, 0 for none. A lens flare
+	reads a slot only once a count of its own test has come
+	(xgpu_visibility_tests_ended, rasterizer_lights.c; upstream OpenCE
+	6f1a31d6 and cdd43c65, PR #541) */
+	unsigned long long visibility_ended[VISIBILITY_TEST_SLOTS];
+	unsigned long long visibility_counted[VISIBILITY_TEST_SLOTS];
 #ifdef HALO_ANDROID
 	/* with atomic counters: one counter per test, used as a ring; the
 	counter a test ended in, per result slot */
@@ -423,6 +430,8 @@ struct gl_device
 	{
 		GLuint queries[VISIBILITY_TEST_SLOTS];
 		unsigned short slots[VISIBILITY_TEST_SLOTS];
+		/* the number of the test copied into the slot (visibility_ended) */
+		unsigned long long tests[VISIBILITY_TEST_SLOTS];
 		unsigned long count;
 	} visibility_batches[2];
 	unsigned long visibility_batch;
@@ -1528,14 +1537,23 @@ void WINAPI D3DDevice_BeginVisibilityTest(void)
 
 #ifdef HALO_WEB
 /* the query each slot's test before the latest one used, and whether it
-was ended */
+was ended, and the number of the test each of those queries is */
 static GLuint web_previous_queries[VISIBILITY_TEST_SLOTS];
 static BOOL web_previous_pending[VISIBILITY_TEST_SLOTS];
+static unsigned long long web_previous_tests[VISIBILITY_TEST_SLOTS];
+static unsigned long long web_query_tests[VISIBILITY_TEST_SLOTS];
 
 #endif
+/* the number of the test in queries[index], for the path that reads the
+query on the CPU (no query buffer). The web build defines HALO_ANDROID and
+answers from its own queries (below); the array stays so the shared read
+after that still compiles. */
+static unsigned long long visibility_query_tests[VISIBILITY_TEST_SLOTS];
+
 HRESULT WINAPI D3DDevice_EndVisibilityTest(DWORD index)
 {
 	GLuint scratch;
+	unsigned long long test;
 
 	if (!device.gl_ready || !device.visibility_test_active)
 		return S_OK;
@@ -1543,6 +1561,9 @@ HRESULT WINAPI D3DDevice_EndVisibilityTest(DWORD index)
 	index %= VISIBILITY_TEST_SLOTS;
 	if (!index)
 		index = 1;
+	/* numbered whether its count will come or not: a dropped test still
+	advances the slot, so a count from before it is not the new flare's */
+	test = ++device.visibility_ended[index];
 #ifdef HALO_ANDROID
 	if (xgpu_capabilities.atomic_counters)
 	{
@@ -1566,6 +1587,7 @@ HRESULT WINAPI D3DDevice_EndVisibilityTest(DWORD index)
 
 		if (*count < VISIBILITY_TEST_SLOTS)
 		{
+			device.visibility_batches[device.visibility_batch].tests[*count] = test;
 			device.visibility_batches[device.visibility_batch].slots[(*count)++] = (unsigned short)index;
 			device.query_pending[index] = TRUE;
 		}
@@ -1588,14 +1610,17 @@ HRESULT WINAPI D3DDevice_EndVisibilityTest(DWORD index)
 	{
 		scratch = web_previous_queries[index];
 		web_previous_queries[index] = device.queries[index];
+		web_previous_tests[index] = web_query_tests[index];
 		web_previous_pending[index] = device.query_pending[index];
 	}
 	device.queries[index] = device.queries[0];
 	device.queries[0] = scratch;
+	web_query_tests[index] = test;
 #else
 	scratch = device.queries[0];
 	device.queries[0] = device.queries[index];
 	device.queries[index] = scratch;
+	visibility_query_tests[index] = test;
 #endif
 	device.query_pending[index] = TRUE;
 	device.visibility_unread[index] = TRUE;
@@ -1633,6 +1658,8 @@ HRESULT WINAPI D3DDevice_GetVisibilityTestResult(DWORD index, UINT *result, ULON
 		/* reading the buffer waits for the draws that counted */
 		samples = host_gl_read_buffer_word(device.visibility_counters,
 			(unsigned int)(device.counter_of_slot[index] * sizeof(GLuint)));
+		/* the read waits, so the count is the slot's latest test */
+		device.visibility_counted[index] = device.visibility_ended[index];
 		if (result)
 			*result = samples;
 		return S_OK;
@@ -1663,6 +1690,7 @@ HRESULT WINAPI D3DDevice_GetVisibilityTestResult(DWORD index, UINT *result, ULON
 			glGetQueryObjectuiv(device.queries[index], GL_QUERY_RESULT, &samples);
 			last_samples[index] = samples ? VISIBILITY_ALL_SAMPLES : 0;
 			last_known[index] = TRUE;
+			device.visibility_counted[index] = web_query_tests[index];
 		}
 		else if (web_previous_pending[index])
 		{
@@ -1676,6 +1704,7 @@ HRESULT WINAPI D3DDevice_GetVisibilityTestResult(DWORD index, UINT *result, ULON
 				last_samples[index] = samples ? VISIBILITY_ALL_SAMPLES : 0;
 				last_known[index] = TRUE;
 				web_previous_pending[index] = FALSE;
+				device.visibility_counted[index] = web_previous_tests[index];
 			}
 		}
 		if (result)
@@ -1703,11 +1732,28 @@ HRESULT WINAPI D3DDevice_GetVisibilityTestResult(DWORD index, UINT *result, ULON
 #endif
 			device.visibility_known[index] = samples;
 			device.visibility_unread[index] = FALSE;
+			device.visibility_counted[index] = visibility_query_tests[index];
 		}
 	}
 	if (result)
 		*result = device.visibility_known[index];
 	return S_OK;
+}
+
+/* the visibility tests ended at an index so far, and the number (from 1) of
+the one whose count GetVisibilityTestResult last gave there, 0 for none. A
+test's count is read one or more frames after it, and never for one dropped,
+and until then the index gives an earlier test's: a lens flare's slot is
+read only once a count of the flare's own tests has come
+(rasterizer_lights.c). */
+unsigned long long xgpu_visibility_tests_ended(unsigned long index)
+{
+	return device.visibility_ended[index % VISIBILITY_TEST_SLOTS];
+}
+
+unsigned long long xgpu_visibility_test_counted(unsigned long index)
+{
+	return device.visibility_counted[index % VISIBILITY_TEST_SLOTS];
 }
 
 /* ---------- render and texture stage state */
@@ -2657,6 +2703,19 @@ static GLenum blend_equation(DWORD operation)
 	}
 }
 
+/* A z bias's slope is the depth's change across a pixel. A target drawn at
+several pixels to the game's one (render_target_get, target_scale) has that
+many times less depth across each, so the Xbox's slope, taken across its own
+pixels, is that many times the larger scale. The depth units are not scaled:
+this build's depth is 24-bit, as the Xbox's (upstream OpenCE 8468b4c3, PR
+#540, the slope term only). */
+static float zbias_slope(float slope)
+{
+	float scale = target_scale[0] > target_scale[1] ? target_scale[0] : target_scale[1];
+
+	return slope * scale;
+}
+
 /* the source blend factor the pixel shader applies (nv2a_pixel_shader_key's
 source_blend), when the draw's blend mixes a constant color factor with a
 constant alpha one, which WebGL refuses (INVALID_OPERATION, and the draw
@@ -2853,8 +2912,14 @@ static void apply_raster_state(BOOL has_depth)
 	{
 		float offset[2];
 
-		offset[0] = dword_to_float(rs[D3DRS_POLYGONOFFSETZSLOPESCALE]);
+		offset[0] = zbias_slope(dword_to_float(rs[D3DRS_POLYGONOFFSETZSLOPESCALE]));
 		offset[1] = dword_to_float(rs[D3DRS_POLYGONOFFSETZOFFSET]);
+		/* The depth units stay offset[1] (zbias_slope). Upstream also adds
+		those units in the vertex program when display.reversed_depth is on,
+		because a floating-point buffer measures polygon-offset units by the
+		depth itself. This fork has no reversed depth (upstream #495, not
+		taken): the depth buffers stay 24-bit, as the Xbox's, and the units
+		are already in that measure. */
 		if (memcmp(gl_state.polygon_offset, offset, sizeof(offset)))
 		{
 			memcpy(gl_state.polygon_offset, offset, sizeof(offset));
@@ -5013,10 +5078,18 @@ static void visibility_copy_batch(void)
 		glBindBuffer(GL_QUERY_BUFFER, device.visibility_results_buffer);
 	for (i = 0; i < device.visibility_batches[device.visibility_batch].count; i++)
 	{
+		unsigned short slot = device.visibility_batches[device.visibility_batch].slots[i];
+
 		/* port: into the bound query buffer, at the slot's offset (this
-		fork's GL list has no glGetQueryBufferObjectuiv) */
+		fork's GL list has no glGetQueryBufferObjectuiv). The queries are a
+		frame old and their draws are done (above); the count the next frame
+		reads is this test's. Upstream waits on a fence when the GPU is many
+		frames behind (cdd43c65). This fork's copy has no fence: the count is
+		taken as that test's when the copy is submitted, which is when the
+		slot's result was already treated as the test's. */
 		glGetQueryObjectuiv(device.visibility_batches[device.visibility_batch].queries[i], GL_QUERY_RESULT,
-			(GLuint *)(device.visibility_batches[device.visibility_batch].slots[i] * sizeof(GLuint)));
+			(GLuint *)(slot * sizeof(GLuint)));
+		device.visibility_counted[slot] = device.visibility_batches[device.visibility_batch].tests[i];
 	}
 	if (device.visibility_batches[device.visibility_batch].count)
 		glBindBuffer(GL_QUERY_BUFFER, 0);
