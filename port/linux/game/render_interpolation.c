@@ -590,6 +590,30 @@ real_matrix4x3 *render_interpolation_object_node_matrices(long object_index)
 	return record->nodes + 2 * record->node_capacity;
 }
 
+/* a point placed on the object from the tick, moved with the object's root
+to where this frame draws it: unchanged outside a frame between ticks, or
+for an object not blended. The model's nodes are already drawn from here
+(object_get_node_matrices); a shadow map centered on the tick's bounding
+sphere was up to a tick's travel off that pose (upstream OpenCE 0e7233f3,
+PR #542). */
+void render_interpolation_object_point(long object_index, real_point3d *point)
+{
+	struct object_datum *object;
+	real_matrix4x3 const *drawn;
+	real_matrix4x3 const *simulated;
+
+	if (!interpolation_rendering || object_index == NONE)
+		return;
+	drawn = render_interpolation_object_node_matrices(object_index);
+	object = object_try_and_get(object_index);
+	if (!drawn || !object || object->object.node_matrices.size < (short)sizeof(real_matrix4x3))
+		return;
+	simulated = object_header_block_get(object_index, &object->object.node_matrices);
+	point->x += drawn[0].position.x - simulated[0].position.x;
+	point->y += drawn[0].position.y - simulated[0].position.y;
+	point->z += drawn[0].position.z - simulated[0].position.z;
+}
+
 /* ---------- corrections */
 
 /* the object (and what it carries) moved by the netcode from where it was,

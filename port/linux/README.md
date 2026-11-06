@@ -932,6 +932,12 @@ Other changes are in `#ifdef HALO_LINUX`. All the native ports define
 | `rasterizer/xbox/rasterizer_xbox_environment_fog.c` | A local pointer gets its value from the file-scope array with the same name. |
 | `game/player_control.c` | The mouse aims the player on controller 1 directly. |
 | `sound/game_sound.c` | The game calculates the obstruction of each sound one time for each tick, not for each frame. |
+| `render/render_objects.c`, `game/render_interpolation.c` | An object's shadow map is centered where the frame draws the object between the ticks (`render_interpolation_object_point`), as its model is drawn into the map, not where the tick left it. |
+| `effects/contrails.c` | Contrail points are made and aged by the ticks' own time, a 30th of a second each (half while the players are double speed), on the first frame after each tick, not by every frame's time. |
+| `objects/widgets/lightning.c` | A lightning bolt keeps the shape it took on the first frame of a tick until the next tick, in the window the frame already draws. |
+| `rasterizer/rasterizer_lights.c`, `src/d3d8_gl.c` | Each lens flare's occlusion test has a slot of its own, read only once a count of that flare's own test has come. |
+| `rasterizer/xbox/rasterizer_xbox_screen_effect.c` | A scope's zoom blur covers the left and top edges of the screen: each pass's quad is moved back by the half pixel the shader translator adds. |
+| `src/d3d8_gl.c` | A z bias's slope is taken across the game's pixels, not the display's smaller ones. The depth units stay the polygon offset's: this fork has no reversed-depth buffer. |
 | `sound/sound_manager.c` | A track of a looping sound that is gone stops, even in the millisecond it started (`refresh_sound`). The Xbox never drew three frames in one millisecond; the port can (the null renderer, no frame limit), and then read the deleted looping sound and crashed. |
 | `cseries/errors.c` | `debug.txt` stays open between lines. |
 | `networking/`, `game/`, `interface/`, `bungie_net/network/` and the pools of objects, effects and sounds | The system link limits and the memory for them. |

@@ -99,6 +99,9 @@ jobs:
       - name: Retried inventories test
         run: python3 -m pytest -q tools/test_retried_inventories.py
 
+      - name: Rendering between ticks
+        run: python3 -m pytest -q tools/test_render_between_ticks.py
+
       - name: Crash handler test
         run: python3 -m pytest -q tools/test_memory_watch.py
 

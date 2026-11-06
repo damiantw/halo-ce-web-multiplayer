@@ -47,6 +47,7 @@ symbols in this file:
 #include "bitmaps/bitmap_group.h"
 #include "cache/texture_cache.h"
 #include "cseries/cseries.h"
+#include "game/game.h" /* port: game_time_get (lightning_tick_seed) */
 #include "interface/hud_draw.h"
 #include "bitmaps/bitmap_color_conversion.h"
 #include "math/real_math.h"
@@ -65,6 +66,13 @@ enum
 {
 	LIGHTNING_TAG = 'elec',
 	MAXIMUM_LIGHTNING_POINTS = 4097,
+#ifdef HALO_LINUX
+	/* port: the lightnings (lightnings_initialize's 256) and the windows a
+	bolt's seed is kept for (lightning_tick_seed). The window is the one the
+	frame already draws; this is not a split-screen mode. */
+	LIGHTNING_TICK_SEED_LIGHTNINGS = 256,
+	LIGHTNING_TICK_SEED_WINDOWS = 4,
+#endif
 };
 
 enum
@@ -163,6 +171,42 @@ static void lightning_offset_marker_position(
 
 static struct lightning_globals lightning_globals = {0};
 
+#ifdef HALO_LINUX
+/* port: the local random seed each lightning's bolt in each window was first
+drawn from in a tick, and the tick plus one, 0 for none (lightning_tick_seed).
+The Xbox drew a frame a tick, so a bolt's random offsets were drawn anew 30
+times a second. The native builds draw every frame, and a bolt took a new
+shape each frame (upstream OpenCE 688eeb8a, PR #552). */
+static struct
+{
+	long tick;
+	unsigned long seed;
+} lightning_tick_seeds[LIGHTNING_TICK_SEED_LIGHTNINGS][LIGHTNING_TICK_SEED_WINDOWS];
+
+/* TRUE when this frame draws the bolt from the seed the tick's first frame
+saved (and *seed is that seed). The first frame of the tick saves *seed and
+returns FALSE. A lightning or window this does not keep is drawn as before. */
+static boolean lightning_tick_seed(long lightning_index, short window_index, unsigned long *seed)
+{
+	long absolute_index = DATUM_INDEX_TO_ABSOLUTE_INDEX(lightning_index);
+	unsigned long frame_seed = *seed;
+
+	if (absolute_index >= LIGHTNING_TICK_SEED_LIGHTNINGS ||
+		window_index < 0 || window_index >= LIGHTNING_TICK_SEED_WINDOWS)
+	{
+		return FALSE;
+	}
+	if (lightning_tick_seeds[absolute_index][window_index].tick == game_time_get() + 1)
+	{
+		*seed = lightning_tick_seeds[absolute_index][window_index].seed;
+		return TRUE;
+	}
+	lightning_tick_seeds[absolute_index][window_index].tick = game_time_get() + 1;
+	lightning_tick_seeds[absolute_index][window_index].seed = frame_seed;
+	return FALSE;
+}
+#endif
+
 /* ---------- public code */
 
 void lightnings_initialize(
@@ -185,6 +229,10 @@ void lightnings_initialize_for_new_map(
 {
 	if (lightning_globals.lightning_data)
 		data_make_valid(lightning_globals.lightning_data);
+#ifdef HALO_LINUX
+	/* port: (lightning_tick_seed) */
+	csmemset(lightning_tick_seeds, 0, sizeof(lightning_tick_seeds));
+#endif
 
 	return;
 }
@@ -204,7 +252,19 @@ long lightning_new(
 	long lightning_index = datum_new(lightning_globals.lightning_data);
 
 	if (lightning_index != NONE)
+	{
 		lightning_get(lightning_index)->definition_index = definition_index;
+#ifdef HALO_LINUX
+		/* port: (lightning_tick_seed) a new bolt, not the one before it there */
+		if (DATUM_INDEX_TO_ABSOLUTE_INDEX(lightning_index) < LIGHTNING_TICK_SEED_LIGHTNINGS)
+		{
+			csmemset(
+				lightning_tick_seeds[DATUM_INDEX_TO_ABSOLUTE_INDEX(lightning_index)],
+				0,
+				sizeof(lightning_tick_seeds[0]));
+		}
+#endif
+	}
 
 	return lightning_index;
 }
@@ -272,6 +332,15 @@ void lightning_submit(
 		struct lightning_datum *lightning = lightning_get(lightning_index);
 		struct lightning_definition *definition = lightning_definition_get(lightning->definition_index);
 		struct object_marker marker;
+#ifdef HALO_LINUX
+		/* port: the later frames of a tick draw the bolt from the seed the
+		tick's first frame started from, between its markers where they are
+		drawn then, and leave the seed as they found it so the frame's other
+		effects get the numbers they would have (lightning_tick_seed). */
+		unsigned long *local_seed = get_global_local_random_seed_address();
+		unsigned long frame_seed = *local_seed;
+		boolean tick_drawn = lightning_tick_seed(lightning_index, render.window_index, local_seed);
+#endif
 
 		if (definition->markers.count > 0 &&
 			object_get_marker_by_name(
@@ -551,6 +620,11 @@ void lightning_submit(
 				}
 			}
 		}
+#ifdef HALO_LINUX
+		/* port: (lightning_tick_seed) */
+		if (tick_drawn)
+			*local_seed = frame_seed;
+#endif
 	}
 
 	return;
